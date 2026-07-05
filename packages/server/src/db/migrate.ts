@@ -14,7 +14,10 @@ const migrationsDir = join(
 );
 
 export async function migrate(connectionString = env.databaseUrl) {
-  const client = new pg.Client({ connectionString });
+  const client = new pg.Client({
+    connectionString,
+    ssl: env.databaseSsl ? { rejectUnauthorized: false } : undefined,
+  });
   await client.connect();
   try {
     await client.query(

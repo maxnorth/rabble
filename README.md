@@ -62,6 +62,17 @@ Rabble's model registry distinguishes two kinds of models:
   OpenAI-compatible), a base URL (direct provider or any gateway), a model
   id, and a key. Register as many as you like.
 
+## Deploying to Render
+
+The repo ships a [`render.yaml`](render.yaml) blueprint: a Docker web
+service plus managed Postgres, with `COOKIE_SECRET` auto-generated and
+migrations applied on every boot. Create a new Blueprint in Render pointing
+at this repo and both resources provision automatically. (For a manually
+created web service instead: set `DATABASE_URL`, `COOKIE_SECRET`, and
+`COOKIE_SECURE=true` in the dashboard — plus `DATABASE_SSL=true` if you use
+the database's *external* URL.) Optionally set `ANTHROPIC_API_KEY` to enable
+built-in Claude models.
+
 ## Development
 
 ```bash

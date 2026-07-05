@@ -17,6 +17,11 @@ export const env = {
   cookieSecret: required("COOKIE_SECRET", "dev-only-insecure-secret"),
   /** Mark auth cookies Secure. Enable when serving behind HTTPS. */
   cookieSecure: (process.env.COOKIE_SECURE ?? "false") === "true",
+  /**
+   * Enable TLS to Postgres (managed providers' external URLs). Internal /
+   * same-network URLs generally don't need it.
+   */
+  databaseSsl: (process.env.DATABASE_SSL ?? "false") === "true",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   nodeEnv: process.env.NODE_ENV ?? "development",
 };

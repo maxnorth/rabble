@@ -1,0 +1,31 @@
+# Render Blueprint: one web service (Docker) + managed Postgres.
+# https://render.com/docs/blueprint-spec
+#
+# The app listens on Render's injected PORT, serves the web UI and API from
+# one container, and runs database migrations on boot.
+
+services:
+  - type: web
+    name: rabble
+    runtime: docker
+    plan: free
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: rabble-db
+          property: connectionString
+      - key: COOKIE_SECRET
+        generateValue: true
+      - key: COOKIE_SECURE
+        value: "true"
+      # Set in the dashboard to enable built-in Claude models org-wide:
+      # - key: ANTHROPIC_API_KEY
+      #   sync: false
+
+databases:
+  - name: rabble-db
+    databaseName: rabble
+    user: rabble
+    plan: free

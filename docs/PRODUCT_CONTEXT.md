@@ -134,7 +134,7 @@ From the J1 journey mapping (full detail in the journey map doc's "Planned solut
 
 - **Positioning:** "Gateways govern traffic. Eval tools grade outputs. Builders make demos. We're the only platform where an agent's measured track record earns it real access."
 - **Bullseye customer:** 200–2,000-person, tech-forward, regulated-adjacent org, post-AI-pilot, with a mandate-vs-veto standoff; champion = platform/AI-enablement lead. SaaS-first go-to-market; open-core-ready architecture (self-host demand is a qualifying signal, not the default motion).
-- **Real competitor: Dust** (same shape, same buyer, shipped). Daylight: they have no eval system, no write-side bounded delegation, no approver-as-user. **Dify/n8n** are the "we could self-host X" objection. **Microsoft** wins the M365-captive org — don't fight there.
+- **Real competitor: Dust** (same shape, same buyer, shipped). Daylight: they have no eval system, no write-side bounded delegation, no approver-as-user. **Microsoft** wins the M365-captive org — don't fight there.
 - **Three live bets** (pre-registered in the Operating System doc, currently being validated via customer interviews): risk-is-the-blocker (not reliability), evidence-can-earn-access, the-champion-exists. If interviews break these, the pivot paths are written down — check before making big product commitments.
 
 ## 8. Working style the user prefers

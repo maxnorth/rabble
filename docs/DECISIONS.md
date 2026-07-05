@@ -24,6 +24,19 @@ Two kinds of registered models:
   optional base URL (direct provider or any gateway), model id, own API key.
   Unlimited registrations.
 
+## Agent runtime
+
+The agent loop runs on the **LangChain Deep Agents SDK** (`deepagents`,
+LangGraph-based). It provides planning (todos), a virtual filesystem,
+sub-agents, and per-tool human-in-the-loop interrupts (`interruptOn`) out of
+the box — accelerants for the roadmap. This is an explicitly **replaceable
+abstraction layer**: Rabble owns the seams around it (model registry and
+credential resolution, transcript persistence, the `AgentTurnEvent` stream
+contract in `runtime/agentTurn.ts`, and eventually grant-gated tool
+injection), so the SDK can be swapped for something custom later without
+touching routes, schema, or UI. Keep SDK types out of `@rabble/core` and out
+of API contracts.
+
 ## Scheduling & background work
 
 **Hatchet** (hatchet.dev) is the designated engine for all scheduling and

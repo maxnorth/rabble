@@ -167,19 +167,24 @@ export async function sessionRoutes(app: FastifyInstance) {
       }
 
       let fullText = "";
-      for await (const delta of runAgentTurn({
+      const toolCalls = [];
+      for await (const event of runAgentTurn({
         agent: row.agent,
         model,
         history,
         userContent: body.content,
       })) {
-        fullText += delta;
-        sendEvent(reply, { type: "delta", text: delta });
+        if (event.type === "text") {
+          fullText += event.text;
+          sendEvent(reply, { type: "delta", text: event.text });
+        } else {
+          toolCalls.push(event.toolCall);
+        }
       }
 
       const [agentMessage] = await db
         .insert(messages)
-        .values({ sessionId: id, role: "agent", content: fullText })
+        .values({ sessionId: id, role: "agent", content: fullText, toolCalls })
         .returning();
       await db
         .update(sessions)

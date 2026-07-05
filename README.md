@@ -59,6 +59,13 @@ Rabble's model registry distinguishes two kinds of models:
 pnpm dev        # server (tsx watch) + web (vite) in parallel
 pnpm build      # build all packages
 pnpm typecheck  # typecheck all packages
+pnpm test:e2e   # full end-to-end suite (needs Postgres running)
 ```
+
+The e2e suite (`packages/e2e`) boots a fresh `rabble_e2e` database, the
+production server build, and a mock streaming model endpoint, then drives the
+whole journey in a real browser — owner setup, login, model registration,
+agent creation, streamed chat — asserting UI state, database rows, and clean
+server logs at every step. CI runs it on every push.
 
 Product context and design decisions live in [`docs/`](docs/).

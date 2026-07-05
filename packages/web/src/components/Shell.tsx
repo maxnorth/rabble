@@ -1,6 +1,6 @@
 import type { User } from "@rabble/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { api } from "../api";
 
 function RailIcon({ d }: { d: string }) {
@@ -34,6 +34,7 @@ const icons = {
 
 export function Shell({ user }: { user: User }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const initials = user.name
     .split(/\s+/)
     .map((p) => p[0])
@@ -78,8 +79,10 @@ export function Shell({ user }: { user: User }) {
           title={`${user.name} — sign out`}
           onClick={async () => {
             await api.logout();
-            queryClient.clear();
-            window.location.href = "/";
+            navigate("/");
+            // Resetting refetches /api/auth/me, which now 401s and drops the
+            // app back to the login screen.
+            await queryClient.resetQueries();
           }}
         >
           <span style={{ fontSize: 11, fontWeight: 600 }}>{initials}</span>

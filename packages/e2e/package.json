@@ -1,0 +1,17 @@
+{
+  "name": "@rabble/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^22.15.3",
+    "@types/pg": "^8.11.14",
+    "pg": "^8.15.6",
+    "typescript": "^5.8.3"
+  }
+}

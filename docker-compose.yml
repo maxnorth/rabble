@@ -1,4 +1,19 @@
 services:
+  app:
+    build: .
+    ports:
+      - "${PORT:-3080}:3080"
+    environment:
+      DATABASE_URL: postgres://rabble:rabble@postgres:5432/rabble
+      COOKIE_SECRET: ${COOKIE_SECRET:-dev-only-insecure-secret}
+      # Set true when serving behind HTTPS
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      # Optional: default key for built-in Claude models
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
     image: postgres:16
     environment:

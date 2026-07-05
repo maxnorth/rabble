@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/dist
+.turbo
+**/.turbo
+.git
+.env
+.pgdata
+**/test-results
+**/playwright-report
+**/.artifacts
+docs

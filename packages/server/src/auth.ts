@@ -47,7 +47,7 @@ export async function createAuthSession(
     path: "/",
     httpOnly: true,
     sameSite: "lax",
-    secure: env.nodeEnv === "production",
+    secure: env.cookieSecure,
     maxAge: SESSION_TTL_MS / 1000,
   });
 }

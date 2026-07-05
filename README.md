@@ -22,16 +22,26 @@ TypeScript monorepo (pnpm workspaces + Turborepo):
 Everything is keyed by `org_id` from day one. The open-source version runs a
 single default org; the same schema supports multi-tenant hosting later.
 
-## Getting started
-
-Prereqs: Node 20+, pnpm, and Postgres (or Docker).
+## Getting started (Docker)
 
 ```bash
-# 1. Start Postgres
+cp .env.example .env   # set COOKIE_SECRET (and optionally ANTHROPIC_API_KEY)
+docker compose up
+```
+
+That's it — Postgres, migrations, and the app. Open http://localhost:3080
+and you'll be walked through creating the owner account.
+
+## Getting started (local development)
+
+Prereqs: Node 20+ and pnpm.
+
+```bash
+# 1. Start Postgres only
 docker compose up -d postgres
 
 # 2. Configure
-cp .env.example .env   # edit COOKIE_SECRET (and optionally ANTHROPIC_API_KEY)
+cp .env.example .env   # set COOKIE_SECRET
 
 # 3. Install, migrate, run
 pnpm install
@@ -39,9 +49,8 @@ pnpm db:migrate
 pnpm dev
 ```
 
-The web app runs at http://localhost:5173 (dev) and proxies API calls to the
-server at http://localhost:3080. On first boot you'll be walked through
-creating the owner account.
+The web app runs at http://localhost:5173 (dev, hot reload) and proxies API
+calls to the server at http://localhost:3080.
 
 ## Models
 

@@ -8,6 +8,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json turbo.js
 COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
+COPY packages/emulator/package.json packages/emulator/
 COPY packages/e2e/package.json packages/e2e/
 RUN pnpm install --frozen-lockfile
 

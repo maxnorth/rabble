@@ -210,6 +210,33 @@ test("denying the approval blocks the tool and records the denial", async () => 
   });
 });
 
+test("run-as-service keeps the action off the user's identity", async () => {
+  await enqueueToolCall("create_issue", { title: "Service-run issue" });
+
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("File it under the service account");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const card = page.locator(".approval-card");
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await card.getByRole("button", { name: "Run as service account" }).click();
+
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: File it under the service account",
+    { timeout: 15_000 },
+  );
+  expect(
+    await pollFirstToolCall("%File it under the service account%"),
+  ).toMatchObject({
+    name: "create_issue",
+    approval: { status: "ran-as-service", decidedByName: "Alex Lin" },
+  });
+});
+
 test("an out-of-scope tool attempt is recorded as a violation", async () => {
   // The model goes rogue: it calls a tool the agent was never given.
   await enqueueToolCall("drop_database", { reason: "cleanup" });

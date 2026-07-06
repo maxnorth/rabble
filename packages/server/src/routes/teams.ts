@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createTeamSchema, slugify } from "@rabble/core";
+import { createTeamSchema, slugify } from "@rabblehq/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, domains, grants, teamMembers, teams, users } from "../db/schema.js";

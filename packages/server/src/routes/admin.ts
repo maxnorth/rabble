@@ -7,7 +7,7 @@ import {
   createApiKeySchema,
   createConnectionSchema,
   type ConnectionRole,
-} from "@rabble/core";
+} from "@rabblehq/core";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { randomBytes } from "node:crypto";
 import { db } from "../db/client.js";
@@ -273,7 +273,7 @@ export async function adminRoutes(app: FastifyInstance) {
   // --- Settings: org + members ---
 
   app.get("/api/org", async (req) => {
-    const { orgSettingsSchema } = await import("@rabble/core");
+    const { orgSettingsSchema } = await import("@rabblehq/core");
     const [org] = await db
       .select()
       .from(orgs)
@@ -290,7 +290,7 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.patch("/api/org", { preHandler: requireOrgAdmin }, async (req) => {
-    const { orgSettingsSchema } = await import("@rabble/core");
+    const { orgSettingsSchema } = await import("@rabblehq/core");
     const { name, settings } = req.body as {
       name?: string;
       settings?: Record<string, unknown>;

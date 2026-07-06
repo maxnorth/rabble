@@ -1,4 +1,4 @@
-import type { UserPreferences } from "@rabble/core";
+import type { UserPreferences } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../api";

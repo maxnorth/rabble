@@ -3,7 +3,7 @@ import {
   createCustomModelSchema,
   enableBuiltInModelSchema,
   setProviderKeySchema,
-} from "@rabble/core";
+} from "@rabblehq/core";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { models, providerKeys } from "../db/schema.js";

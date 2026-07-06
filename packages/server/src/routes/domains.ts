@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createDomainSchema, slugify } from "@rabble/core";
+import { createDomainSchema, slugify } from "@rabblehq/core";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, domains, grants } from "../db/schema.js";

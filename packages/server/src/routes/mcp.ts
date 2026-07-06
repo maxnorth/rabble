@@ -4,7 +4,7 @@ import {
   slugify,
   updateToolConfigSchema,
   type McpToolInfo,
-} from "@rabble/core";
+} from "@rabblehq/core";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { loginRequestSchema, setupRequestSchema } from "@rabble/core";
+import { loginRequestSchema, setupRequestSchema } from "@rabblehq/core";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { orgs, teamMembers, teams, users } from "../db/schema.js";

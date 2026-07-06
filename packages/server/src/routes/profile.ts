@@ -3,7 +3,7 @@
  * "as you") and agent preferences (approval posture, response style).
  */
 import type { FastifyInstance } from "fastify";
-import { userPreferencesSchema } from "@rabble/core";
+import { userPreferencesSchema } from "@rabblehq/core";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { userConnectedAccounts, users } from "../db/schema.js";

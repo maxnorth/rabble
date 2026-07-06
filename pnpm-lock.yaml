@@ -85,7 +85,7 @@ importers:
       '@langchain/openai':
         specifier: ^1.5.3
         version: 1.5.3(@langchain/core@1.2.1(openai@6.45.0(zod@3.25.76)))
-      '@rabble/core':
+      '@rabblehq/core':
         specifier: workspace:*
         version: link:../core
       deepagents:
@@ -125,7 +125,7 @@ importers:
 
   packages/web:
     dependencies:
-      '@rabble/core':
+      '@rabblehq/core':
         specifier: workspace:*
         version: link:../core
       '@tanstack/react-query':

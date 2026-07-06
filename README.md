@@ -5,6 +5,9 @@ flexible subset of people create, configure, and govern them. Think "GitHub
 for agents": agents as governed org citizens with identities, scoped access,
 measured track records, and full auditability.
 
+Website: [rabblehq.com](https://rabblehq.com) · npm packages live under the
+[`@rabblehq`](https://www.npmjs.com/org/rabblehq) org.
+
 What works today: streaming agent sessions with inline tool calls and
 in-thread approval cards (service vs. user auth on every tool), an MCP
 server library with per-agent tool configuration, teams / domains / grants

@@ -32,7 +32,7 @@ import type {
   UpdateToolConfigRequest,
   User,
   UserPreferences,
-} from "@rabble/core";
+} from "@rabblehq/core";
 
 export class ApiError extends Error {
   constructor(

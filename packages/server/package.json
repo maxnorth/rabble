@@ -1,5 +1,5 @@
 {
-  "name": "@rabble/server",
+  "name": "@rabblehq/server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -20,7 +20,7 @@
     "@langchain/core": "^1.2.1",
     "@langchain/langgraph": "^1.4.7",
     "@langchain/openai": "^1.5.3",
-    "@rabble/core": "workspace:*",
+    "@rabblehq/core": "workspace:*",
     "deepagents": "^1.10.5",
     "dotenv": "^16.5.0",
     "drizzle-orm": "^0.43.1",

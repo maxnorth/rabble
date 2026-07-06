@@ -19,7 +19,7 @@ import {
   userPreferencesSchema,
   type ApprovalOutcome,
   type ToolCall,
-} from "@rabble/core";
+} from "@rabblehq/core";
 import { db } from "../db/client.js";
 import {
   agentMcpServers,

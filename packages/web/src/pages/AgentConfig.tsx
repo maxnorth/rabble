@@ -1,4 +1,4 @@
-import { agentCapabilitiesSchema, type AgentCapabilities } from "@rabble/core";
+import { agentCapabilitiesSchema, type AgentCapabilities } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";

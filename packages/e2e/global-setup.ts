@@ -71,7 +71,7 @@ export default async function globalSetup() {
   await admin.query(`CREATE DATABASE ${E2E_DB}`);
   await admin.end();
 
-  await run("pnpm", ["--filter", "@rabble/server", "db:migrate"], {
+  await run("pnpm", ["--filter", "@rabblehq/server", "db:migrate"], {
     DATABASE_URL: e2eDatabaseUrl,
   });
 

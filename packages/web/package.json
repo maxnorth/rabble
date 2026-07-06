@@ -1,5 +1,5 @@
 {
-  "name": "@rabble/web",
+  "name": "@rabblehq/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@rabble/core": "workspace:*",
+    "@rabblehq/core": "workspace:*",
     "@tanstack/react-query": "^5.75.5",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

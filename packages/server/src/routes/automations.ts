@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createAutomationSchema } from "@rabble/core";
+import { createAutomationSchema } from "@rabblehq/core";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { automations } from "../db/schema.js";

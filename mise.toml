@@ -17,7 +17,7 @@ description = "First-time setup: install deps, start Postgres, migrate"
 run = [
   "pnpm install",
   "docker compose up -d --wait postgres",
-  "pnpm --filter @rabble/server db:migrate",
+  "pnpm --filter @rabblehq/server db:migrate",
 ]
 
 [tasks.dev]
@@ -30,7 +30,7 @@ run = "pnpm build"
 
 [tasks.migrate]
 description = "Apply pending database migrations"
-run = "pnpm --filter @rabble/server db:migrate"
+run = "pnpm --filter @rabblehq/server db:migrate"
 
 # ---------------------------------------------------------------------------
 # Quality gates (same set CI runs)
@@ -46,7 +46,7 @@ run = "pnpm test"
 
 [tasks.e2e]
 description = "Full end-to-end suite: fresh DB + emulator + production build"
-run = ["pnpm build", "pnpm --filter @rabble/e2e e2e"]
+run = ["pnpm build", "pnpm --filter @rabblehq/e2e e2e"]
 
 [tasks."e2e:file"]
 description = "One e2e journey file, e.g. `mise run e2e:file 03-tools`"
@@ -71,7 +71,7 @@ run = "docker compose exec postgres psql -U rabble rabble"
 
 [tasks.emulator]
 description = "Run the external-service emulator on :4100"
-run = "pnpm --filter @rabble/emulator dev"
+run = "pnpm --filter @rabblehq/emulator dev"
 
 [tasks.up]
 description = "Run the whole app in Docker (app + Postgres)"

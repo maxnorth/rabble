@@ -28,7 +28,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/server/package.json packages/server/
 COPY packages/web/package.json packages/web/
 COPY packages/e2e/package.json packages/e2e/
-RUN pnpm install --prod --frozen-lockfile --ignore-scripts --filter @rabble/server...
+RUN pnpm install --prod --frozen-lockfile --ignore-scripts --filter @rabblehq/server...
 
 COPY --from=build /app/packages/core/dist packages/core/dist
 COPY --from=build /app/packages/server/dist packages/server/dist

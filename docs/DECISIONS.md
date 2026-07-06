@@ -34,7 +34,7 @@ abstraction layer**: Rabble owns the seams around it (model registry and
 credential resolution, transcript persistence, the `AgentTurnEvent` stream
 contract in `runtime/agentTurn.ts`, and eventually grant-gated tool
 injection), so the SDK can be swapped for something custom later without
-touching routes, schema, or UI. Keep SDK types out of `@rabble/core` and out
+touching routes, schema, or UI. Keep SDK types out of `@rabblehq/core` and out
 of API contracts.
 
 ## Scheduling & background work

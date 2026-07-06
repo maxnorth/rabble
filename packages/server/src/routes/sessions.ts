@@ -5,7 +5,7 @@ import {
   postMessageSchema,
   type StreamEvent,
   type ToolCall,
-} from "@rabble/core";
+} from "@rabblehq/core";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, messages, models, sessions } from "../db/schema.js";
@@ -201,7 +201,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         .orderBy(messages.createdAt);
 
       const { orgs } = await import("../db/schema.js");
-      const { orgSettingsSchema } = await import("@rabble/core");
+      const { orgSettingsSchema } = await import("@rabblehq/core");
       const [org] = await db
         .select({ settings: orgs.settings })
         .from(orgs)

@@ -1,4 +1,4 @@
-import type { User } from "@rabble/core";
+import type { User } from "@rabblehq/core";
 import { useQueryClient } from "@tanstack/react-query";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { api } from "../api";

@@ -10,7 +10,7 @@
  * - Rights are ordered: use < edit < admin; the effective right is the max.
  */
 import { inArray, eq, and } from "drizzle-orm";
-import { RIGHT_ORDER, type AccessRight } from "@rabble/core";
+import { RIGHT_ORDER, type AccessRight } from "@rabblehq/core";
 import { db } from "./db/client.js";
 import { agents, grants, teamMembers, teams } from "./db/schema.js";
 import type { AuthedUser } from "./auth.js";

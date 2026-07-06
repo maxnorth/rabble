@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import {
   createEvalCaseSchema,
   createEvalCriterionSchema,
-} from "@rabble/core";
+} from "@rabblehq/core";
 import { and, desc, eq, sql } from "drizzle-orm";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { db } from "../db/client.js";

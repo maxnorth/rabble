@@ -1,4 +1,4 @@
-import type { AgentDirectoryRow, Domain } from "@rabble/core";
+import type { AgentDirectoryRow, Domain } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";

@@ -1,4 +1,4 @@
-import type { Agent, Message, Model, Session, ToolCall, User } from "@rabble/core";
+import type { Agent, Message, Model, Session, ToolCall, User } from "@rabblehq/core";
 import type {
   agents,
   messages,

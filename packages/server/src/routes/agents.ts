@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createAgentSchema, slugify, updateAgentSchema } from "@rabble/core";
+import { createAgentSchema, slugify, updateAgentSchema } from "@rabblehq/core";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
@@ -134,7 +134,7 @@ export async function agentRoutes(app: FastifyInstance) {
   app.post("/api/agents", async (req, reply) => {
     const body = createAgentSchema.parse(req.body);
     const { orgs } = await import("../db/schema.js");
-    const { orgSettingsSchema } = await import("@rabble/core");
+    const { orgSettingsSchema } = await import("@rabblehq/core");
     const [org] = await db
       .select({ settings: orgs.settings })
       .from(orgs)
@@ -395,7 +395,7 @@ export async function agentRoutes(app: FastifyInstance) {
 
   app.post("/api/agents/:id/surfaces", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { createAgentSurfaceSchema } = await import("@rabble/core");
+    const { createAgentSurfaceSchema } = await import("@rabblehq/core");
     const body = createAgentSurfaceSchema.parse(req.body);
     const rights = await rightsForAllAgents(req.user!);
     if (!hasRight(rights.get(id) ?? null, "edit")) {

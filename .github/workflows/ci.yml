@@ -33,5 +33,5 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - run: pnpm --filter @rabble/e2e exec playwright install --with-deps chromium
-      - run: pnpm --filter @rabble/e2e e2e
+      - run: pnpm --filter @rabblehq/e2e exec playwright install --with-deps chromium
+      - run: pnpm --filter @rabblehq/e2e e2e

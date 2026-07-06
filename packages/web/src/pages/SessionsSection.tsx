@@ -3,7 +3,7 @@ import type {
   Message,
   SessionEvalResult,
   ToolCall,
-} from "@rabble/core";
+} from "@rabblehq/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams } from "react-router-dom";

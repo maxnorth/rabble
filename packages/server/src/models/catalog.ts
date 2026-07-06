@@ -1,4 +1,4 @@
-import type { CatalogModel } from "@rabble/core";
+import type { CatalogModel } from "@rabblehq/core";
 
 /**
  * The curated built-in model catalog. Built-in models authenticate through a

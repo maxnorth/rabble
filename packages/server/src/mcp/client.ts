@@ -3,7 +3,7 @@
  * of MCP's streamable HTTP transport). Covers the slice Rabble uses —
  * initialize, tools/list, tools/call.
  */
-import type { McpToolInfo } from "@rabble/core";
+import type { McpToolInfo } from "@rabblehq/core";
 
 let rpcId = 0;
 

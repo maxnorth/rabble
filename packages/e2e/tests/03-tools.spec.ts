@@ -145,6 +145,8 @@ test("user-auth tool pauses on the approval card; approve runs it", async () => 
   await expect(card).toBeVisible({ timeout: 15_000 });
   await expect(card).toContainText("create_issue");
   await expect(card).toContainText("acting as you");
+  // Evidence strip: track record + the safety half
+  await expect(card).toContainText("scope violations · 30d");
   await card.getByRole("button", { name: "Approve as me" }).click();
 
   // Wait for THIS turn's reply (the echo includes this turn's user text)

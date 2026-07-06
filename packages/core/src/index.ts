@@ -538,6 +538,8 @@ export const evalCriterionSchema = z.object({
   enabled: z.boolean(),
   passRate: z.number().nullable(),
   sessionCount: z.number().int(),
+  /** Pass-rate delta: last 30 days vs the 30 before (null = not enough data). */
+  trendDelta: z.number().nullable().default(null),
   createdAt: z.string(),
 });
 export type EvalCriterion = z.infer<typeof evalCriterionSchema>;

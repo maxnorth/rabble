@@ -261,6 +261,7 @@ export const api = {
         disputedAt: string | null;
       }>;
       scopeViolations30d: number;
+      gradedCount: number;
       judgeModel: string | null;
     }>(`/api/agents/${agentId}/trust`),
   updateSuite: (suiteId: string, body: { gating: boolean }) =>

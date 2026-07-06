@@ -305,19 +305,26 @@ function ToolCallChip({
 function ApprovalCard({
   approval,
   onDecide,
+  agentId,
   trackRecord,
   onViewTrackRecord,
 }: {
   approval: PendingApproval;
   onDecide: (decision: "approve" | "deny" | "run-as-service") => void;
+  agentId?: string;
   trackRecord?: { score: number | null };
   onViewTrackRecord?: () => void;
 }) {
+  const trust = useQuery({
+    queryKey: ["trust", agentId],
+    queryFn: () => api.agentTrust(agentId!),
+    enabled: Boolean(agentId),
+  });
   return (
     <div className={`approval-card${approval.resolved ? " resolved" : ""}`}>
       <div className="title">
         <span className="status-dot" style={{ background: "var(--amber)" }} />
-        Approval needed
+        Approval needed — acting as you
       </div>
       <div className="detail">
         The agent wants to run <span className="mono">{approval.toolName}</span>
@@ -360,7 +367,14 @@ function ApprovalCard({
         >
           Track record
           <span className={`chip ${trackRecord.score !== null && trackRecord.score >= 90 ? "green" : "blue"}`}>
-            {trackRecord.score !== null ? `${trackRecord.score}% pass` : "unmeasured"}
+            {trackRecord.score !== null
+              ? `${trackRecord.score}% pass · ${trust.data?.gradedCount ?? 0} graded`
+              : "unmeasured"}
+          </span>
+          <span
+            className={`chip ${(trust.data?.scopeViolations30d ?? 0) > 0 ? "amber" : "green"}`}
+          >
+            {trust.data?.scopeViolations30d ?? 0} scope violations · 30d
           </span>
           {onViewTrackRecord && (
             <button
@@ -685,6 +699,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                       key={a.approvalId}
                       approval={a}
                       onDecide={(d) => void decide(a, d)}
+                      agentId={session.data?.session.agentId}
                       trackRecord={{ score: agentRow?.evalScore ?? null }}
                       onViewTrackRecord={() =>
                         session.data &&

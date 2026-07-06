@@ -318,3 +318,25 @@ test("spot-check: a disputed verdict queues for review; overturn flips it", asyn
     "eval.review.resolve",
   ]);
 });
+
+test("criteria trends: pass rate vs the prior 30-day window", async () => {
+  // Backdate a failing result into the prior window; the recent window is
+  // the (overturned-to-fail plus original) recent results.
+  const criteria = await dbQuery<{ id: string }>("SELECT id FROM eval_criteria LIMIT 1");
+  const anySession = await dbQuery<{ id: string }>("SELECT id FROM sessions LIMIT 1");
+  await dbQuery(
+    `INSERT INTO eval_results (criterion_id, session_id, passed, reasoning, created_at)
+     VALUES ($1, $2, false, 'backdated seed', now() - interval '45 days')`,
+    [criteria[0]!.id, anySession[0]!.id],
+  );
+
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "evals" }).click();
+  // Prior window: 0% (the seed). Recent: 50% (one pass, one overturned fail).
+  await expect(
+    page.locator(".row", { hasText: "Stays on topic" }).locator(".chip", {
+      hasText: "vs prior",
+    }),
+  ).toContainText("+50% vs prior");
+});

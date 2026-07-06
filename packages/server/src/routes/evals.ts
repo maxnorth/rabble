@@ -48,6 +48,17 @@ export async function evalRoutes(app: FastifyInstance) {
           SELECT count(DISTINCT r.session_id)::int
           FROM eval_results r WHERE r.criterion_id = eval_criteria.id
         )`,
+        passRate30: sql<number | null>`(
+          SELECT round(avg(CASE WHEN r.passed THEN 100.0 ELSE 0.0 END))::int
+          FROM eval_results r WHERE r.criterion_id = eval_criteria.id
+            AND r.created_at > now() - interval '30 days'
+        )`,
+        passRatePrior: sql<number | null>`(
+          SELECT round(avg(CASE WHEN r.passed THEN 100.0 ELSE 0.0 END))::int
+          FROM eval_results r WHERE r.criterion_id = eval_criteria.id
+            AND r.created_at <= now() - interval '30 days'
+            AND r.created_at > now() - interval '60 days'
+        )`,
       })
       .from(evalCriteria)
       .where(eq(evalCriteria.agentId, agentId))
@@ -61,6 +72,11 @@ export async function evalRoutes(app: FastifyInstance) {
         enabled: r.criterion.enabled,
         passRate: r.passRate,
         sessionCount: r.sessionCount,
+        // 30d window vs the 30d before it — the trust trend
+        trendDelta:
+          r.passRate30 !== null && r.passRatePrior !== null
+            ? r.passRate30 - r.passRatePrior
+            : null,
         createdAt: r.criterion.createdAt.toISOString(),
       })),
     };
@@ -276,6 +292,22 @@ export async function evalRoutes(app: FastifyInstance) {
       )
       .orderBy(desc(evalResults.disputedAt));
 
+    const [graded] = await db
+      .select({
+        results: sql<number>`(
+          SELECT count(*)::int FROM eval_results er
+          JOIN eval_criteria ec ON ec.id = er.criterion_id
+          WHERE ec.agent_id = ${agentId}
+        )`,
+        caseResults: sql<number>`(
+          SELECT count(*)::int FROM case_results cr
+          JOIN eval_cases c ON c.id = cr.case_id
+          JOIN eval_suites su ON su.id = c.suite_id
+          WHERE su.agent_id = ${agentId}
+        )`,
+      })
+      .from(sql`(SELECT 1) one`);
+
     const [violations] = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(scopeViolations)
@@ -310,6 +342,7 @@ export async function evalRoutes(app: FastifyInstance) {
         disputedAt: r.disputedAt?.toISOString() ?? null,
       })),
       scopeViolations30d: violations?.count ?? 0,
+      gradedCount: (graded?.results ?? 0) + (graded?.caseResults ?? 0),
       judgeModel: judge?.displayName ?? null,
     };
   });

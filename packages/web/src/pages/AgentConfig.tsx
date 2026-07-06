@@ -1015,11 +1015,22 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
               <div className="sub">{c.description || "—"}</div>
             </div>
             {c.passRate !== null ? (
-              <span
-                className={`chip ${c.passRate >= 90 ? "green" : c.passRate >= 70 ? "blue" : "amber"}`}
-              >
-                {c.passRate}% · {c.sessionCount} sessions
-              </span>
+              <>
+                <span
+                  className={`chip ${c.passRate >= 90 ? "green" : c.passRate >= 70 ? "blue" : "amber"}`}
+                >
+                  {c.passRate}% · {c.sessionCount} sessions
+                </span>
+                {c.trendDelta !== null && c.trendDelta !== 0 && (
+                  <span
+                    className={`chip ${c.trendDelta > 0 ? "green" : "amber"}`}
+                    title="Pass rate: last 30 days vs the 30 before"
+                  >
+                    {c.trendDelta > 0 ? "+" : ""}
+                    {c.trendDelta}% vs prior
+                  </span>
+                )}
+              </>
             ) : (
               <span className="chip">no data yet</span>
             )}

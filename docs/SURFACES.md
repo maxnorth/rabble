@@ -37,6 +37,14 @@ https://<your-rabble-host>/api/inbound/slack
 Rabble answers the `url_verification` handshake automatically. Subscribe to
 the bot event `message.channels`, save, and reinstall if prompted.
 
+Also enable **Interactivity & Shortcuts** with the Request URL
+
+```
+https://<your-rabble-host>/api/inbound/slack-interactive
+```
+
+— that's what makes the Approve/Deny buttons in approval DMs work.
+
 ## 4. Map a channel to an agent
 
 Invite the bot to the channel (`/invite @your-app`), then in Rabble open
@@ -51,10 +59,11 @@ channel's name as the label (e.g. `#eng-oncall`).
   without an account get a polite refusal — sessions always belong to a
   governed identity.
 - The turn runs through the same runtime as the web: grants enforced,
-  tools governed, live judging, scope-violation tracking. Because nobody
-  can answer an approval prompt in a channel, user-auth tools that would
-  need one are refused with a pointer to the web app (the org approval
-  floor is honored).
+  tools governed, live judging, scope-violation tracking. When a user-auth
+  tool needs an approval, Rabble DMs the acting user Approve/Deny buttons
+  — the same broker (and timeout) that powers the in-thread approval card
+  arbitrates the decision, and only that user's click counts. The org
+  approval floor is honored.
 - The session appears in the web app with a `Slack #channel` chip; the
   reply lands back in the Slack thread.
 

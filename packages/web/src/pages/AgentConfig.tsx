@@ -1019,7 +1019,7 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
             {trust.data?.scopeViolations30d ?? 0}
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
-            scope violations · 30d
+            scope violation{(trust.data?.scopeViolations30d ?? 0) === 1 ? "" : "s"} · 30d
           </div>
         </div>
         <span style={{ flex: 1 }} />

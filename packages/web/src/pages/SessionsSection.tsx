@@ -1296,7 +1296,8 @@ function TrackRecordDrawer({ agentId }: { agentId: string }) {
                   : "var(--green)",
             }}
           >
-            {trust.data?.scopeViolations30d ?? 0} scope violations · 30d
+            {trust.data?.scopeViolations30d ?? 0} scope violation
+            {(trust.data?.scopeViolations30d ?? 0) === 1 ? "" : "s"} · 30d
           </span>
         </div>
       </div>

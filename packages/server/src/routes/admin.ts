@@ -58,6 +58,7 @@ export async function adminRoutes(app: FastifyInstance) {
         roles: (c.roles ?? []) as ConnectionRole[],
         baseUrl: c.baseUrl,
         hasToken: c.encryptedToken !== null,
+        hasAppToken: c.encryptedAppToken !== null,
         status: c.status,
         tunnel: c.tunnel,
         createdAt: c.createdAt.toISOString(),
@@ -111,6 +112,7 @@ export async function adminRoutes(app: FastifyInstance) {
           encryptedSigningSecret: signingSecret
             ? encryptSecret(signingSecret)
             : null,
+          encryptedAppToken: body.appToken ? encryptSecret(body.appToken) : null,
           status,
           tunnel: tunnel ?? false,
         })
@@ -123,6 +125,11 @@ export async function adminRoutes(app: FastifyInstance) {
         targetId: row!.id,
         summary: `Added ${body.vendor} connection "${body.name}"`,
       });
+      if (body.vendor === "slack" && body.appToken) {
+        // Socket Mode: dial out for this connection right away.
+        const { refreshSlackSockets } = await import("../surfaces/slackSocket.js");
+        refreshSlackSockets().catch(() => {});
+      }
       return {
         connection: {
           id: row!.id,
@@ -132,6 +139,7 @@ export async function adminRoutes(app: FastifyInstance) {
           roles: (row!.roles ?? []) as ConnectionRole[],
           baseUrl: row!.baseUrl,
           hasToken: row!.encryptedToken !== null,
+          hasAppToken: row!.encryptedAppToken !== null,
           status: row!.status,
           tunnel: row!.tunnel,
           createdAt: row!.createdAt.toISOString(),
@@ -160,6 +168,9 @@ export async function adminRoutes(app: FastifyInstance) {
         targetId: id,
         summary: `Removed connection "${deleted[0]!.name}"`,
       });
+      // If this was a Socket Mode connection, hang up its socket.
+      const { refreshSlackSockets } = await import("../surfaces/slackSocket.js");
+      refreshSlackSockets().catch(() => {});
       return { ok: true };
     },
   );

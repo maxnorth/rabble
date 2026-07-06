@@ -26,7 +26,26 @@ Admin → Connections → **+ Add connection**:
   inbound events — without it, deliveries are rejected)
 - Leave the API base URL empty for real Slack
 
-## 3. Point Slack at your Rabble instance
+## 3. Choose a delivery transport
+
+Rabble supports both of Slack's delivery mechanisms; pick one per app.
+
+### Option A — Socket Mode (recommended; no public URL)
+
+Rabble dials out to Slack over a WebSocket, so it works from behind a
+firewall, on localhost, or anywhere without a public HTTPS endpoint.
+
+- Slack app → **Basic Information → App-Level Tokens** → generate a token
+  with the `connections:write` scope (`xapp-…`)
+- Slack app → **Socket Mode** → enable
+- Paste the token into the connection's **App-level token (Socket Mode)**
+  field when registering it in Rabble
+
+That's it — events and the Approve/Deny interactivity payloads stream over
+the socket. Rabble acks each envelope immediately, reconnects with backoff,
+and honors Slack's periodic `disconnect` refreshes. No Request URLs needed.
+
+### Option B — Events API webhooks (needs a public URL)
 
 **Event Subscriptions** → enable, Request URL:
 
@@ -44,6 +63,9 @@ https://<your-rabble-host>/api/inbound/slack-interactive
 ```
 
 — that's what makes the Approve/Deny buttons in approval DMs work.
+
+Both transports feed the same processing pipeline and share event-id
+dedupe, so enabling both never double-runs a turn.
 
 ## 4. Map a channel to an agent
 

@@ -33,6 +33,18 @@ export interface LoggedRequest {
   body: unknown;
 }
 
+/** A connected Socket Mode client (the ws socket, structurally typed). */
+export interface SlackSocketClient {
+  send: (data: string) => void;
+}
+
+export interface SlackSocketLogEntry {
+  ts: string;
+  direction: "sent" | "ack";
+  envelopeId: string;
+  type?: string;
+}
+
 interface EmulatorState {
   llmQueue: ScriptedReply[];
   mcpServers: Map<string, McpToolDef[]>;
@@ -40,6 +52,9 @@ interface EmulatorState {
   /** Slack workspace directory: user id -> email, channel id -> name. */
   slackUsers: Map<string, string>;
   slackChannels: Map<string, string>;
+  /** Live Socket Mode connections + a log of envelopes sent and acks seen. */
+  slackSockets: Set<SlackSocketClient>;
+  slackSocketLog: SlackSocketLogEntry[];
 }
 
 export const state: EmulatorState = {
@@ -48,6 +63,8 @@ export const state: EmulatorState = {
   requests: [],
   slackUsers: new Map(),
   slackChannels: new Map(),
+  slackSockets: new Set(),
+  slackSocketLog: [],
 };
 
 export function reset(): void {
@@ -56,6 +73,9 @@ export function reset(): void {
   state.requests = [];
   state.slackUsers = new Map();
   state.slackChannels = new Map();
+  // Live sockets survive a reset — the server under test stays connected;
+  // only the envelope/ack history is wiped.
+  state.slackSocketLog = [];
   seedDefaults();
 }
 

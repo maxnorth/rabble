@@ -14,7 +14,8 @@ No `if test_mode` branches exist in app code; keep it that way.
 | `/mock/api.anthropic.com/v1/messages` | Anthropic Messages API incl. SSE event framing (`message_start` → `content_block_delta` → `message_delta` with usage) |
 | `/mock/api.openai.com/v1/chat/completions` | OpenAI chat completions incl. streamed chunks, tool_calls deltas, and the `stream_options.include_usage` final usage chunk |
 | `/mock/mcp/:serverKey` | MCP JSON-RPC (`tools/list`, `tools/call`) |
-| `/mock/slack.com/api/*` | `auth.test`, `chat.postMessage`, `users.info`, `conversations.info` |
+| `/mock/slack.com/api/*` | `auth.test`, `chat.postMessage`, `users.info`, `conversations.info`, `apps.connections.open` (hands out the ws URL below) |
+| `/mock/slack.com/socket` | Socket Mode WebSocket — sends `hello` on connect, records acks by `envelope_id` |
 
 ## Scripting (admin endpoints)
 
@@ -25,6 +26,9 @@ No `if test_mode` branches exist in app code; keep it that way.
 | `POST /admin/llm/enqueue` | queue the next LLM reply: `{type:"text", text}` or `{type:"tool_call", toolName, toolArgs}`; accepts an array |
 | `PUT /admin/mcp/:serverKey` | replace an MCP server's tool catalog |
 | `PUT /admin/slack` | teach the workspace directory: `{users:{U1:"a@b.c"}, channels:{C1:"eng-oncall"}}` |
+| `POST /admin/slack/socket-event` | push a Socket Mode event to connected sockets: `{event:{type:"message",channel,user,text,ts}, eventId?}` (wrapped in an `events_api` envelope; returns `delivered` + `envelopeId`) |
+| `POST /admin/slack/socket-interaction` | push an interactivity payload as an `interactive` envelope: `{payload:{…block_actions…}}` |
+| `GET /admin/slack/socket` | live socket count + the sent/ack envelope log |
 
 ## Default conventions (unscripted behavior)
 

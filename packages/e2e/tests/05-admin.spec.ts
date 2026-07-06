@@ -684,6 +684,161 @@ test("background replies ping the user's Slack DM when opted in", async () => {
   await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
 });
 
+test("slack socket mode: events stream over the WebSocket instead of webhooks", async () => {
+  // A second Slack connection carrying an app-level token — the server
+  // should dial apps.connections.open and hold a socket to the emulator.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+  await page.getByRole("button", { name: "+ Add connection" }).click();
+  await page.getByPlaceholder("Acme Slack").fill("Acme Slack (socket)");
+  await page.getByPlaceholder("https://slack.com").fill(`${EMULATOR}/mock/slack.com`);
+  await page.locator(".modal input[type=password]").first().fill("xoxb-emulated");
+  await page.getByPlaceholder("xapp-…").fill("xapp-emulated");
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  const row = page.locator(".row", { hasText: "Acme Slack (socket)" });
+  await expect(row).toBeVisible();
+  await expect(row.locator(".chip", { hasText: "Socket Mode" })).toBeVisible();
+
+  // The socket actually connects (apps.connections.open -> ws upgrade).
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { connections: number };
+      return status.connections;
+    })
+    .toBeGreaterThan(0);
+
+  // A channel on the socket connection, mapped to the same on-call agent.
+  await fetch(`${EMULATOR}/admin/slack`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ channels: { C888: "eng-socket" } }),
+  });
+  await dbQuery(
+    `INSERT INTO agent_surfaces (agent_id, connection_id, label)
+     SELECT a.id, c.id, '#eng-socket' FROM agents a, connections c
+     WHERE a.name = 'Eng On-Call' AND c.name = 'Acme Slack (socket)'`,
+  );
+
+  // Alex posts in #eng-socket — delivered over the socket, not a webhook.
+  const push = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event: {
+          type: "message",
+          channel: "C888",
+          user: "U777",
+          text: "Deploy status over the socket?",
+          ts: "1799.001",
+        },
+      }),
+    })
+  ).json()) as { ok: boolean; delivered: number; envelopeId: string };
+  expect(push.ok).toBe(true);
+  expect(push.delivered).toBeGreaterThan(0);
+
+  // The envelope was acked immediately by envelope_id.
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { log: Array<{ direction: string; envelopeId: string }> };
+      return status.log.some(
+        (l) => l.direction === "ack" && l.envelopeId === push.envelopeId,
+      );
+    })
+    .toBe(true);
+
+  // Same governed pipeline as the webhook path: session + threaded reply.
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ surface: string }>(
+        "SELECT surface FROM sessions WHERE surface_key = 'slack:C888:1799.001'",
+      );
+      return rows[0]?.surface ?? "";
+    })
+    .toBe("Slack #eng-socket");
+  const [session] = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE surface_key = 'slack:C888:1799.001'",
+  );
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ role: string; content: string }>(
+        "SELECT role, content FROM messages WHERE session_id = $1 ORDER BY created_at",
+        [session!.id],
+      );
+      return rows.map((m) => `${m.role}:${m.content}`);
+    })
+    .toEqual([
+      "user:Deploy status over the socket?",
+      "agent:Mock reply to: Deploy status over the socket?",
+    ]);
+
+  const log = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+  };
+  expect(
+    log.requests.some(
+      (r) =>
+        r.path === "/api/chat.postMessage" &&
+        r.body.thread_ts === "1799.001" &&
+        r.body.text?.includes("Mock reply to: Deploy status over the socket?"),
+    ),
+  ).toBe(true);
+
+  // A redelivered envelope (same event_id) never runs a second turn.
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      eventId: "EvSockDup1",
+      event: {
+        type: "message",
+        channel: "C888",
+        user: "U777",
+        text: "Deploy status over the socket?",
+        ts: "1799.001",
+      },
+    }),
+  });
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      eventId: "EvSockDup1",
+      event: {
+        type: "message",
+        channel: "C888",
+        user: "U777",
+        text: "Deploy status over the socket?",
+        ts: "1799.001",
+      },
+    }),
+  });
+  // Let the first redelivery finish its turn, then confirm exactly one ran.
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ n: string }>(
+        "SELECT count(*)::text AS n FROM messages WHERE session_id = $1",
+        [session!.id],
+      );
+      return Number(rows[0]!.n);
+    })
+    .toBe(4);
+  await page.waitForTimeout(1500);
+  const finalCount = await dbQuery<{ n: string }>(
+    "SELECT count(*)::text AS n FROM messages WHERE session_id = $1",
+    [session!.id],
+  );
+  expect(Number(finalCount[0]!.n)).toBe(4);
+});
+
 test("session search filters the sidebar", async () => {
   // Hard navigation: /sessions/:id -> /sessions remounts the section, and a
   // fill during that remount lands on the discarded input.

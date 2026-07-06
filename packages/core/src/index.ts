@@ -488,6 +488,7 @@ export const connectionSchema = z.object({
   roles: z.array(connectionRoleSchema),
   baseUrl: z.string().nullable(),
   hasToken: z.boolean(),
+  hasAppToken: z.boolean().optional(),
   status: z.enum(["connected", "needs-auth", "error"]),
   createdAt: z.string(),
 });
@@ -499,6 +500,8 @@ export const createConnectionSchema = z.object({
   roles: z.array(connectionRoleSchema).min(1),
   baseUrl: z.string().url().nullable().optional(),
   token: z.string().max(500).optional(),
+  /** Slack app-level token (xapp-…) — presence enables Socket Mode. */
+  appToken: z.string().max(500).optional(),
 });
 export type CreateConnectionRequest = z.infer<typeof createConnectionSchema>;
 

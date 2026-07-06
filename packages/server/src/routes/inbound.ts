@@ -16,29 +16,19 @@ import {
   agentSurfaces,
   agents,
   connections,
-  messages,
   models,
   sessions,
   users,
 } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
 import { executeTurnAndPersist } from "../runtime/executeTurn.js";
-
-interface SlackEnvelope {
-  type: string;
-  challenge?: string;
-  event_id?: string;
-  event?: {
-    type: string;
-    subtype?: string;
-    bot_id?: string;
-    channel?: string;
-    user?: string;
-    text?: string;
-    ts?: string;
-    thread_ts?: string;
-  };
-}
+import {
+  alreadyDelivered,
+  processSlackEvent,
+  processSlackInteraction,
+  type SlackEventEnvelope,
+  type SlackInteractionPayload,
+} from "../surfaces/slack.js";
 
 export function verifySlackSignature(
   secret: string,
@@ -62,41 +52,6 @@ export function verifyGithubSignature(
   const a = Buffer.from(expected);
   const b = Buffer.from(signature);
   return a.length === b.length && timingSafeEqual(a, b);
-}
-
-async function slackApi(
-  baseUrl: string,
-  token: string,
-  method: string,
-  body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const res = await fetch(`${baseUrl}/api/${method}`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-    },
-    body: JSON.stringify(body),
-  });
-  return (await res.json()) as Record<string, unknown>;
-}
-
-/**
- * Slack redelivers events it thinks failed (slow responses trigger retries
- * after ~3s). Remember recent event ids so a redelivery never runs a second
- * agent turn or posts a duplicate reply.
- */
-const seenSlackEvents = new Set<string>();
-const SEEN_EVENTS_CAP = 5000;
-function alreadyDelivered(eventId: string | undefined): boolean {
-  if (!eventId) return false;
-  if (seenSlackEvents.has(eventId)) return true;
-  seenSlackEvents.add(eventId);
-  if (seenSlackEvents.size > SEEN_EVENTS_CAP) {
-    const oldest = seenSlackEvents.values().next().value;
-    if (oldest) seenSlackEvents.delete(oldest);
-  }
-  return false;
 }
 
 export async function inboundRoutes(app: FastifyInstance) {
@@ -354,73 +309,19 @@ export async function inboundRoutes(app: FastifyInstance) {
         return reply.code(401).send({ error: "Signature verification failed" });
       }
 
-      let payload: {
-        type?: string;
-        user?: { id?: string };
-        response_url?: string;
-        actions?: Array<{ action_id?: string; value?: string }>;
-      };
+      let payload: SlackInteractionPayload;
       try {
         payload = JSON.parse(
           new URLSearchParams(rawBody).get("payload") ?? "{}",
-        ) as typeof payload;
+        ) as SlackInteractionPayload;
       } catch {
         return reply.code(400).send({ error: "Invalid payload" });
       }
-      const action = payload.actions?.[0];
-      if (payload.type !== "block_actions" || !action?.value || !payload.user?.id) {
-        return { ok: true, ignored: "unsupported interaction" };
+      const result = await processSlackInteraction(connection, payload);
+      if (result.ok === false) {
+        return reply.code(400).send({ error: result.error });
       }
-
-      const baseUrl = connection.baseUrl ?? "https://slack.com";
-      const token = connection.encryptedToken
-        ? decryptSecret(connection.encryptedToken)
-        : "";
-      const info = await slackApi(baseUrl, token, "users.info", {
-        user: payload.user.id,
-      });
-      const email = (info.user as { profile?: { email?: string } } | undefined)
-        ?.profile?.email;
-      const [decider] = email
-        ? await db
-            .select()
-            .from(users)
-            .where(and(eq(users.orgId, connection.orgId), eq(users.email, email)))
-            .limit(1)
-        : [];
-      if (!decider) return { ok: true, ignored: "unknown user" };
-
-      let ref: { approvalId?: string; sessionId?: string };
-      try {
-        ref = JSON.parse(action.value) as typeof ref;
-      } catch {
-        return reply.code(400).send({ error: "Invalid action value" });
-      }
-      const { decideApproval } = await import("../runtime/approvals.js");
-      const ok =
-        ref.approvalId && ref.sessionId
-          ? decideApproval(
-              ref.approvalId,
-              ref.sessionId,
-              decider.id,
-              action.action_id === "rabble_approve" ? "approve" : "deny",
-            )
-          : false;
-      const outcomeText = ok
-        ? action.action_id === "rabble_approve"
-          ? "✅ Approved — the agent is continuing."
-          : "🚫 Denied — the agent was told no."
-        : "This approval already resolved or isn't yours to decide.";
-
-      // Swap the buttons out of the DM so the ask can't be double-clicked.
-      if (payload.response_url) {
-        void fetch(payload.response_url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ replace_original: true, text: outcomeText }),
-        }).catch(() => {});
-      }
-      return { ok: true, resolved: ok, text: outcomeText };
+      return result;
     });
 
     scope.post("/api/inbound/slack", async (req, reply) => {
@@ -456,9 +357,9 @@ export async function inboundRoutes(app: FastifyInstance) {
         return reply.code(401).send({ error: "Signature verification failed" });
       }
 
-      let envelope: SlackEnvelope;
+      let envelope: SlackEventEnvelope;
       try {
-        envelope = JSON.parse(rawBody) as SlackEnvelope;
+        envelope = JSON.parse(rawBody) as SlackEventEnvelope;
       } catch {
         return reply.code(400).send({ error: "Invalid JSON" });
       }
@@ -467,172 +368,13 @@ export async function inboundRoutes(app: FastifyInstance) {
       if (envelope.type === "url_verification") {
         return { challenge: envelope.challenge };
       }
-      if (envelope.type !== "event_callback" || !envelope.event) {
-        return { ok: true, ignored: "unsupported envelope" };
-      }
-      if (
-        Number(req.headers["x-slack-retry-num"] ?? 0) > 0 ||
-        alreadyDelivered(envelope.event_id)
-      ) {
+      // Webhook-only retry signal; the shared processor also dedupes by
+      // event_id, which covers Socket Mode redeliveries.
+      if (Number(req.headers["x-slack-retry-num"] ?? 0) > 0) {
         return { ok: true, ignored: "duplicate delivery" };
       }
 
-      const event = envelope.event;
-      // Only plain user messages — no bot echoes, edits, or joins.
-      if (
-        event.type !== "message" ||
-        event.bot_id ||
-        event.subtype ||
-        !event.channel ||
-        !event.user ||
-        !event.text?.trim() ||
-        !event.ts
-      ) {
-        return { ok: true, ignored: "not a user message" };
-      }
-
-      const baseUrl = connection.baseUrl ?? "https://slack.com";
-      const token = connection.encryptedToken
-        ? decryptSecret(connection.encryptedToken)
-        : "";
-
-      // Which agent listens on this channel?
-      const channelInfo = await slackApi(baseUrl, token, "conversations.info", {
-        channel: event.channel,
-      });
-      const channelName =
-        ((channelInfo.channel as { name?: string } | undefined)?.name ?? "")
-          .replace(/^#/, "");
-      const surfaceRows = await db
-        .select({ surface: agentSurfaces, agent: agents })
-        .from(agentSurfaces)
-        .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
-        .where(eq(agentSurfaces.connectionId, connection.id));
-      const matched = surfaceRows.find((r) => {
-        const label = r.surface.label.replace(/^#/, "");
-        return label === channelName || label === event.channel;
-      });
-      if (!matched) return { ok: true, ignored: "no agent on this channel" };
-
-      // Sessions belong to people: resolve the Slack user to a platform user.
-      const userInfo = await slackApi(baseUrl, token, "users.info", {
-        user: event.user,
-      });
-      const email = (
-        userInfo.user as { profile?: { email?: string } } | undefined
-      )?.profile?.email;
-      const threadTs = event.thread_ts ?? event.ts;
-      const [platformUser] = email
-        ? await db
-            .select()
-            .from(users)
-            .where(
-              and(eq(users.orgId, connection.orgId), eq(users.email, email)),
-            )
-            .limit(1)
-        : [];
-      if (!platformUser) {
-        await slackApi(baseUrl, token, "chat.postMessage", {
-          channel: event.channel,
-          thread_ts: threadTs,
-          text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
-        });
-        return { ok: true, ignored: "no matching platform user" };
-      }
-
-      // One Slack thread = one session.
-      const surfaceKey = `slack:${event.channel}:${threadTs}`;
-      let [session] = await db
-        .select()
-        .from(sessions)
-        .where(eq(sessions.surfaceKey, surfaceKey))
-        .limit(1);
-      if (!session) {
-        const title =
-          event.text.length > 60 ? `${event.text.slice(0, 57)}…` : event.text;
-        [session] = await db
-          .insert(sessions)
-          .values({
-            orgId: connection.orgId,
-            userId: platformUser.id,
-            agentId: matched.agent.id,
-            title,
-            surface: `Slack #${channelName || event.channel}`,
-            surfaceKey,
-          })
-          .returning();
-      }
-
-      const [model] = matched.agent.modelId
-        ? await db
-            .select()
-            .from(models)
-            .where(eq(models.id, matched.agent.modelId))
-            .limit(1)
-        : [];
-
-      const { orgs } = await import("../db/schema.js");
-      const { orgSettingsSchema } = await import("@rabblehq/core");
-      const [org] = await db
-        .select({ settings: orgs.settings })
-        .from(orgs)
-        .where(eq(orgs.id, connection.orgId))
-        .limit(1);
-      const orgSettings = orgSettingsSchema.parse({ ...(org?.settings as object) });
-      const priorMessages = await db
-        .select()
-        .from(messages)
-        .where(eq(messages.sessionId, session!.id));
-      const sessionApproved = priorMessages.some((m) =>
-        ((m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>).some(
-          (tc) =>
-            tc.approval?.status === "approved" ||
-            tc.approval?.status === "auto-approved",
-        ),
-      );
-
-      let fullText = "";
-      try {
-        const result = await executeTurnAndPersist({
-          sessionId: session!.id,
-          agent: matched.agent,
-          model,
-          user: platformUser,
-          content: event.text,
-          requireApproval: orgSettings.requireApprovalForUserTools,
-          sessionApproved,
-          interactive: false,
-          // Deliver approval asks as DM buttons instead of auto-denying —
-          // the broker still owns the decision and the timeout.
-          approvalPrompt: async (ask) => {
-            const { sendSlackApprovalPrompt } = await import("../runtime/notify.js");
-            await sendSlackApprovalPrompt({
-              user: platformUser,
-              sessionId: session!.id,
-              surface: session!.surface,
-              agentName: matched.agent.name,
-              ask,
-            });
-          },
-        });
-        fullText = result.fullText;
-      } catch (err) {
-        req.log.error({ err }, "slack surface turn failed");
-        await slackApi(baseUrl, token, "chat.postMessage", {
-          channel: event.channel,
-          thread_ts: threadTs,
-          text: "Something went wrong running the agent — check the session in Rabble.",
-        });
-        return { ok: true, error: "turn failed" };
-      }
-
-      await slackApi(baseUrl, token, "chat.postMessage", {
-        channel: event.channel,
-        thread_ts: threadTs,
-        text: fullText || "(no reply)",
-      });
-
-      return { ok: true, sessionId: session!.id };
+      return processSlackEvent(connection, envelope, req.log);
     });
   });
 }

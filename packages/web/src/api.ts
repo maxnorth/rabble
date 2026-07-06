@@ -344,6 +344,7 @@ export const api = {
     token?: string;
     tunnel?: boolean;
     signingSecret?: string;
+    appToken?: string;
   }) => post<{ connection: Connection }>("/api/connections", body),
   deleteConnection: (id: string) => del<{ ok: true }>(`/api/connections/${id}`),
   listApiKeys: () => get<{ keys: ApiKey[] }>("/api/api-keys"),

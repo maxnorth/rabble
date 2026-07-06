@@ -168,6 +168,14 @@ function ConnectionsPage() {
                       tunnel
                     </span>
                   )}
+                  {c.hasAppToken && (
+                    <span
+                      className="chip blue"
+                      title="Events stream over a Socket Mode WebSocket — no public webhook URL needed"
+                    >
+                      Socket Mode
+                    </span>
+                  )}
                   <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
                     {c.status}
                   </span>
@@ -206,6 +214,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
     baseUrl: "",
     token: "",
     signingSecret: "",
+    appToken: "",
     tunnel: false,
   });
   const create = useMutation({
@@ -217,6 +226,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
         baseUrl: form.baseUrl.trim() || null,
         token: form.token || undefined,
         signingSecret: form.signingSecret || undefined,
+        appToken: form.appToken || undefined,
         tunnel: form.tunnel,
       }),
     onSuccess: async () => {
@@ -318,6 +328,22 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
                 {form.vendor === "slack"
                   ? "Lets Slack deliver channel messages to agents — verifies inbound events from your Slack app."
                   : "Lets GitHub deliver issue comments to agents — verifies inbound webhooks from your repos."}
+              </span>
+            </div>
+          )}
+          {form.vendor === "slack" && (
+            <div className="field">
+              <label>App-level token — Socket Mode (optional)</label>
+              <input
+                type="password"
+                placeholder="xapp-…"
+                value={form.appToken}
+                onChange={(e) => setForm({ ...form, appToken: e.target.value })}
+              />
+              <span className="hint">
+                Streams events over a WebSocket instead of webhooks — no public
+                URL needed. Generate one under your Slack app's Basic Information
+                › App-Level Tokens with the connections:write scope.
               </span>
             </div>
           )}

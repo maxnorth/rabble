@@ -390,6 +390,8 @@ export const connections = pgTable("connections", {
   baseUrl: text("base_url"),
   encryptedToken: text("encrypted_token"),
   encryptedSigningSecret: text("encrypted_signing_secret"),
+  /** App-level token (xapp-…) — presence turns on Slack Socket Mode. */
+  encryptedAppToken: text("encrypted_app_token"),
   status: text("status", { enum: ["connected", "needs-auth", "error"] })
     .notNull()
     .default("connected"),

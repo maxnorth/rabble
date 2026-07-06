@@ -117,6 +117,11 @@ if (isMain) {
       applyRetentionForAllOrgs().catch((err) =>
         app.log.warn({ err }, "retention sweep failed"),
       );
+      // Slack Socket Mode: dial out for any connection with an app token.
+      const { startSlackSocketManager } = await import("./surfaces/slackSocket.js");
+      startSlackSocketManager(app.log).catch((err) =>
+        app.log.warn({ err }, "slack socket manager failed to start"),
+      );
     })
     .catch((err) => {
       app.log.error(err);

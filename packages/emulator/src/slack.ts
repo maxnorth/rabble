@@ -1,10 +1,77 @@
 /**
- * Slack API fake — the slice used by connection setup and health checks.
+ * Slack API fake — the slice used by connection setup and health checks,
+ * plus Socket Mode: apps.connections.open hands out a ws:// URL on this
+ * emulator, and envelopes pushed via POST /admin/slack/socket-event stream
+ * to whoever is connected, exactly like Slack's real socket.
  */
 import type { FastifyInstance } from "fastify";
 import { logRequest, state } from "./state.js";
 
+/**
+ * Push one Socket Mode envelope to every connected client. Returns how many
+ * sockets received it (0 = nobody is connected, the test should fail loudly).
+ */
+export function pushSlackSocketEnvelope(envelope: {
+  envelope_id: string;
+  type: string;
+  payload: unknown;
+}): number {
+  let delivered = 0;
+  for (const socket of state.slackSockets) {
+    try {
+      socket.send(JSON.stringify(envelope));
+      delivered += 1;
+    } catch {
+      state.slackSockets.delete(socket);
+    }
+  }
+  if (delivered > 0) {
+    state.slackSocketLog.push({
+      ts: new Date().toISOString(),
+      direction: "sent",
+      envelopeId: envelope.envelope_id,
+      type: envelope.type,
+    });
+  }
+  return delivered;
+}
+
 export function mountSlack(app: FastifyInstance): void {
+  app.post("/mock/slack.com/api/apps.connections.open", async (req) => {
+    logRequest("slack.com", "POST", "/api/apps.connections.open", null);
+    const auth = String(req.headers.authorization ?? "");
+    // Slack only accepts app-level tokens (xapp-…) here — bot tokens fail.
+    if (!auth.startsWith("Bearer xapp-")) {
+      return { ok: false, error: "invalid_auth" };
+    }
+    const host = req.headers.host ?? "localhost:4100";
+    return { ok: true, url: `ws://${host}/mock/slack.com/socket` };
+  });
+
+  app.get("/mock/slack.com/socket", { websocket: true }, (socket) => {
+    state.slackSockets.add(socket);
+    socket.send(
+      JSON.stringify({ type: "hello", num_connections: state.slackSockets.size }),
+    );
+    socket.on("message", (raw: Buffer) => {
+      try {
+        const ack = JSON.parse(raw.toString()) as { envelope_id?: string };
+        if (ack.envelope_id) {
+          state.slackSocketLog.push({
+            ts: new Date().toISOString(),
+            direction: "ack",
+            envelopeId: ack.envelope_id,
+          });
+        }
+      } catch {
+        // Ignore non-JSON frames.
+      }
+    });
+    socket.on("close", () => {
+      state.slackSockets.delete(socket);
+    });
+  });
+
   app.post("/mock/slack.com/api/auth.test", async (req) => {
     logRequest("slack.com", "POST", "/api/auth.test", req.body ?? null);
     return {

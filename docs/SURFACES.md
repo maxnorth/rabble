@@ -13,6 +13,7 @@ At https://api.slack.com/apps → **Create New App** → from scratch.
 
 - **OAuth & Permissions → Bot Token Scopes**: `chat:write`,
   `channels:history`, `channels:read`, `users:read`, `users:read.email`
+  (add `im:history` for 1:1 DM sessions)
 - Install to the workspace and copy the **Bot User OAuth Token** (`xoxb-…`)
 - **Basic Information → App Credentials**: copy the **Signing Secret**
 
@@ -81,6 +82,15 @@ dedupe, so enabling both never double-runs a turn.
 Invite the bot to the channel (`/invite @your-app`), then in Rabble open
 the agent → **surfaces** tab → attach the Slack connection with the
 channel's name as the label (e.g. `#eng-oncall`).
+
+## Direct messages: a personal Auto session
+
+DM the bot 1:1 and no channel mapping is involved: the message routes by
+intent across the agents *you* can use (like an "Auto" web session,
+built-ins excluded), the session lands with surface "Slack DM", and the
+reply threads back. People without a Rabble account get the polite
+refusal; people with no shared agents are told to ask an admin. Requires
+the `im:history` scope and the `message.im` bot event subscription.
 
 ## Troubleshooting: "nothing happens when I message the channel"
 

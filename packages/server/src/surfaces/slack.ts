@@ -38,6 +38,7 @@ export interface SlackEventEnvelope {
     subtype?: string;
     bot_id?: string;
     channel?: string;
+    channel_type?: string;
     user?: string;
     text?: string;
     ts?: string;
@@ -130,24 +131,6 @@ export async function processSlackEvent(
     ? decryptSecret(connection.encryptedToken)
     : "";
 
-  // Which agent listens on this channel?
-  const channelInfo = await slackApi(baseUrl, token, "conversations.info", {
-    channel: event.channel,
-  });
-  const channelName = (
-    (channelInfo.channel as { name?: string } | undefined)?.name ?? ""
-  ).replace(/^#/, "");
-  const surfaceRows = await db
-    .select({ surface: agentSurfaces, agent: agents })
-    .from(agentSurfaces)
-    .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
-    .where(eq(agentSurfaces.connectionId, connection.id));
-  const matched = surfaceRows.find((r) => {
-    const label = r.surface.label.replace(/^#/, "");
-    return label === channelName || label === event.channel;
-  });
-  if (!matched) return { ok: true, ignored: "no agent on this channel" };
-
   // Sessions belong to people: resolve the Slack user to a platform user.
   const userInfo = await slackApi(baseUrl, token, "users.info", {
     user: event.user,
@@ -162,13 +145,80 @@ export async function processSlackEvent(
         .where(and(eq(users.orgId, connection.orgId), eq(users.email, email)))
         .limit(1)
     : [];
-  if (!platformUser) {
-    await slackApi(baseUrl, token, "chat.postMessage", {
+
+  // Which agent answers? A mapped channel goes to its surface's agent; a
+  // 1:1 DM needs no mapping — it routes by intent across the agents the
+  // sender can actually use, like an "Auto" web session.
+  const isDm = event.channel_type === "im" || event.channel.startsWith("D");
+  let agent: typeof agents.$inferSelect | undefined;
+  let surfaceName: string;
+  if (isDm) {
+    if (!platformUser) {
+      await slackApi(baseUrl, token, "chat.postMessage", {
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
+      });
+      return { ok: true, ignored: "no matching platform user" };
+    }
+    const { rightsForAllAgents, hasRight } = await import("../rights.js");
+    const { isNull } = await import("drizzle-orm");
+    const rights = await rightsForAllAgents({
+      id: platformUser.id,
+      orgId: platformUser.orgId,
+      role: platformUser.role,
+    } as Parameters<typeof rightsForAllAgents>[0]);
+    const candidates = await db
+      .select()
+      .from(agents)
+      .where(
+        and(
+          eq(agents.orgId, connection.orgId),
+          eq(agents.status, "active"),
+          isNull(agents.builtin),
+        ),
+      )
+      .orderBy(agents.name);
+    const usable = candidates.filter((c) => hasRight(rights.get(c.id) ?? null, "use"));
+    if (usable.length === 0) {
+      await slackApi(baseUrl, token, "chat.postMessage", {
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: "No agents are shared with you yet — ask an org admin for access.",
+      });
+      return { ok: true, ignored: "no usable agents for DM sender" };
+    }
+    const { routeByIntent } = await import("../runtime/router.js");
+    const agentId = await routeByIntent(connection.orgId, event.text, usable);
+    agent = usable.find((c) => c.id === agentId) ?? usable[0]!;
+    surfaceName = "Slack DM";
+  } else {
+    const channelInfo = await slackApi(baseUrl, token, "conversations.info", {
       channel: event.channel,
-      thread_ts: threadTs,
-      text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
     });
-    return { ok: true, ignored: "no matching platform user" };
+    const channelName = (
+      (channelInfo.channel as { name?: string } | undefined)?.name ?? ""
+    ).replace(/^#/, "");
+    const surfaceRows = await db
+      .select({ surface: agentSurfaces, agent: agents })
+      .from(agentSurfaces)
+      .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
+      .where(eq(agentSurfaces.connectionId, connection.id));
+    const matched = surfaceRows.find((r) => {
+      const label = r.surface.label.replace(/^#/, "");
+      return label === channelName || label === event.channel;
+    });
+    if (!matched) return { ok: true, ignored: "no agent on this channel" };
+    if (!platformUser) {
+      await slackApi(baseUrl, token, "chat.postMessage", {
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
+      });
+      return { ok: true, ignored: "no matching platform user" };
+    }
+    agent = matched.agent;
+    surfaceName = `Slack #${channelName || event.channel}`;
   }
 
   // One Slack thread = one session.
@@ -186,19 +236,19 @@ export async function processSlackEvent(
       .values({
         orgId: connection.orgId,
         userId: platformUser.id,
-        agentId: matched.agent.id,
+        agentId: agent.id,
         title,
-        surface: `Slack #${channelName || event.channel}`,
+        surface: surfaceName,
         surfaceKey,
       })
       .returning();
   }
 
-  const [model] = matched.agent.modelId
+  const [model] = agent.modelId
     ? await db
         .select()
         .from(models)
-        .where(eq(models.id, matched.agent.modelId))
+        .where(eq(models.id, agent.modelId))
         .limit(1)
     : [];
 
@@ -226,7 +276,7 @@ export async function processSlackEvent(
   try {
     const result = await executeTurnAndPersist({
       sessionId: session!.id,
-      agent: matched.agent,
+      agent,
       model,
       user: platformUser,
       content: event.text,
@@ -241,7 +291,7 @@ export async function processSlackEvent(
           user: platformUser,
           sessionId: session!.id,
           surface: session!.surface,
-          agentName: matched.agent.name,
+          agentName: agent.name,
           ask,
         });
       },

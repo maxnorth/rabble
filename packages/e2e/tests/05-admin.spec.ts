@@ -839,6 +839,99 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
   expect(Number(finalCount[0]!.n)).toBe(4);
 });
 
+test("a 1:1 DM to the bot becomes an auto-routed personal session", async () => {
+  // No channel mapping involved: the DM routes by intent across the
+  // sender's usable agents, exactly like an "Auto" web session.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([
+      { type: "text", text: "eng-on-call" }, // the router's verdict
+    ]),
+  });
+  const push = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event: {
+          type: "message",
+          channel: "D9001",
+          channel_type: "im",
+          user: "U777",
+          text: "Deploy status by DM?",
+          ts: "1800.001",
+        },
+      }),
+    })
+  ).json()) as { delivered: number };
+  expect(push.delivered).toBeGreaterThan(0);
+
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ surface: string; slug: string }>(
+        `SELECT s.surface, a.slug FROM sessions s
+         JOIN agents a ON a.id = s.agent_id
+         WHERE s.surface_key = 'slack:D9001:1800.001'`,
+      );
+      return rows[0] ?? null;
+    })
+    .toEqual({ surface: "Slack DM", slug: "eng-on-call" });
+
+  // The reply lands back in the DM thread.
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { channel?: string; thread_ts?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.channel === "D9001" &&
+          r.body.thread_ts === "1800.001" &&
+          r.body.text?.includes("Mock reply to: Deploy status by DM?"),
+      );
+    })
+    .toBe(true);
+
+  // Strangers get the polite refusal, never a session.
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "D9002",
+        channel_type: "im",
+        user: "U888",
+        text: "Hello, who are you?",
+        ts: "1800.050",
+      },
+    }),
+  });
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { channel?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.channel === "D9002" &&
+          r.body.text?.includes("I can only act for Rabble users"),
+      );
+    })
+    .toBe(true);
+  const strangerSessions = await dbQuery(
+    "SELECT id FROM sessions WHERE surface_key = 'slack:D9002:1800.050'",
+  );
+  expect(strangerSessions).toHaveLength(0);
+});
+
 test("socket mode interactivity: DM buttons resolve approvals over the WebSocket", async () => {
   // A user-auth tool raised from the socket channel pends on a DM ask…
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {

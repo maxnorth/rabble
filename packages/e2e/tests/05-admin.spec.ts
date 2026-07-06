@@ -1044,6 +1044,77 @@ test("pulse-back: a sagging pass rate DMs the agent's owner", async () => {
   await dbQuery("DELETE FROM eval_results WHERE reasoning = 'planted for alert'");
 });
 
+test("share is one verb: audience, plain-language right, pause/unshare", async () => {
+  // The Builder-made draft is shared from a single Share button.
+  await page.goto("/agents");
+  await page.locator(".dir-table tbody tr", { hasText: "Release Notes Bot" }).click();
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  const modal = page.locator(".modal");
+  await expect(modal).toBeVisible();
+
+  // Track record is the evidence chip — a fresh draft has none yet.
+  await expect(modal).toContainText("no track record yet");
+
+  // Audience (teams first) + plain-language rights sentence
+  await modal.locator("select").selectOption({ label: "Platform" });
+  await expect(modal).toContainText("Platform can talk to this agent in sessions.");
+  await modal.getByRole("button", { name: "Share", exact: true }).click();
+  await expect(modal.locator(".row", { hasText: "Platform" })).toBeVisible();
+  const granted = await dbQuery<{ access_right: string }>(
+    `SELECT g.access_right FROM grants g
+     JOIN teams t ON t.id = g.subject_id AND t.slug = 'platform'
+     JOIN agents a ON a.id = g.target_id AND a.name = 'Release Notes Bot'
+     WHERE g.subject_type = 'team' AND g.target_type = 'agent'`,
+  );
+  expect(granted).toEqual([{ access_right: "use" }]);
+
+  // Optional deploy-to-Slack, right in the share flow
+  await modal.getByPlaceholder("#channel").fill("#relnotes");
+  await modal.getByRole("button", { name: "Attach" }).click();
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ label: string }>(
+        "SELECT label FROM agent_surfaces WHERE label = '#relnotes'",
+      );
+      return rows.length;
+    })
+    .toBe(1);
+
+  // Visible pause/unshare: activate the draft, then pause it back
+  await modal.getByRole("button", { name: "Activate" }).click();
+  await expect(modal.getByRole("button", { name: "Pause sharing" })).toBeVisible();
+  expect(
+    (
+      await dbQuery<{ status: string }>(
+        "SELECT status FROM agents WHERE name = 'Release Notes Bot'",
+      )
+    )[0]!.status,
+  ).toBe("active");
+  await modal.getByRole("button", { name: "Pause sharing" }).click();
+  await expect(modal.getByRole("button", { name: "Activate" })).toBeVisible();
+  expect(
+    (
+      await dbQuery<{ status: string }>(
+        "SELECT status FROM agents WHERE name = 'Release Notes Bot'",
+      )
+    )[0]!.status,
+  ).toBe("draft");
+
+  await modal.locator(".row", { hasText: "Platform" }).getByRole("button", { name: "Unshare" }).click();
+  await expect(modal.locator(".row", { hasText: "Platform" })).toHaveCount(0);
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery(
+        `SELECT g.id FROM grants g
+         JOIN agents a ON a.id = g.target_id AND a.name = 'Release Notes Bot'
+         WHERE g.target_type = 'agent'`,
+      );
+      return rows.length;
+    })
+    .toBe(0);
+  await modal.getByRole("button", { name: "Done" }).click();
+});
+
 test("hitting an access limit becomes a request an admin approves", async ({
   browser,
 }) => {

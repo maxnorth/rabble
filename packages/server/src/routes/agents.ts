@@ -448,6 +448,16 @@ export async function agentRoutes(app: FastifyInstance) {
     if (!hasRight(rights.get(id) ?? null, "admin")) {
       return reply.code(403).send({ error: "You need admin access to delete this agent" });
     }
+    const [target] = await db
+      .select({ builtin: agents.builtin })
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.orgId, req.user!.orgId)))
+      .limit(1);
+    if (target?.builtin) {
+      return reply
+        .code(409)
+        .send({ error: "Built-in agents ship with the platform and can't be deleted." });
+    }
     try {
       const deleted = await db
         .delete(agents)

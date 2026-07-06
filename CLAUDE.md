@@ -67,6 +67,13 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   Emulator: `POST /admin/slack/socket-event` pushes an event to connected
   sockets; `GET /admin/slack/socket` shows socket count + sent/ack log.
   Event-id dedupe spans both transports.
+- The Builder: agents with `builtin = 'builder'` (seeded per org at setup)
+  get platform tools (runtime/platformTools.ts) — create_agent_draft,
+  add_eval_criterion, attach_mcp_server, request_access — user-auth,
+  rights-checked per tool, audited "via Builder". Builder has no pinned
+  model; resolveAgentModel falls back to the org's first enabled model.
+  request_access rows land in access_requests; approve (Admin › Access
+  requests) materializes/upgrades a user grant.
 - Gating: PATCH /api/agents/:id runs the agent's gating suites against the
   CANDIDATE config for behavior changes (name/description/instructions/
   tone/model) and 409s on a failing case — remember this when e2e edits a

@@ -153,10 +153,33 @@ export const agentSchema = z.object({
   /** Tone & style guidance, folded into the system prompt. */
   tone: z.string(),
   status: agentStatusSchema,
+  /** First-party agents ("builder"); null for everything user-made. */
+  builtin: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 export type Agent = z.infer<typeof agentSchema>;
+
+// ---------------------------------------------------------------------------
+// Access requests (the Builder's request → notify → approve loop)
+// ---------------------------------------------------------------------------
+
+export const accessRequestSchema = z.object({
+  id: z.string().uuid(),
+  requesterUserId: z.string().uuid(),
+  requesterName: z.string(),
+  targetType: z.enum(["agent", "domain", "model"]),
+  targetId: z.string().uuid(),
+  targetName: z.string(),
+  accessRight: z.enum(["use", "edit", "admin"]),
+  reason: z.string(),
+  via: z.string(),
+  status: z.enum(["open", "approved", "denied"]),
+  decidedByName: z.string().nullable(),
+  decidedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type AccessRequest = z.infer<typeof accessRequestSchema>;
 
 export const createAgentSchema = z.object({
   name: z.string().min(1).max(120),

@@ -238,8 +238,10 @@ function SessionLanding() {
     }
   };
 
+  // The built-in Builder doesn't count as "having an agent" — the
+  // first-run checklist should still walk a fresh org through setup.
   const usable = (agents.data?.agents ?? []).filter(
-    (a) => a.status === "active" && a.myRight,
+    (a) => a.status === "active" && a.myRight && !a.builtin,
   );
   const isAdmin = me.data?.user.role !== "member";
   const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });
@@ -323,6 +325,34 @@ function SessionLanding() {
           {error}
         </p>
       )}
+      {(() => {
+        const builder = (agents.data?.agents ?? []).find(
+          (a) => a.builtin === "builder" && a.myRight,
+        );
+        if (!builder) return null;
+        return (
+          <p
+            className="page-subtitle"
+            style={{ marginTop: 18, fontSize: 12 }}
+          >
+            Need a new agent?{" "}
+            <button
+              type="button"
+              onClick={() => setTarget(builder)}
+              style={{
+                background: "none",
+                border: "none",
+                padding: 0,
+                font: "inherit",
+                color: "var(--accent-text)",
+                cursor: "pointer",
+              }}
+            >
+              Have the Builder create one with you →
+            </button>
+          </p>
+        );
+      })()}
     </div>
   );
 }

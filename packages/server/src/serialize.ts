@@ -55,6 +55,7 @@ export function serializeAgent(row: typeof agents.$inferSelect): Agent {
     color: row.color,
     tone: row.tone,
     status: row.status,
+    builtin: row.builtin,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

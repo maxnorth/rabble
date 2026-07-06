@@ -150,7 +150,12 @@ test("grants: domain grant to Engineering team cascades to Platform member", asy
     subject_type: string;
     access_right: string;
     target_type: string;
-  }>("SELECT subject_type, access_right, target_type FROM grants");
+  }>(
+    // The Builder ships with a seeded Everyone-use grant — exclude built-ins
+    `SELECT g.subject_type, g.access_right, g.target_type FROM grants g
+     LEFT JOIN agents a ON g.target_type = 'agent' AND a.id = g.target_id
+     WHERE a.builtin IS NULL`,
+  );
   expect(grants).toEqual([
     { subject_type: "team", access_right: "use", target_type: "domain" },
   ]);

@@ -839,6 +839,206 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
   expect(Number(finalCount[0]!.n)).toBe(4);
 });
 
+test("the Builder creates a measured draft agent conversationally", async () => {
+  // The quiet affordance on the Sessions landing targets the Builder.
+  await page.goto("/sessions");
+  await page
+    .getByRole("button", { name: "Have the Builder create one with you →" })
+    .click();
+  await expect(page.locator(".target-pill")).toContainText("Builder");
+
+  // Script the model: it asks to create the draft (a platform tool).
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "create_agent_draft",
+      toolArgs: {
+        name: "Release Notes Bot",
+        description: "Drafts release notes from merged PRs",
+        instructions: "Summarize merged PRs into crisp release notes.",
+      },
+    }),
+  });
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("I want an agent that drafts release notes");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+
+  // Platform tools act as the user — the standard approval card pauses it.
+  const card = page.locator(".approval-card");
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await expect(card).toContainText("create_agent_draft");
+  await card.getByRole("button", { name: "Approve as me" }).click();
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to:",
+    { timeout: 15000 },
+  );
+
+  // The draft exists, belongs to its maker, and the audit says via Builder.
+  const [draft] = await dbQuery<{ id: string; status: string; created_by: string }>(
+    "SELECT id, status, created_by FROM agents WHERE name = 'Release Notes Bot'",
+  );
+  expect(draft).toBeDefined();
+  expect(draft!.status).toBe("draft");
+  const [alex] = await dbQuery<{ id: string }>(
+    "SELECT id FROM users WHERE email = 'alex@acme.com'",
+  );
+  expect(draft!.created_by).toBe(alex!.id);
+  expect(
+    await pollFirstToolCall("%I want an agent that drafts release notes%"),
+  ).toMatchObject({
+    name: "create_agent_draft",
+    serverName: "Rabble platform",
+    authType: "user",
+    approval: { status: "approved", decidedByName: "Alex Lin" },
+  });
+  const createAudit = await dbQuery<{ summary: string }>(
+    `SELECT summary FROM audit_events
+     WHERE action = 'agent.create' AND summary LIKE '%via Builder%'`,
+  );
+  expect(createAudit).toHaveLength(1);
+
+  // Born measured: a second turn adds an eval criterion to the new draft.
+  // (Now the id is known, the scripted tool args can reference it.)
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "add_eval_criterion",
+      toolArgs: {
+        agentId: draft!.id,
+        name: "Accurate notes",
+        description: "Notes only mention PRs that actually merged.",
+      },
+    }),
+  });
+  await page.getByPlaceholder("Message Builder…").fill("Add a quality bar for it");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+
+  // Session posture: the first approval covers the rest of this session.
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ name: string }>(
+        "SELECT name FROM eval_criteria WHERE agent_id = $1",
+        [draft!.id],
+      );
+      return rows.map((r) => r.name);
+    })
+    .toEqual(["Accurate notes"]);
+  expect(await pollFirstToolCall("%Add a quality bar for it%")).toMatchObject({
+    name: "add_eval_criterion",
+    authType: "user",
+    approval: { status: "auto-approved" },
+  });
+  const criterionAudit = await dbQuery<{ summary: string }>(
+    `SELECT summary FROM audit_events
+     WHERE action = 'eval.criterion.add' AND summary LIKE '%via Builder%'`,
+  );
+  expect(criterionAudit).toHaveLength(1);
+});
+
+test("hitting an access limit becomes a request an admin approves", async ({
+  browser,
+}) => {
+  // Bea (member, use-only on Eng On-Call) asks the Builder for edit access.
+  const beaPage = await browser.newPage();
+  await beaPage.goto("/");
+  await beaPage.locator("input[type=email]").fill("bea@acme.com");
+  await beaPage.locator("input[type=password]").fill("bea-real-password-1");
+  await beaPage.getByRole("button", { name: "Sign in" }).click();
+  await expect(beaPage.locator(".session-greeting")).toBeVisible();
+
+  await beaPage
+    .getByRole("button", { name: "Have the Builder create one with you →" })
+    .click();
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "request_access",
+      toolArgs: {
+        targetType: "agent",
+        targetName: "Eng On-Call",
+        right: "edit",
+        reason: "Tune the CI triage instructions",
+      },
+    }),
+  });
+  await beaPage
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("I need to edit Eng On-Call's instructions");
+  await beaPage.getByRole("button", { name: "Send", exact: true }).click();
+
+  const card = beaPage.locator(".approval-card");
+  await expect(card).toBeVisible({ timeout: 15000 });
+  await expect(card).toContainText("request_access");
+  await card.getByRole("button", { name: "Approve as me" }).click();
+
+  // The request lands open, attributed via Builder…
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ status: string; via: string }>(
+        "SELECT status, via FROM access_requests WHERE access_right = 'edit'",
+      );
+      return rows[0] ?? null;
+    })
+    .toEqual({ status: "open", via: "builder" });
+
+  // …and the org admins get a Slack DM ping with the context attached.
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { channel?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.channel === "U777" &&
+          r.body.text?.includes("Bea Ortiz requests edit") &&
+          r.body.text?.includes("via Builder"),
+      );
+    })
+    .toBe(true);
+
+  // Alex reviews it on the new Admin screen and approves.
+  await page.goto("/admin/access-requests");
+  const requestRow = page.locator(".row", { hasText: "Bea Ortiz requests" });
+  await expect(requestRow).toBeVisible();
+  await expect(requestRow).toContainText("edit");
+  await expect(requestRow).toContainText("Eng On-Call");
+  await expect(requestRow).toContainText("Tune the CI triage instructions");
+  await expect(requestRow.locator(".chip", { hasText: "via Builder" })).toBeVisible();
+  await requestRow.getByRole("button", { name: "Approve", exact: true }).click();
+  await expect(page.locator(".row", { hasText: "Approved by Alex Lin" })).toBeVisible();
+
+  // The grant materialized and Bea's effective right actually changed.
+  const [engOnCall] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Eng On-Call'",
+  );
+  const grantRows = await dbQuery<{ access_right: string; subject_type: string }>(
+    `SELECT g.access_right, g.subject_type FROM grants g
+     JOIN users u ON u.id = g.subject_id
+     WHERE u.email = 'bea@acme.com' AND g.target_type = 'agent' AND g.target_id = $1`,
+    [engOnCall!.id],
+  );
+  expect(grantRows).toEqual([{ access_right: "edit", subject_type: "user" }]);
+  const me = await beaPage.request.get(`/api/agents/${engOnCall!.id}`);
+  expect(((await me.json()) as { myRight: string }).myRight).toBe("edit");
+
+  const grantAudit = await dbQuery<{ summary: string }>(
+    `SELECT summary FROM audit_events
+     WHERE action = 'grant.add' AND summary LIKE '%approved access request%'`,
+  );
+  expect(grantAudit).toHaveLength(1);
+  await beaPage.close();
+});
+
 test("session search filters the sidebar", async () => {
   // Hard navigation: /sessions/:id -> /sessions remounts the section, and a
   // fill during that remount lands on the discarded input.
@@ -1011,12 +1211,13 @@ test("stats dashboards reflect real usage", async () => {
     page.locator(".chart-card", { hasText: "Turns per session" }).locator(".bar-row").first(),
   ).toBeVisible();
 
-  // Filtering by user: Bea drove one session in 02-governance
+  // Filtering by user: Bea drove one session in 02-governance and one
+  // Builder session earlier in this journey
   await page.locator("select[title='Filter by user']").selectOption({ label: "Bea Ortiz" });
   const beaSessions = page.locator(".kpi", { hasText: "Sessions" }).first();
   await expect
     .poll(async () => Number(await beaSessions.locator(".value").innerText()))
-    .toBe(1);
+    .toBe(2);
   await page.locator("select[title='Filter by user']").selectOption("");
 
   // Filtering to one agent narrows the numbers without erroring

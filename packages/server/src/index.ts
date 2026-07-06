@@ -22,6 +22,7 @@ import { profileRoutes } from "./routes/profile.js";
 import { automationRoutes } from "./routes/automations.js";
 import { statsRoutes } from "./routes/stats.js";
 import { inboundRoutes } from "./routes/inbound.js";
+import { accessRequestRoutes } from "./routes/accessRequests.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -87,6 +88,7 @@ export async function buildServer() {
   await app.register(profileRoutes);
   await app.register(automationRoutes);
   await app.register(statsRoutes);
+  await app.register(accessRequestRoutes);
 
   // In production the server also serves the built web app.
   const webDist = join(

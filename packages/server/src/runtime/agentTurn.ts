@@ -34,9 +34,10 @@ import { decryptSecret } from "../crypto.js";
 import { chatModelFor } from "../models/chat.js";
 import { mcpCallTool } from "../mcp/client.js";
 import { Channel } from "./channel.js";
-import { requestApproval, type ApprovalDecision } from "./approvals.js";
+import { gateUserAuth, type GateContext } from "./userAuthGate.js";
+import { buildPlatformTools } from "./platformTools.js";
 
-interface AgentTurnInput {
+export interface AgentTurnInput {
   agent: typeof agents.$inferSelect;
   model: typeof models.$inferSelect | undefined;
   user: typeof users.$inferSelect;
@@ -110,6 +111,24 @@ function chunkText(content: unknown): string {
   return "";
 }
 
+export function gateContextFor(
+  input: AgentTurnInput,
+  preferences: { approvalPosture: string },
+  emit: (event: AgentTurnEvent) => void,
+): GateContext {
+  return {
+    sessionId: input.sessionId,
+    userId: input.user.id,
+    userName: input.user.name,
+    requireApproval: input.requireApproval,
+    sessionApproved: input.sessionApproved,
+    interactive: input.interactive,
+    approvalPosture: preferences.approvalPosture,
+    approvalPrompt: input.approvalPrompt,
+    emit,
+  };
+}
+
 /** Build governed LangChain tools from the agent's attached MCP servers. */
 async function buildGovernedTools(
   input: AgentTurnInput,
@@ -170,73 +189,18 @@ async function buildGovernedTools(
 
             let approval: ApprovalOutcome | null = null;
             if (authType === "user") {
-              const autoApprove =
-                !input.requireApproval &&
-                (preferences.approvalPosture === "trust" ||
-                  (preferences.approvalPosture === "session" && input.sessionApproved));
-              if (autoApprove) {
-                approval = { status: "auto-approved", decidedByName: input.user.name };
-              } else if (!input.interactive && !input.approvalPrompt) {
-                // No way to prompt on this surface — refuse the action.
-                approval = { status: "denied", decidedByName: null };
+              const gate = await gateUserAuth(gateContextFor(input, preferences, emit), call);
+              if (gate.outcome === "refused") {
                 const denied: ToolCall = {
                   ...call,
-                  output:
-                    "Approvals aren't available on this surface yet — run this from the web app.",
-                  approval,
+                  output: gate.toolOutput,
+                  approval: gate.approval,
                   durationMs: Date.now() - startedAt,
                 };
                 emit({ type: "tool-end", toolCall: denied });
-                return (
-                  "This action needs the user's approval, which isn't possible on " +
-                  "this surface. Tell the user to run it from the Rabble web app."
-                );
-              } else {
-                const { approvalId, decision } = requestApproval({
-                  sessionId: input.sessionId,
-                  userId: input.user.id,
-                  toolName: call.name,
-                  serverName: call.serverName ?? null,
-                  input: call.input,
-                });
-                if (!input.interactive && input.approvalPrompt) {
-                  // Deliver the ask where the user actually is.
-                  void input
-                    .approvalPrompt({
-                      approvalId,
-                      toolName: call.name,
-                      serverName: call.serverName ?? null,
-                      input: call.input,
-                    })
-                    .catch(() => {});
-                }
-                emit({
-                  type: "approval-request",
-                  approvalId,
-                  toolName: toolInfo.name,
-                  serverName: server.name,
-                  input: args,
-                });
-                const result: ApprovalDecision = await decision;
-                if (result === "deny" || result === "timed-out") {
-                  approval = {
-                    status: result === "deny" ? "denied" : "timed-out",
-                    decidedByName: result === "deny" ? input.user.name : null,
-                  };
-                  const denied: ToolCall = {
-                    ...call,
-                    output: "The user declined this action.",
-                    approval,
-                    durationMs: Date.now() - startedAt,
-                  };
-                  emit({ type: "tool-end", toolCall: denied });
-                  return "The user declined this action. Do not retry it; explain what you were unable to do.";
-                }
-                approval = {
-                  status: result === "approve" ? "approved" : "ran-as-service",
-                  decidedByName: input.user.name,
-                };
+                return gate.modelText;
               }
+              approval = gate.approval;
             }
 
             try {
@@ -297,6 +261,13 @@ export async function* runAgentTurn(
   const governedTools = await buildGovernedTools(input, (event) =>
     channel.push(event),
   );
+  if (input.agent.builtin === "builder") {
+    // The Builder operates the platform itself through governed tools —
+    // same inline tool-call UI, same consent gate, audited "via Builder".
+    governedTools.push(
+      ...buildPlatformTools(input, (event) => channel.push(event)),
+    );
+  }
 
   // Anything the model tries to call outside this set is a scope violation:
   // the governed tools it was given, plus the runtime's own built-ins.

@@ -116,7 +116,10 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
 
 test("agents: create, configure, and activate an agent", async () => {
   await page.locator("nav a[title='Agents']").click();
-  await expect(page.getByText("No agents match")).toBeVisible();
+  // A fresh org isn't empty: the built-in Builder ships with the platform.
+  const builderRow = page.locator(".dir-table tbody tr", { hasText: "Builder" });
+  await expect(builderRow).toBeVisible();
+  await expect(builderRow.locator(".chip", { hasText: "built-in" })).toBeVisible();
 
   await page.getByRole("button", { name: "+ New agent" }).click();
   await page.getByPlaceholder("Eng On-Call").fill("Eng On-Call");
@@ -147,7 +150,7 @@ test("agents: create, configure, and activate an agent", async () => {
     status: string;
     model_id: string | null;
     instructions: string;
-  }>("SELECT slug, status, model_id, instructions FROM agents");
+  }>("SELECT slug, status, model_id, instructions FROM agents WHERE builtin IS NULL");
   expect(agents).toHaveLength(1);
   expect(agents[0]!.slug).toBe("eng-on-call");
   expect(agents[0]!.status).toBe("active");

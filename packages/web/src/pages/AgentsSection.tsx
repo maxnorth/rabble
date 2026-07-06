@@ -381,6 +381,14 @@ function AgentDirectory() {
                     <span style={{ fontWeight: 500, color: "var(--text-1)", display: "block" }}>
                       {a.name}{" "}
                       {a.status === "draft" && <span className="chip amber">draft</span>}
+                      {a.builtin && (
+                        <span
+                          className="chip purple"
+                          title="Ships with the platform — creates and configures agents conversationally"
+                        >
+                          built-in
+                        </span>
+                      )}
                       {a.needsAttention && (
                         <span
                           className="chip amber"

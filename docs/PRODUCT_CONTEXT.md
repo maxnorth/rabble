@@ -104,7 +104,17 @@ The research docs are context, not specs: they explain *why* the design is shape
 
 ---
 
-## 5. Planned but NOT yet designed/built: the Builder (highest-priority next design work)
+## 5. The Builder (v1 SHIPPED — conversational creation + access requests)
+
+> Status: a v1 exists. Every org ships with a built-in **Builder** agent
+> (usable by Everyone; directory shows a "built-in" chip) whose platform
+> tools — `create_agent_draft`, `add_eval_criterion`, `attach_mcp_server`,
+> `list_mcp_servers`, `request_access` — run through the standard governed
+> tool pipeline: inline tool-call UI, the user-auth consent gate, rights
+> enforced per-tool against the asking user, audit rows attributed
+> "via Builder". `request_access` feeds Admin › Access requests (below).
+> Still open from the original vision: trial-session test-case mining,
+> "create an agent from this session", and the Share verb.
 
 From the J1 journey mapping (full detail in the journey map doc's "Planned solutions" section):
 
@@ -121,7 +131,10 @@ From the J1 journey mapping (full detail in the journey map doc's "Planned solut
 ## 6. Other open threads (not yet built)
 
 - **Grant editing** is display-only everywhere (agent Access tab, team Agent-access, domain grants, model access). Wiring it end-to-end is the biggest missing interaction after the Builder.
-- The **approval screen for access requests** (admin side of the Builder's request flow) — on J1's critical path, doesn't exist yet.
+- ~~The **approval screen for access requests**~~ — SHIPPED: Admin ›
+  Access requests (open-count badge, approve materializes the grant with
+  right-upgrade semantics, deny recorded; admins get a Slack DM ping when
+  a request lands; everything audited).
 - **The "cap lifted" hero flow** (the pitch demo): risky action → blocked → owner grants scoped access with track-record evidence → action runs → audit trail. Pieces exist; the connected flow doesn't.
 - Creation flows are stubs (+ New agent/team, Register model, Add connection, + Create key…).
 - Only **one scripted session** (Eng On-Call CI triage). More scripted sessions hitting different personas would strengthen demos.

@@ -10,6 +10,7 @@ const ADMIN_PAGES = [
   { key: "connections", label: "Connections" },
   { key: "mcp", label: "MCP servers" },
   { key: "models", label: "Models" },
+  { key: "access-requests", label: "Access requests" },
   { key: "api-keys", label: "API keys" },
   { key: "audit", label: "Audit log" },
   { key: "settings", label: "Settings" },
@@ -17,6 +18,11 @@ const ADMIN_PAGES = [
 
 export function AdminSection() {
   const { page } = useParams();
+  const openRequests = useQuery({
+    queryKey: ["access-request-count"],
+    queryFn: api.accessRequestCount,
+    refetchInterval: 30_000,
+  });
 
   return (
     <>
@@ -29,6 +35,9 @@ export function AdminSection() {
             className={({ isActive }) => `sidebar-item${isActive ? " active" : ""}`}
           >
             <span className="label">{p.label}</span>
+            {p.key === "access-requests" && (openRequests.data?.open ?? 0) > 0 && (
+              <span className="chip amber">{openRequests.data!.open}</span>
+            )}
           </NavLink>
         ))}
       </aside>
@@ -36,11 +45,120 @@ export function AdminSection() {
         {page === "connections" && <ConnectionsPage />}
         {page === "mcp" && <McpServersPage />}
         {page === "models" && <ModelsPage />}
+        {page === "access-requests" && <AccessRequestsPage />}
         {page === "api-keys" && <ApiKeysPage />}
         {page === "audit" && <AuditPage />}
         {page === "settings" && <SettingsPage />}
       </main>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Access requests (the Builder's request → notify → approve loop)
+// ---------------------------------------------------------------------------
+
+function AccessRequestsPage() {
+  const queryClient = useQueryClient();
+  const requests = useQuery({
+    queryKey: ["access-requests"],
+    queryFn: api.listAccessRequests,
+  });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["access-requests"] });
+    void queryClient.invalidateQueries({ queryKey: ["access-request-count"] });
+  };
+  const approve = useMutation({
+    mutationFn: (id: string) => api.approveAccessRequest(id),
+    onSuccess: invalidate,
+  });
+  const deny = useMutation({
+    mutationFn: (id: string) => api.denyAccessRequest(id),
+    onSuccess: invalidate,
+  });
+
+  const open = requests.data?.requests.filter((r) => r.status === "open") ?? [];
+  const decided = requests.data?.requests.filter((r) => r.status !== "open") ?? [];
+
+  return (
+    <div className="content-col">
+      <div className="page-head">
+        <div>
+          <h1 className="page-title">Access requests</h1>
+          <p className="page-subtitle">
+            People asking for rights — approving materializes the grant and
+            records it in the audit log.
+          </p>
+        </div>
+      </div>
+
+      <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+        Awaiting review
+      </div>
+      <div className="row-group" style={{ marginBottom: 18 }}>
+        {open.map((r) => (
+          <div className="row" key={r.id}>
+            <div className="grow">
+              <div className="title">
+                {r.requesterName} requests <strong>{r.accessRight}</strong> on{" "}
+                {r.targetType} “{r.targetName}”
+              </div>
+              <div className="sub">
+                {r.reason || "No reason given"} · {relativeTime(r.createdAt)}
+              </div>
+            </div>
+            {r.via === "builder" && <span className="chip purple">via Builder</span>}
+            <button
+              className="btn primary"
+              disabled={approve.isPending}
+              onClick={() => approve.mutate(r.id)}
+            >
+              Approve
+            </button>
+            <button
+              className="btn danger"
+              disabled={deny.isPending}
+              onClick={() => deny.mutate(r.id)}
+            >
+              Deny
+            </button>
+          </div>
+        ))}
+        {open.length === 0 && (
+          <div className="row">
+            <div className="sub">Nothing waiting — requests land here when someone (or the Builder acting for them) asks for access.</div>
+          </div>
+        )}
+      </div>
+
+      {decided.length > 0 && (
+        <>
+          <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+            Decided
+          </div>
+          <div className="row-group">
+            {decided.map((r) => (
+              <div className="row" key={r.id}>
+                <div className="grow">
+                  <div className="title">
+                    {r.requesterName} · {r.accessRight} on {r.targetType} “
+                    {r.targetName}”
+                  </div>
+                  <div className="sub">
+                    {r.status === "approved" ? "Approved" : "Denied"} by{" "}
+                    {r.decidedByName ?? "—"}
+                    {r.decidedAt ? ` · ${relativeTime(r.decidedAt)}` : ""}
+                  </div>
+                </div>
+                <span className={`chip ${r.status === "approved" ? "green" : "amber"}`}>
+                  {r.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 

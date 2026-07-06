@@ -6,9 +6,9 @@ import {
   type StreamEvent,
   type ToolCall,
 } from "@rabblehq/core";
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { agents, messages, models, sessions, users } from "../db/schema.js";
+import { agents, messages, sessions, users } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
@@ -85,11 +85,16 @@ export async function sessionRoutes(app: FastifyInstance) {
       }
     } else {
       // "Auto": route by intent across the agents the user can actually use.
+      // Built-ins (the Builder) are picked deliberately, never auto-routed.
       const candidates = await db
         .select()
         .from(agents)
         .where(
-          and(eq(agents.orgId, req.user!.orgId), eq(agents.status, "active")),
+          and(
+            eq(agents.orgId, req.user!.orgId),
+            eq(agents.status, "active"),
+            isNull(agents.builtin),
+          ),
         )
         .orderBy(agents.name);
       const usable = candidates.filter((c) =>
@@ -251,15 +256,8 @@ export async function sessionRoutes(app: FastifyInstance) {
       .limit(1);
     if (!row) return reply.code(404).send({ error: "Session not found" });
 
-    const model = row.agent.modelId
-      ? (
-          await db
-            .select()
-            .from(models)
-            .where(eq(models.id, row.agent.modelId))
-            .limit(1)
-        )[0]
-      : undefined;
+    const { resolveAgentModel } = await import("../models/resolve.js");
+    const model = await resolveAgentModel(row.agent);
 
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",

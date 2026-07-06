@@ -112,6 +112,9 @@ export async function seedDemo(): Promise<void> {
     { teamId: support!.id, userId: teammates[2]!.id, teamRole: "lead" as const },
   ]);
 
+  const { ensureBuilderAgent } = await import("./builder.js");
+  await ensureBuilderAgent(orgId);
+
   // Domains
   const [engDomain] = await db
     .insert(domains)

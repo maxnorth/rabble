@@ -56,6 +56,9 @@ export async function authRoutes(app: FastifyInstance) {
         .values({ teamId: everyone!.id, userId: user!.id });
       return user!;
     });
+    // Every org ships with the built-in Builder agent (usable by Everyone).
+    const { ensureBuilderAgent } = await import("../db/builder.js");
+    await ensureBuilderAgent(owner.orgId);
     await createAuthSession(reply, owner.id);
     await recordAudit({
       orgId: owner.orgId,

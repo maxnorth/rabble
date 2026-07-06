@@ -126,6 +126,8 @@ export const agents = pgTable(
     status: text("status", { enum: ["active", "draft"] })
       .notNull()
       .default("draft"),
+    /** First-party agents ("builder"); NULL for everything user-made. */
+    builtin: text("builtin"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -240,6 +242,39 @@ export const domains = pgTable(
       .defaultNow(),
   },
   (t) => [uniqueIndex("domains_org_slug_idx").on(t.orgId, t.slug)],
+);
+
+/**
+ * A user asking for a grant — usually the Builder detecting an access limit
+ * and requesting on the user's behalf. Approval materializes a real grant.
+ */
+export const accessRequests = pgTable(
+  "access_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    requesterUserId: uuid("requester_user_id")
+      .notNull()
+      .references(() => users.id),
+    targetType: text("target_type", {
+      enum: ["agent", "domain", "model"],
+    }).notNull(),
+    targetId: uuid("target_id").notNull(),
+    accessRight: text("access_right", { enum: ["use", "edit", "admin"] }).notNull(),
+    reason: text("reason").notNull().default(""),
+    via: text("via").notNull().default("web"),
+    status: text("status", { enum: ["open", "approved", "denied"] })
+      .notNull()
+      .default("open"),
+    decidedBy: uuid("decided_by").references(() => users.id),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("access_requests_org_status_idx").on(t.orgId, t.status)],
 );
 
 export const grants = pgTable(

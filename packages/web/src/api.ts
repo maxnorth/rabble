@@ -6,6 +6,7 @@ import type {
   AgentToolConfig,
   ApiKey,
   ApprovalDecisionRequest,
+  AccessRequest,
   AuditEvent,
   Automation,
   CatalogModel,
@@ -354,6 +355,13 @@ export const api = {
       body,
     ),
   revokeApiKey: (id: string) => post<{ ok: true }>(`/api/api-keys/${id}/revoke`),
+  listAccessRequests: () =>
+    get<{ requests: AccessRequest[] }>("/api/access-requests"),
+  accessRequestCount: () => get<{ open: number }>("/api/access-requests/count"),
+  approveAccessRequest: (id: string) =>
+    post<{ ok: true }>(`/api/access-requests/${id}/approve`),
+  denyAccessRequest: (id: string) =>
+    post<{ ok: true }>(`/api/access-requests/${id}/deny`),
   listAudit: (action?: string, offset = 0) =>
     get<{ events: AuditEvent[] }>(
       `/api/audit?offset=${offset}${action ? `&action=${action}` : ""}`,

@@ -197,6 +197,12 @@ export const api = {
       session: SessionWithAgent;
       messages: Message[];
       evalResults: SessionEvalResult[];
+      pendingApprovals: Array<{
+        approvalId: string;
+        toolName: string;
+        serverName: string | null;
+        input: unknown;
+      }>;
     }>(`/api/sessions/${id}`),
   decideApproval: (sessionId: string, approvalId: string, body: ApprovalDecisionRequest) =>
     post<{ ok: true }>(`/api/sessions/${sessionId}/approvals/${approvalId}`, body),

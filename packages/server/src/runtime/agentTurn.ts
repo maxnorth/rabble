@@ -195,6 +195,9 @@ async function buildGovernedTools(
                 const { approvalId, decision } = requestApproval({
                   sessionId: input.sessionId,
                   userId: input.user.id,
+                  toolName: call.name,
+                  serverName: call.serverName ?? null,
+                  input: call.input,
                 });
                 if (!input.interactive && input.approvalPrompt) {
                   // Deliver the ask where the user actually is.

@@ -11,6 +11,9 @@ export type ApprovalDecision = "approve" | "deny" | "run-as-service" | "timed-ou
 interface Pending {
   sessionId: string;
   userId: string;
+  toolName: string;
+  serverName: string | null;
+  input: unknown;
   resolve: (decision: ApprovalDecision) => void;
   timer: NodeJS.Timeout;
 }
@@ -23,6 +26,9 @@ const APPROVAL_TIMEOUT_MS = Number(process.env.APPROVAL_TIMEOUT_MS ?? 120_000);
 export function requestApproval(input: {
   sessionId: string;
   userId: string;
+  toolName?: string;
+  serverName?: string | null;
+  input?: unknown;
 }): { approvalId: string; decision: Promise<ApprovalDecision> } {
   const approvalId = randomUUID();
   const decision = new Promise<ApprovalDecision>((resolve) => {
@@ -33,6 +39,9 @@ export function requestApproval(input: {
     pending.set(approvalId, {
       sessionId: input.sessionId,
       userId: input.userId,
+      toolName: input.toolName ?? "tool",
+      serverName: input.serverName ?? null,
+      input: input.input ?? null,
       resolve: (d) => {
         clearTimeout(timer);
         pending.delete(approvalId);
@@ -57,4 +66,19 @@ export function decideApproval(
   }
   entry.resolve(decision);
   return true;
+}
+
+/** Pending approvals a given user can decide on a session (for UI resume). */
+export function pendingApprovalsFor(
+  sessionId: string,
+  userId: string,
+): Array<{ approvalId: string; toolName: string; serverName: string | null; input: unknown }> {
+  return [...pending.entries()]
+    .filter(([, p]) => p.sessionId === sessionId && p.userId === userId)
+    .map(([approvalId, p]) => ({
+      approvalId,
+      toolName: p.toolName,
+      serverName: p.serverName,
+      input: p.input,
+    }));
 }

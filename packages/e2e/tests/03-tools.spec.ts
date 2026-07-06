@@ -249,11 +249,11 @@ test("an unanswered approval times out and the tool is not run", async () => {
     .fill("File the ignored issue");
   await page.getByRole("button", { name: "Send" }).click();
 
-  // Nobody clicks. The broker times out (4s in e2e) and the turn completes.
+  // Nobody clicks. The broker times out (15s in e2e) and the turn completes.
   await expect(page.locator(".approval-card")).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
     "Mock reply to: File the ignored issue",
-    { timeout: 20_000 },
+    { timeout: 30_000 },
   );
   expect(await pollFirstToolCall("%File the ignored issue%")).toMatchObject({
     name: "create_issue",

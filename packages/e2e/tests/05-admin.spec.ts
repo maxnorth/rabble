@@ -415,6 +415,61 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
   });
 });
 
+test("a Slack-raised approval can be decided from the web session", async () => {
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "create_issue",
+      toolArgs: { title: "Approved from the web" },
+    }),
+  });
+
+  // A fresh thread: the earlier once-per-session approval doesn't carry
+  // over, so this ask must pause again
+  const deliveryPromise = signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C777",
+      user: "U777",
+      text: "File one more issue please",
+      ts: "1712.020",
+    },
+  });
+
+  // Wait until the ask is actually pending (its DM went out), then open
+  // the web session: the same approval card appears on load.
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as { requests: Array<{ body: { text?: string } }> };
+      // The previous test sent an identical DM — this one is the second
+      return log.requests.filter((r) =>
+        r.body?.text?.includes("wants to run create_issue"),
+      ).length;
+    })
+    .toBeGreaterThanOrEqual(2);
+  await page.goto("/sessions");
+  await page
+    .locator(".sidebar-item", { hasText: "File one more issue please" })
+    .click();
+  const card = page.locator(".approval-card");
+  await expect(card).toBeVisible({ timeout: 5000 });
+  await expect(card).toContainText("create_issue");
+  await card.getByRole("button", { name: "Approve as me" }).click();
+
+  const delivery = await deliveryPromise;
+  expect(delivery.status).toBe(200);
+  expect(await pollFirstToolCall("%File one more issue please%")).toMatchObject({
+    name: "create_issue",
+    authType: "user",
+    approval: { status: "approved", decidedByName: "Alex Lin" },
+  });
+});
+
 function signedGithubPost(body: unknown, deliveryId: string, event = "issue_comment") {
   const raw = JSON.stringify(body);
   const sig = `sha256=${createHmac("sha256", "gh-webhook-secret").update(raw).digest("hex")}`;

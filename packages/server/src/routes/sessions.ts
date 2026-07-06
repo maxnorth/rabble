@@ -13,7 +13,7 @@ import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
 import { routeByIntent } from "../runtime/router.js";
-import { decideApproval } from "../runtime/approvals.js";
+import { decideApproval, pendingApprovalsFor } from "../runtime/approvals.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
 import { judgeSession } from "../evals/judge.js";
 
@@ -167,6 +167,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         authorName: h.authorName,
       })),
       evalResults: evals,
+      pendingApprovals: pendingApprovalsFor(id, req.user!.id),
     };
   });
 

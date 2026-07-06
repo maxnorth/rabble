@@ -112,8 +112,9 @@ export default async function globalSetup() {
       PORT: String(E2E_PORT),
       DATABASE_URL: e2eDatabaseUrl,
       COOKIE_SECRET: "e2e-test-secret-0123456789abcdef0123456789abcdef",
-      // Keep the approval-timeout journey fast (default is 2 minutes)
-      APPROVAL_TIMEOUT_MS: "4000",
+      // Keep the approval-timeout journey fast (default is 2 minutes) while
+      // leaving room for tests that navigate the web UI before deciding
+      APPROVAL_TIMEOUT_MS: "15000",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

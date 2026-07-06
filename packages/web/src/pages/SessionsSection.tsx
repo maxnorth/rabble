@@ -512,6 +512,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const inlineToolCalls = prefs.data?.preferences.inlineToolCalls ?? true;
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+
   const navigate = useNavigate();
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
   const rename = useMutation({
@@ -533,6 +534,18 @@ function SessionThread({ sessionId }: { sessionId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [liveTools, setLiveTools] = useState<Array<{ toolCall: ToolCall; running: boolean }>>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+
+  // Approvals raised by surface turns (Slack/GitHub) while nobody had the
+  // web session open: surface them as cards on load — either place decides.
+  useEffect(() => {
+    const pending = session.data?.pendingApprovals ?? [];
+    if (pending.length === 0) return;
+    setApprovals((prev) => {
+      const known = new Set(prev.map((a) => a.approvalId));
+      const fresh = pending.filter((a) => !known.has(a.approvalId));
+      return fresh.length > 0 ? [...prev, ...fresh] : prev;
+    });
+  }, [session.data]);
   const [streamingText, setStreamingText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [text, setText] = useState("");

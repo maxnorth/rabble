@@ -209,6 +209,13 @@ function SessionLanding() {
     }
   };
 
+  const usable = (agents.data?.agents ?? []).filter(
+    (a) => a.status === "active" && a.myRight,
+  );
+  const isAdmin = me.data?.user.role !== "member";
+  const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });
+  const hasModel = (models.data?.models ?? []).some((m) => m.enabled);
+
   return (
     <div className="session-landing">
       <div className="session-greeting">
@@ -218,6 +225,42 @@ function SessionLanding() {
       <p className="page-subtitle" style={{ marginTop: -14 }}>
         Start a session with an agent — or let Auto route you to the right one.
       </p>
+      {agents.data && usable.length === 0 && (
+        <div
+          className="card"
+          style={{ padding: 16, marginBottom: 16, maxWidth: 560 }}
+        >
+          <strong style={{ fontSize: 13.5 }}>
+            {isAdmin ? "Let's get your first agent running" : "No agents yet"}
+          </strong>
+          {isAdmin ? (
+            <ol style={{ margin: "10px 0 0 18px", fontSize: 12.5, color: "var(--text-dim)", display: "grid", gap: 6 }}>
+              <li>
+                {hasModel ? "✓ " : ""}
+                <Link to="/admin/models" style={{ color: "var(--accent-text)" }}>
+                  Register a model
+                </Link>{" "}
+                — enable a built-in or point at your own endpoint
+              </li>
+              <li>
+                <Link to="/agents" style={{ color: "var(--accent-text)" }}>
+                  Create an agent
+                </Link>{" "}
+                — name, instructions, model, then set it active
+              </li>
+              <li>
+                Grant access — on the agent's access tab, so teammates can use
+                it (you already can, as its creator)
+              </li>
+            </ol>
+          ) : (
+            <p style={{ fontSize: 12.5, color: "var(--text-dim)", margin: "8px 0 0" }}>
+              Nothing has been shared with you yet — ask an org admin to grant
+              you access to an agent.
+            </p>
+          )}
+        </div>
+      )}
       <div className="composer">
         <textarea
           placeholder="Describe what you need help with…"

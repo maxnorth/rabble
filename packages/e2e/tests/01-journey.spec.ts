@@ -39,6 +39,9 @@ test("first boot walks through owner setup", async () => {
   await page.getByRole("button", { name: "Create owner account" }).click();
 
   await expect(page.locator(".session-greeting")).toBeVisible();
+  // A fresh org gets the admin onboarding checklist
+  await expect(page.getByText("Let's get your first agent running")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Register a model" })).toBeVisible();
 
   const orgs = await dbQuery<{ name: string }>("SELECT name FROM orgs");
   expect(orgs).toEqual([{ name: "Acme Corp" }]);
@@ -263,6 +266,19 @@ test("sessions: rename inline and delete with cascade", async () => {
     [doomed[0]!.id],
   );
   expect(Number(gone[0]!.count)).toBe(0);
+});
+
+test("login brute force is throttled", async () => {
+  const anon = await request.newContext({ baseURL: "http://localhost:3178" });
+  let last = 0;
+  for (let i = 0; i < 11; i++) {
+    const res = await anon.post("/api/auth/login", {
+      data: { email: "attacker-target@acme.com", password: `guess-${i}` },
+    });
+    last = res.status();
+  }
+  expect(last).toBe(429);
+  await anon.dispose();
 });
 
 test("API rejects unauthenticated requests", async () => {

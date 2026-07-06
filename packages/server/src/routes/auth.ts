@@ -68,16 +68,37 @@ export async function authRoutes(app: FastifyInstance) {
     return { user: serializeUser(owner) };
   });
 
+  // Simple in-process brute-force guard: 10 failed attempts per
+  // email+address in 15 minutes. (Single-instance OSS scope — a shared
+  // store comes with multi-instance hosting.)
+  const failedLogins = new Map<string, { count: number; resetAt: number }>();
+  const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+  const LOGIN_MAX_FAILURES = 10;
+
   app.post("/api/auth/login", async (req, reply) => {
     const body = loginRequestSchema.parse(req.body);
+    const throttleKey = `${body.email.toLowerCase()}|${req.ip}`;
+    const entry = failedLogins.get(throttleKey);
+    if (entry && entry.resetAt > Date.now() && entry.count >= LOGIN_MAX_FAILURES) {
+      return reply
+        .code(429)
+        .send({ error: "Too many failed attempts — try again in a few minutes" });
+    }
     const [user] = await db
       .select()
       .from(users)
       .where(eq(users.email, body.email.toLowerCase()))
       .limit(1);
     if (!user || !verifyPassword(body.password, user.passwordHash)) {
+      const current =
+        entry && entry.resetAt > Date.now()
+          ? entry
+          : { count: 0, resetAt: Date.now() + LOGIN_WINDOW_MS };
+      current.count += 1;
+      failedLogins.set(throttleKey, current);
       return reply.code(401).send({ error: "Invalid email or password" });
     }
+    failedLogins.delete(throttleKey);
     if (!user.active) {
       return reply.code(403).send({ error: "This account has been deactivated" });
     }

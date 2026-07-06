@@ -1,90 +1,61 @@
 /**
- * Executes one agent turn on top of the LangChain Deep Agents SDK
- * (`deepagents`, LangGraph-based). Rabble resolves the agent's model and
- * credentials from its own registry, hands the turn to a deep agent, and
- * normalizes the run into a stream of events (text deltas + tool calls).
+ * Executes one agent turn on the LangChain Deep Agents SDK, with Rabble's
+ * governance layered around it:
  *
- * The SDK's built-ins (planning todos, virtual filesystem, sub-agents) come
- * for free; Rabble-governed tools (MCP, grants, service-vs-user auth,
- * approval interrupts via `interruptOn`) attach here as the platform grows.
+ * - The agent's model and credentials come from the model registry.
+ * - Its MCP servers (enabled tools only) are injected as callable tools.
+ * - Every tool carries an auth type. Service tools run under the org
+ *   credential; user tools pause the turn on an in-thread approval card
+ *   (unless the user's approval posture is "auto").
+ * - Every tool call is surfaced live (tool-start / tool-end) and recorded
+ *   on the transcript.
  */
-import { and, eq } from "drizzle-orm";
-import { ChatAnthropic } from "@langchain/anthropic";
-import { ChatOpenAI } from "@langchain/openai";
-import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import {
-  AIMessage,
-  AIMessageChunk,
-  ToolMessage,
-  isAIMessage,
-  isAIMessageChunk,
-  isToolMessage,
-} from "@langchain/core/messages";
+import { randomUUID } from "node:crypto";
+import { and, eq, inArray } from "drizzle-orm";
+import { tool } from "@langchain/core/tools";
+import { AIMessageChunk, isAIMessageChunk } from "@langchain/core/messages";
 import { createDeepAgent } from "deepagents";
-import type { ToolCall } from "@rabble/core";
+import {
+  userPreferencesSchema,
+  type ApprovalOutcome,
+  type ToolCall,
+} from "@rabble/core";
 import { db } from "../db/client.js";
-import { providerKeys, type agents, type messages, type models } from "../db/schema.js";
+import {
+  agentMcpServers,
+  agentToolConfigs,
+  mcpServers,
+  type agents,
+  type messages,
+  type models,
+  type users,
+} from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
-import { env } from "../env.js";
-import { getCatalogModel } from "../models/catalog.js";
+import { chatModelFor } from "../models/chat.js";
+import { mcpCallTool } from "../mcp/client.js";
+import { Channel } from "./channel.js";
+import { requestApproval, type ApprovalDecision } from "./approvals.js";
 
 interface AgentTurnInput {
   agent: typeof agents.$inferSelect;
   model: typeof models.$inferSelect | undefined;
+  user: typeof users.$inferSelect;
+  sessionId: string;
   history: Array<typeof messages.$inferSelect>;
   userContent: string;
 }
 
 export type AgentTurnEvent =
   | { type: "text"; text: string }
-  | { type: "tool"; toolCall: ToolCall };
-
-async function resolveApiKey(
-  model: typeof models.$inferSelect,
-): Promise<string> {
-  // Custom models carry their own key.
-  if (model.encryptedKey) return decryptSecret(model.encryptedKey);
-
-  // Built-in models use the org-level provider key, falling back to the
-  // server environment.
-  const provider = model.catalogId
-    ? (getCatalogModel(model.catalogId)?.provider ?? "anthropic")
-    : "anthropic";
-  const [row] = await db
-    .select()
-    .from(providerKeys)
-    .where(
-      and(
-        eq(providerKeys.orgId, model.orgId),
-        eq(providerKeys.provider, provider),
-      ),
-    )
-    .limit(1);
-  if (row) return decryptSecret(row.encryptedKey);
-  if (provider === "anthropic" && env.anthropicApiKey) return env.anthropicApiKey;
-  throw new Error(
-    `No API key configured for provider "${provider}". Add one in Admin > Models.`,
-  );
-}
-
-function buildChatModel(
-  model: typeof models.$inferSelect,
-  apiKey: string,
-): BaseChatModel {
-  if (model.protocol === "anthropic") {
-    return new ChatAnthropic({
-      model: model.modelId,
-      apiKey,
-      maxTokens: 4096,
-      ...(model.baseUrl ? { anthropicApiUrl: model.baseUrl } : {}),
-    });
-  }
-  return new ChatOpenAI({
-    model: model.modelId,
-    apiKey,
-    configuration: model.baseUrl ? { baseURL: model.baseUrl } : undefined,
-  });
-}
+  | { type: "tool-start"; toolCall: ToolCall }
+  | { type: "tool-end"; toolCall: ToolCall }
+  | {
+      type: "approval-request";
+      approvalId: string;
+      toolName: string;
+      serverName: string | null;
+      input: unknown;
+    };
 
 function buildSystemPrompt(agent: typeof agents.$inferSelect): string {
   const parts = [
@@ -95,7 +66,6 @@ function buildSystemPrompt(agent: typeof agents.$inferSelect): string {
   return parts.join("\n\n");
 }
 
-/** Extract plain text from a message chunk's content (string or block array). */
 function chunkText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {
@@ -110,6 +80,131 @@ function chunkText(content: unknown): string {
   return "";
 }
 
+/** Build governed LangChain tools from the agent's attached MCP servers. */
+async function buildGovernedTools(
+  input: AgentTurnInput,
+  emit: (event: AgentTurnEvent) => void,
+) {
+  const attached = await db
+    .select({ server: mcpServers })
+    .from(agentMcpServers)
+    .innerJoin(mcpServers, eq(agentMcpServers.serverId, mcpServers.id))
+    .where(eq(agentMcpServers.agentId, input.agent.id));
+  if (attached.length === 0) return [];
+
+  const configs = await db
+    .select()
+    .from(agentToolConfigs)
+    .where(
+      and(
+        eq(agentToolConfigs.agentId, input.agent.id),
+        inArray(
+          agentToolConfigs.serverId,
+          attached.map((a) => a.server.id),
+        ),
+      ),
+    );
+  const configFor = new Map(configs.map((c) => [`${c.serverId}:${c.toolName}`, c]));
+
+  const preferences = userPreferencesSchema.parse({
+    ...(input.user.preferences as Record<string, unknown>),
+  });
+
+  const tools = [];
+  for (const { server } of attached) {
+    const serverTools = (server.tools ?? []) as Array<{
+      name: string;
+      description: string;
+      inputSchema?: Record<string, unknown>;
+    }>;
+    for (const toolInfo of serverTools) {
+      const config = configFor.get(`${server.id}:${toolInfo.name}`);
+      if (config && !config.enabled) continue;
+      const authType = config?.authType ?? "service";
+
+      tools.push(
+        tool(
+          async (args: Record<string, unknown>) => {
+            const callId = randomUUID();
+            const call: ToolCall = {
+              id: callId,
+              name: toolInfo.name,
+              serverName: server.name,
+              input: args,
+              output: null,
+              authType,
+              approval: null,
+            };
+            emit({ type: "tool-start", toolCall: call });
+
+            let approval: ApprovalOutcome | null = null;
+            if (authType === "user") {
+              if (preferences.approvalPosture === "auto") {
+                approval = { status: "auto-approved", decidedByName: input.user.name };
+              } else {
+                const { approvalId, decision } = requestApproval({
+                  sessionId: input.sessionId,
+                  userId: input.user.id,
+                });
+                emit({
+                  type: "approval-request",
+                  approvalId,
+                  toolName: toolInfo.name,
+                  serverName: server.name,
+                  input: args,
+                });
+                const result: ApprovalDecision = await decision;
+                if (result === "deny" || result === "timed-out") {
+                  approval = {
+                    status: result === "deny" ? "denied" : "timed-out",
+                    decidedByName: result === "deny" ? input.user.name : null,
+                  };
+                  const denied: ToolCall = {
+                    ...call,
+                    output: "The user declined this action.",
+                    approval,
+                  };
+                  emit({ type: "tool-end", toolCall: denied });
+                  return "The user declined this action. Do not retry it; explain what you were unable to do.";
+                }
+                approval = {
+                  status: result === "approve" ? "approved" : "ran-as-service",
+                  decidedByName: input.user.name,
+                };
+              }
+            }
+
+            try {
+              const output = await mcpCallTool(
+                server.url,
+                toolInfo.name,
+                args,
+                server.encryptedToken ? decryptSecret(server.encryptedToken) : null,
+              );
+              const finished: ToolCall = { ...call, output, approval };
+              emit({ type: "tool-end", toolCall: finished });
+              return output;
+            } catch (err) {
+              const message = err instanceof Error ? err.message : "Tool call failed";
+              const failed: ToolCall = { ...call, output: `Error: ${message}`, approval };
+              emit({ type: "tool-end", toolCall: failed });
+              return `Error: ${message}`;
+            }
+          },
+          {
+            name: toolInfo.name,
+            description:
+              `${toolInfo.description} (via ${server.name}; runs as ` +
+              `${authType === "service" ? "the org service account" : "the requesting user"})`,
+            schema: toolInfo.inputSchema ?? { type: "object", properties: {} },
+          },
+        ),
+      );
+    }
+  }
+  return tools;
+}
+
 export async function* runAgentTurn(
   input: AgentTurnInput,
 ): AsyncGenerator<AgentTurnEvent> {
@@ -122,11 +217,17 @@ export async function* runAgentTurn(
     throw new Error(`Model "${input.model.displayName}" is disabled.`);
   }
 
-  const apiKey = await resolveApiKey(input.model);
+  const chatModel = await chatModelFor(input.model);
+  const channel = new Channel<AgentTurnEvent>();
+  const governedTools = await buildGovernedTools(input, (event) =>
+    channel.push(event),
+  );
+
   const deepAgent = createDeepAgent({
     name: input.agent.slug,
-    model: buildChatModel(input.model, apiKey),
+    model: chatModel,
     systemPrompt: buildSystemPrompt(input.agent),
+    tools: governedTools,
   });
 
   const turnMessages = [
@@ -137,61 +238,24 @@ export async function* runAgentTurn(
     { role: "user" as const, content: input.userContent },
   ];
 
-  // "messages" streams LLM tokens; "updates" carries completed node output
-  // (tool executions, final messages) so tool calls can be recorded.
-  const stream = await deepAgent.stream(
-    { messages: turnMessages },
-    { streamMode: ["messages", "updates"], recursionLimit: 50 },
-  );
-
-  // Tool inputs live on AI messages (tool_calls), outputs on ToolMessages —
-  // stitch the two together by tool_call_id as updates arrive.
-  const pendingToolInputs = new Map<string, { name: string; input: unknown }>();
-
-  for await (const item of stream) {
-    const [mode, payload] = item as [string, unknown];
-
-    if (mode === "messages") {
-      const [chunk] = payload as [unknown, unknown];
+  // Drive the graph in the background; all events flow through the channel.
+  const run = (async () => {
+    const stream = await deepAgent.stream(
+      { messages: turnMessages },
+      { streamMode: "messages", recursionLimit: 50 },
+    );
+    for await (const item of stream) {
+      const [chunk] = item as [unknown, unknown];
       if (isAIMessageChunk(chunk as AIMessageChunk)) {
         const text = chunkText((chunk as AIMessageChunk).content);
-        if (text) yield { type: "text", text };
+        if (text) channel.push({ type: "text", text });
       }
-      continue;
     }
+  })();
+  void run.finally(() => channel.close()).catch(() => channel.close());
 
-    if (mode === "updates") {
-      const update = payload as Record<
-        string,
-        { messages?: unknown[] } | undefined
-      >;
-      for (const nodeOutput of Object.values(update)) {
-        for (const message of nodeOutput?.messages ?? []) {
-          if (isAIMessage(message as AIMessage)) {
-            for (const call of (message as AIMessage).tool_calls ?? []) {
-              if (call.id) {
-                pendingToolInputs.set(call.id, {
-                  name: call.name,
-                  input: call.args,
-                });
-              }
-            }
-          } else if (isToolMessage(message as ToolMessage)) {
-            const toolMessage = message as ToolMessage;
-            const pending = pendingToolInputs.get(toolMessage.tool_call_id);
-            yield {
-              type: "tool",
-              toolCall: {
-                id: toolMessage.tool_call_id,
-                name: pending?.name ?? toolMessage.name ?? "tool",
-                input: pending?.input ?? null,
-                output: chunkText(toolMessage.content) || null,
-                authType: null,
-              },
-            };
-          }
-        }
-      }
-    }
+  for await (const event of channel) {
+    yield event;
   }
+  await run; // surface graph errors after draining
 }

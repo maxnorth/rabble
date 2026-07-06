@@ -2,7 +2,8 @@ import type { FastifyInstance } from "fastify";
 import { loginRequestSchema, setupRequestSchema } from "@rabble/core";
 import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { orgs, users } from "../db/schema.js";
+import { orgs, teamMembers, teams, users } from "../db/schema.js";
+import { recordAudit } from "../audit.js";
 import { hashPassword, verifyPassword } from "../crypto.js";
 import {
   createAuthSession,
@@ -40,9 +41,30 @@ export async function authRoutes(app: FastifyInstance) {
           passwordHash: hashPassword(body.password),
         })
         .returning();
+      // The pinned org-wide team; every user is automatically a member.
+      const [everyone] = await tx
+        .insert(teams)
+        .values({
+          orgId: org!.id,
+          slug: "everyone",
+          name: "Everyone",
+          isEveryone: true,
+        })
+        .returning();
+      await tx
+        .insert(teamMembers)
+        .values({ teamId: everyone!.id, userId: user!.id });
       return user!;
     });
     await createAuthSession(reply, owner.id);
+    await recordAudit({
+      orgId: owner.orgId,
+      actorUserId: owner.id,
+      action: "org.setup",
+      targetType: "org",
+      targetId: owner.orgId,
+      summary: `Organization "${body.orgName}" created with owner ${body.name}`,
+    });
     return { user: serializeUser(owner) };
   });
 

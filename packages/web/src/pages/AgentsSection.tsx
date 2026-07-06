@@ -1,34 +1,45 @@
-import type { Agent, Model } from "@rabble/core";
+import type { AgentDirectoryRow, Domain } from "@rabble/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
-
-const AGENT_TABS = [
-  "identity",
-  "surfaces",
-  "mcp",
-  "agents",
-  "automations",
-  "evals",
-  "access",
-  "advanced",
-] as const;
+import { AgentConfig } from "./AgentConfig";
 
 export function AgentsSection() {
-  const { agentId } = useParams();
+  const { agentId, domainId } = useParams();
   const [showNew, setShowNew] = useState(false);
+  const [showNewDomain, setShowNewDomain] = useState(false);
+  const agents = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
+  const domains = useQuery({ queryKey: ["domains"], queryFn: api.listDomains });
+
+  const favorites = (agents.data?.agents ?? []).filter((a) => a.starred);
 
   return (
     <>
       <aside className="sidebar">
-        <button
-          className="btn"
-          style={{ margin: "0 4px 12px" }}
-          onClick={() => setShowNew(true)}
-        >
+        <button className="btn" style={{ margin: "0 4px 12px" }} onClick={() => setShowNew(true)}>
           + New agent
         </button>
+        {favorites.length > 0 && (
+          <>
+            <div className="sidebar-title">★ Favorites</div>
+            {favorites.map((a) => (
+              <NavLink
+                key={a.id}
+                to={`/agents/${a.id}`}
+                className={({ isActive }) => `sidebar-item${isActive ? " active" : ""}`}
+              >
+                <span
+                  className="status-dot"
+                  style={{
+                    background: a.status === "active" ? "var(--green)" : "var(--amber)",
+                  }}
+                />
+                <span className="label">{a.name}</span>
+              </NavLink>
+            ))}
+          </>
+        )}
         <div className="sidebar-title">Directory</div>
         <NavLink
           to="/agents"
@@ -37,43 +48,92 @@ export function AgentsSection() {
         >
           <span className="label">All agents</span>
         </NavLink>
+        <div
+          className="sidebar-title"
+          style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}
+        >
+          Domains
+          <button
+            title="Add domain"
+            style={{ color: "var(--text-muted)", padding: "0 4px" }}
+            onClick={() => setShowNewDomain(true)}
+          >
+            +
+          </button>
+        </div>
+        {domains.data?.domains.map((d) => (
+          <NavLink
+            key={d.id}
+            to={`/domains/${d.id}`}
+            className={({ isActive }) => `sidebar-item${isActive ? " active" : ""}`}
+          >
+            <span className="label">{d.name}</span>
+            <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{d.agentCount}</span>
+          </NavLink>
+        ))}
       </aside>
       <main className="main-pane">
-        {agentId ? <AgentConfig agentId={agentId} /> : <AgentDirectory />}
+        {agentId ? (
+          <AgentConfig agentId={agentId} />
+        ) : domainId ? (
+          <DomainDetail domainId={domainId} />
+        ) : (
+          <AgentDirectory />
+        )}
       </main>
       {showNew && <NewAgentModal onClose={() => setShowNew(false)} />}
+      {showNewDomain && <NewDomainModal onClose={() => setShowNewDomain(false)} />}
     </>
   );
 }
 
-type SortKey = "name" | "status" | "model" | "updatedAt";
+type SortKey = "name" | "domainName" | "evalScore" | "updatedAt" | "toolCount";
+
+interface Filters {
+  domain?: string | "none";
+  starred?: boolean;
+  youOwn?: boolean;
+  evalAbove90?: boolean;
+}
 
 function AgentDirectory() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const agents = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
-  const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });
+  const domains = useQuery({ queryKey: ["domains"], queryFn: api.listDomains });
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortAsc, setSortAsc] = useState(true);
-
-  const modelName = (a: Agent) =>
-    models.data?.models.find((m) => m.id === a.modelId)?.displayName ?? "—";
+  const [filters, setFilters] = useState<Filters>({});
+  const [filterOpen, setFilterOpen] = useState<false | "root" | "domain">(false);
 
   const rows = useMemo(() => {
-    const list = (agents.data?.agents ?? []).filter(
-      (a) =>
-        !search ||
-        a.name.toLowerCase().includes(search.toLowerCase()) ||
-        a.slug.includes(search.toLowerCase()),
-    );
+    let list = agents.data?.agents ?? [];
+    if (search) {
+      const q = search.toLowerCase();
+      list = list.filter(
+        (a) => a.name.toLowerCase().includes(q) || a.slug.includes(q),
+      );
+    }
+    if (filters.domain === "none") list = list.filter((a) => !a.domainName);
+    else if (filters.domain) list = list.filter((a) => a.domainName === filters.domain);
+    if (filters.starred) list = list.filter((a) => a.starred);
+    if (filters.youOwn) list = list.filter((a) => a.myRight === "admin");
+    if (filters.evalAbove90) list = list.filter((a) => (a.evalScore ?? 0) >= 90);
+
     const dir = sortAsc ? 1 : -1;
     return [...list].sort((a, b) => {
-      const va = sortKey === "model" ? modelName(a) : a[sortKey];
-      const vb = sortKey === "model" ? modelName(b) : b[sortKey];
+      const va = a[sortKey] ?? "";
+      const vb = b[sortKey] ?? "";
       return va < vb ? -dir : va > vb ? dir : 0;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agents.data, models.data, search, sortKey, sortAsc]);
+  }, [agents.data, search, sortKey, sortAsc, filters]);
+
+  const toggleStar = useMutation({
+    mutationFn: async (agent: AgentDirectoryRow) =>
+      agent.starred ? api.unstarAgent(agent.id) : api.starAgent(agent.id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["agents"] }),
+  });
 
   const header = (key: SortKey, label: string) => (
     <th
@@ -90,59 +150,402 @@ function AgentDirectory() {
     </th>
   );
 
+  const activeChips: Array<{ key: string; label: string; clear: () => void }> = [];
+  if (filters.domain) {
+    activeChips.push({
+      key: "domain",
+      label: `Domain: ${filters.domain === "none" ? "No domain" : filters.domain}`,
+      clear: () => setFilters((f) => ({ ...f, domain: undefined })),
+    });
+  }
+  if (filters.starred) {
+    activeChips.push({
+      key: "starred",
+      label: "Starred",
+      clear: () => setFilters((f) => ({ ...f, starred: undefined })),
+    });
+  }
+  if (filters.youOwn) {
+    activeChips.push({
+      key: "youOwn",
+      label: "You own",
+      clear: () => setFilters((f) => ({ ...f, youOwn: undefined })),
+    });
+  }
+  if (filters.evalAbove90) {
+    activeChips.push({
+      key: "eval",
+      label: "Eval ≥ 90%",
+      clear: () => setFilters((f) => ({ ...f, evalAbove90: undefined })),
+    });
+  }
+
   return (
-    <div className="content-col" style={{ maxWidth: 900 }}>
+    <div className="content-col" style={{ maxWidth: 980 }}>
       <h1 className="page-title">All agents</h1>
       <p className="page-subtitle">
-        Every agent in your org. Eval scores and grants land here next.
+        The org's agent directory — eval scores and grants tell you whether to
+        rely on an agent you didn't build.
       </p>
-      <input
-        placeholder="Search agents…"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        style={{ marginBottom: 14, width: 260 }}
-      />
+      <div className="filter-bar">
+        <input
+          placeholder="Search agents…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ width: 240 }}
+        />
+        <div style={{ position: "relative" }}>
+          <button
+            className="btn"
+            onClick={() => setFilterOpen(filterOpen ? false : "root")}
+          >
+            + Filter
+          </button>
+          {filterOpen === "root" && (
+            <div className="filter-popup">
+              <button onClick={() => setFilterOpen("domain")}>
+                Domain <span style={{ color: "var(--text-muted)" }}>▸</span>
+              </button>
+              <button
+                onClick={() => {
+                  setFilters((f) => ({ ...f, starred: true }));
+                  setFilterOpen(false);
+                }}
+              >
+                Starred
+              </button>
+              <button
+                onClick={() => {
+                  setFilters((f) => ({ ...f, youOwn: true }));
+                  setFilterOpen(false);
+                }}
+              >
+                You own
+              </button>
+              <button
+                onClick={() => {
+                  setFilters((f) => ({ ...f, evalAbove90: true }));
+                  setFilterOpen(false);
+                }}
+              >
+                Eval ≥ 90%
+              </button>
+            </div>
+          )}
+          {filterOpen === "domain" && (
+            <div className="filter-popup">
+              <button
+                onClick={() => {
+                  setFilters((f) => ({ ...f, domain: "none" }));
+                  setFilterOpen(false);
+                }}
+              >
+                No domain
+              </button>
+              {domains.data?.domains.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => {
+                    setFilters((f) => ({ ...f, domain: d.name }));
+                    setFilterOpen(false);
+                  }}
+                >
+                  {d.name}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {activeChips.map((chip) => (
+          <span key={chip.key} className="filter-chip">
+            {chip.label}
+            <button onClick={chip.clear}>✕</button>
+          </span>
+        ))}
+      </div>
       <table className="dir-table">
         <thead>
           <tr>
+            <th style={{ width: 30 }} />
             {header("name", "Agent")}
-            {header("status", "Status")}
-            {header("model", "Model")}
+            {header("domainName", "Domain")}
+            {header("evalScore", "Eval score")}
             {header("updatedAt", "Last updated")}
+            {header("toolCount", "Tools")}
           </tr>
         </thead>
         <tbody>
           {rows.map((a) => (
             <tr key={a.id} onClick={() => navigate(`/agents/${a.id}`)}>
+              <td
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleStar.mutate(a);
+                }}
+              >
+                <span className={`star-btn${a.starred ? " starred" : ""}`}>
+                  {a.starred ? "★" : "☆"}
+                </span>
+              </td>
               <td>
                 <div style={{ fontWeight: 500, color: "var(--text-1)" }}>
-                  {a.name}
+                  {a.name}{" "}
+                  {a.status === "draft" && <span className="chip amber">draft</span>}
                 </div>
                 <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
                   {a.slug}
                 </div>
               </td>
+              <td>{a.domainName ?? <span style={{ color: "var(--text-muted)" }}>—</span>}</td>
               <td>
-                <span className={`chip ${a.status === "active" ? "green" : "amber"}`}>
-                  {a.status}
-                </span>
+                {a.evalScore !== null ? (
+                  <span
+                    className={`chip ${a.evalScore >= 90 ? "green" : a.evalScore >= 70 ? "blue" : "amber"}`}
+                  >
+                    {a.evalScore}%
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--text-muted)" }}>—</span>
+                )}
               </td>
-              <td>{modelName(a)}</td>
               <td style={{ color: "var(--text-muted)" }}>
                 {new Date(a.updatedAt).toLocaleDateString()}
               </td>
+              <td>{a.toolCount}</td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={4} style={{ color: "var(--text-muted)", cursor: "default" }}>
-                {agents.isLoading ? "Loading…" : "No agents yet. Create your first with + New agent."}
+              <td colSpan={6} style={{ color: "var(--text-muted)", cursor: "default" }}>
+                {agents.isLoading
+                  ? "Loading…"
+                  : "No agents match. Create one with + New agent."}
               </td>
             </tr>
           )}
         </tbody>
       </table>
     </div>
+  );
+}
+
+function DomainDetail({ domainId }: { domainId: string }) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const domains = useQuery({ queryKey: ["domains"], queryFn: api.listDomains });
+  const agents = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
+  const grants = useQuery({
+    queryKey: ["grants", "domain", domainId],
+    queryFn: () => api.listGrants("domain", domainId),
+  });
+  const teams = useQuery({ queryKey: ["teams"], queryFn: api.listTeams });
+  const users = useQuery({ queryKey: ["users"], queryFn: api.listUsers });
+
+  const domain: Domain | undefined = domains.data?.domains.find((d) => d.id === domainId);
+  const members = (agents.data?.agents ?? []).filter((a) => a.domainId === domainId);
+
+  const removeDomain = useMutation({
+    mutationFn: () => api.deleteDomain(domainId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries();
+      navigate("/agents");
+    },
+  });
+
+  if (!domain) return <div className="content-col" />;
+
+  return (
+    <div className="content-col">
+      <h1 className="page-title">{domain.name}</h1>
+      <p className="page-subtitle">
+        Flat, optional collection of agents. Grants set here apply to every
+        agent in the domain — the domain itself carries no inherent
+        permissions.
+      </p>
+
+      <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+        Agents in this domain
+      </div>
+      <div className="row-group" style={{ marginBottom: 24 }}>
+        {members.map((a) => (
+          <div
+            className="row"
+            key={a.id}
+            style={{ cursor: "pointer" }}
+            onClick={() => navigate(`/agents/${a.id}`)}
+          >
+            <span
+              className="status-dot"
+              style={{ background: a.status === "active" ? "var(--green)" : "var(--amber)" }}
+            />
+            <div className="grow">
+              <div className="title">{a.name}</div>
+              <div className="sub mono">{a.slug}</div>
+            </div>
+            {a.evalScore !== null && <span className="chip blue">{a.evalScore}%</span>}
+          </div>
+        ))}
+        {members.length === 0 && (
+          <div className="row">
+            <div className="sub">
+              No agents yet — assign one from its identity tab.
+            </div>
+          </div>
+        )}
+      </div>
+
+      <GrantEditor
+        targetType="domain"
+        targetId={domainId}
+        grants={grants.data?.grants ?? []}
+        teams={teams.data?.teams ?? []}
+        users={users.data?.users ?? []}
+        onChanged={() =>
+          void queryClient.invalidateQueries({ queryKey: ["grants", "domain", domainId] })
+        }
+      />
+
+      <div style={{ marginTop: 28 }}>
+        <button
+          className="btn danger"
+          onClick={() => {
+            if (confirm(`Delete domain "${domain.name}"? Agents are kept.`)) {
+              removeDomain.mutate();
+            }
+          }}
+        >
+          Delete domain
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function GrantEditor({
+  targetType,
+  targetId,
+  grants,
+  teams,
+  users,
+  onChanged,
+}: {
+  targetType: "agent" | "domain";
+  targetId: string;
+  grants: Array<{
+    id: string;
+    subjectType: string;
+    subjectName: string;
+    accessRight: string;
+    viaDomain?: string | null;
+  }>;
+  teams: Array<{ id: string; name: string; isEveryone: boolean }>;
+  users: Array<{ id: string; name: string }>;
+  onChanged: () => void;
+}) {
+  const [subject, setSubject] = useState("");
+  const [right, setRight] = useState<"use" | "edit" | "admin">("use");
+  const [error, setError] = useState<string | null>(null);
+
+  const add = useMutation({
+    mutationFn: () => {
+      const [subjectType, subjectId] = subject.split(":") as ["user" | "team", string];
+      return api.createGrant({
+        subjectType,
+        subjectId,
+        accessRight: right,
+        targetType,
+        targetId,
+      });
+    },
+    onSuccess: () => {
+      setSubject("");
+      setError(null);
+      onChanged();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed"),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteGrant(id),
+    onSuccess: onChanged,
+    onError: (err) => setError(err instanceof Error ? err.message : "Failed"),
+  });
+
+  const rightSentence: Record<string, string> = {
+    use: "can talk to it",
+    edit: "can configure it",
+    admin: "can manage access",
+  };
+
+  return (
+    <>
+      <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+        Access
+      </div>
+      <div className="row-group">
+        {grants.map((g) => (
+          <div className="row" key={g.id}>
+            <span className={`chip ${g.subjectType === "team" ? "purple" : "blue"}`}>
+              {g.subjectType}
+            </span>
+            <div className="grow">
+              <div className="title">{g.subjectName}</div>
+              <div className="sub">
+                {g.accessRight} · {rightSentence[g.accessRight]}
+                {g.viaDomain ? ` · via domain ${g.viaDomain}` : ""}
+              </div>
+            </div>
+            {!g.viaDomain && (
+              <button className="btn danger" onClick={() => remove.mutate(g.id)}>
+                Revoke
+              </button>
+            )}
+          </div>
+        ))}
+        {grants.length === 0 && (
+          <div className="row">
+            <div className="sub">No grants yet. Access comes only from grants.</div>
+          </div>
+        )}
+        <div className="row">
+          <select value={subject} onChange={(e) => setSubject(e.target.value)} style={{ flex: 1 }}>
+            <option value="">Choose who…</option>
+            <optgroup label="Teams">
+              {teams.map((t) => (
+                <option key={t.id} value={`team:${t.id}`}>
+                  {t.name}
+                </option>
+              ))}
+            </optgroup>
+            <optgroup label="People">
+              {users.map((u) => (
+                <option key={u.id} value={`user:${u.id}`}>
+                  {u.name}
+                </option>
+              ))}
+            </optgroup>
+          </select>
+          <div className="segmented">
+            {(["use", "edit", "admin"] as const).map((r) => (
+              <button key={r} className={right === r ? "active" : ""} onClick={() => setRight(r)}>
+                {r}
+              </button>
+            ))}
+          </div>
+          <button
+            className="btn primary"
+            disabled={!subject || add.isPending}
+            onClick={() => add.mutate()}
+          >
+            + Add
+          </button>
+        </div>
+      </div>
+      {error && (
+        <p className="error-text" style={{ marginTop: 8 }}>
+          {error}
+        </p>
+      )}
+    </>
   );
 }
 
@@ -179,7 +582,7 @@ function NewAgentModal({ onClose }: { onClose: () => void }) {
               placeholder="Eng On-Call"
             />
             <span className="hint">
-              Agents start as drafts — configure them, then set them active.
+              Agents start as drafts and run only for you until shared.
             </span>
           </div>
           {create.isError && (
@@ -199,179 +602,52 @@ function NewAgentModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function AgentConfig({ agentId }: { agentId: string }) {
-  const navigate = useNavigate();
+function NewDomainModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const agent = useQuery({
-    queryKey: ["agent", agentId],
-    queryFn: () => api.getAgent(agentId),
-  });
-  const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });
-
-  const [form, setForm] = useState<{
-    name: string;
-    description: string;
-    instructions: string;
-    modelId: string;
-    status: "active" | "draft";
-  } | null>(null);
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    if (agent.data) {
-      const a = agent.data.agent;
-      setForm({
-        name: a.name,
-        description: a.description,
-        instructions: a.instructions,
-        modelId: a.modelId ?? "",
-        status: a.status,
-      });
-    }
-  }, [agent.data]);
-
-  const save = useMutation({
-    mutationFn: () =>
-      api.updateAgent(agentId, {
-        name: form!.name,
-        description: form!.description,
-        instructions: form!.instructions,
-        modelId: form!.modelId || null,
-        status: form!.status,
-      }),
+  const [name, setName] = useState("");
+  const create = useMutation({
+    mutationFn: () => api.createDomain(name),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["agents"] });
-      await queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
-      setSaved(true);
-      setTimeout(() => setSaved(false), 1600);
+      await queryClient.invalidateQueries({ queryKey: ["domains"] });
+      onClose();
     },
   });
-
-  const remove = useMutation({
-    mutationFn: () => api.deleteAgent(agentId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["agents"] });
-      navigate("/agents");
-    },
-  });
-
-  if (!agent.data || !form) {
-    return <div className="content-col">{agent.isError ? "Agent not found." : ""}</div>;
-  }
-
-  const enabledModels = (models.data?.models ?? []).filter((m) => m.enabled);
 
   return (
-    <div className="content-col">
-      <button
-        className="btn"
-        style={{ marginBottom: 16 }}
-        onClick={() => navigate("/agents")}
-      >
-        ‹ All agents
-      </button>
-      <h1 className="page-title">{agent.data.agent.name}</h1>
-      <p className="page-subtitle mono">{agent.data.agent.slug}</p>
-
-      <div className="tabs">
-        {AGENT_TABS.map((tab) => (
-          <button
-            key={tab}
-            className={`tab${tab === "identity" ? " active" : ""}`}
-            disabled={tab !== "identity"}
-            title={tab === "identity" ? undefined : "Coming soon"}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
-
-      <div className="field">
-        <label>Name</label>
-        <input
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-        />
-      </div>
-      <div className="field">
-        <label>Description</label>
-        <input
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          placeholder="What this agent is responsible for"
-        />
-      </div>
-      <div className="field">
-        <label>Instructions</label>
-        <textarea
-          rows={8}
-          value={form.instructions}
-          onChange={(e) => setForm({ ...form, instructions: e.target.value })}
-          placeholder="System instructions that define how this agent behaves"
-        />
-      </div>
-      <div className="field">
-        <label>Model</label>
-        <select
-          value={form.modelId}
-          onChange={(e) => setForm({ ...form, modelId: e.target.value })}
-        >
-          <option value="">— No model —</option>
-          {enabledModels.map((m: Model) => (
-            <option key={m.id} value={m.id}>
-              {m.displayName}
-            </option>
-          ))}
-        </select>
-        {enabledModels.length === 0 && (
-          <span className="hint">
-            No models registered yet — add one in Admin › Models.
-          </span>
-        )}
-      </div>
-      <div className="field">
-        <label>Status</label>
-        <div className="segmented">
-          {(["draft", "active"] as const).map((s) => (
-            <button
-              key={s}
-              className={form.status === s ? "active" : ""}
-              onClick={() => setForm({ ...form, status: s })}
-            >
-              {s}
-            </button>
-          ))}
-        </div>
-        <span className="hint">
-          Only active agents appear in the session composer.
-        </span>
-      </div>
-
-      {(save.isError || remove.isError) && (
-        <p className="error-text" style={{ marginBottom: 12 }}>
-          {((save.error ?? remove.error) as Error).message}
-        </p>
-      )}
-      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-        <button
-          className="btn primary"
-          disabled={save.isPending}
-          onClick={() => save.mutate()}
-        >
-          {saved ? "Saved ✓" : "Save changes"}
-        </button>
-        <div style={{ flex: 1 }} />
-        <button
-          className="btn danger"
-          disabled={remove.isPending}
-          onClick={() => {
-            if (confirm(`Delete agent "${agent.data.agent.name}"?`)) {
-              remove.mutate();
-            }
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Add domain</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim()) create.mutate();
           }}
         >
-          Delete agent
-        </button>
+          <div className="field">
+            <label>Name</label>
+            <input
+              autoFocus
+              required
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Engineering"
+            />
+            <span className="hint">
+              Natural-cased single word. Domains are flat and carry grants.
+            </span>
+          </div>
+          {create.isError && (
+            <p className="error-text">{(create.error as Error).message}</p>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={create.isPending}>
+              + Add
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

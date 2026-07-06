@@ -71,6 +71,7 @@ test("sign out and sign back in", async () => {
 
 test("admin: register a custom model pointing at the mock endpoint", async () => {
   await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Models" }).click();
   await expect(page.getByRole("heading", { name: "Models" })).toBeVisible();
 
   // Built-in catalog is visible with no provider key configured
@@ -81,7 +82,7 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
   await page.getByRole("button", { name: "OpenAI-compatible" }).click();
   await page
     .getByPlaceholder("https://my-gateway.example.com")
-    .fill("http://localhost:3199");
+    .fill("http://localhost:4100/mock/api.openai.com/v1");
   await page.getByPlaceholder("claude-sonnet-5").fill("mock-1");
   await page.locator(".modal input[type=password]").fill("test-key-secret");
   await page.getByRole("button", { name: "Add model" }).click();
@@ -97,7 +98,7 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
   expect(models).toHaveLength(1);
   expect(models[0]!.kind).toBe("custom");
   expect(models[0]!.model_id).toBe("mock-1");
-  expect(models[0]!.base_url).toBe("http://localhost:3199");
+  expect(models[0]!.base_url).toBe("http://localhost:4100/mock/api.openai.com/v1");
   // API keys are stored encrypted, never in plaintext
   expect(models[0]!.encrypted_key).toMatch(/^v1:/);
   expect(models[0]!.encrypted_key).not.toContain("test-key-secret");
@@ -105,7 +106,7 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
 
 test("agents: create, configure, and activate an agent", async () => {
   await page.locator("nav a[title='Agents']").click();
-  await expect(page.getByText("No agents yet")).toBeVisible();
+  await expect(page.getByText("No agents match")).toBeVisible();
 
   await page.getByRole("button", { name: "+ New agent" }).click();
   await page.getByPlaceholder("Eng On-Call").fill("Eng On-Call");
@@ -120,7 +121,7 @@ test("agents: create, configure, and activate an agent", async () => {
   await page
     .getByPlaceholder("System instructions that define how this agent behaves")
     .fill("You triage CI failures. Be concise.");
-  await page.locator("select").selectOption({ label: "Mock Model" });
+  await page.locator("select").first().selectOption({ label: "Mock Model" });
   await page.locator(".segmented button", { hasText: "active" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
@@ -128,7 +129,8 @@ test("agents: create, configure, and activate an agent", async () => {
   await page.getByRole("button", { name: "‹ All agents" }).click();
   const row = page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip")).toHaveText("active");
+  // Active agents carry no draft badge in the directory
+  await expect(row.locator(".chip", { hasText: "draft" })).toHaveCount(0);
 
   const agents = await dbQuery<{
     slug: string;

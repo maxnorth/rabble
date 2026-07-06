@@ -1,15 +1,35 @@
 import type {
   Agent,
+  AgentDirectoryRow,
+  AgentToolConfig,
+  ApiKey,
+  ApprovalDecisionRequest,
+  AuditEvent,
+  Automation,
   CatalogModel,
+  ConnectedAccount,
+  Connection,
+  ConnectionRole,
   CreateAgentRequest,
   CreateCustomModelRequest,
+  Domain,
+  EvalCase,
+  EvalCriterion,
+  EvalSuite,
+  Grant,
+  McpServer,
   Message,
   Model,
   ProviderKeyStatus,
+  SessionEvalResult,
   SessionWithAgent,
   StreamEvent,
+  Team,
+  TeamMember,
   UpdateAgentRequest,
+  UpdateToolConfigRequest,
   User,
+  UserPreferences,
 } from "@rabble/core";
 
 export class ApiError extends Error {
@@ -40,77 +60,225 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+const get = <T>(path: string) => request<T>(path);
+const post = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "POST", body: JSON.stringify(body ?? {}) });
+const put = <T>(path: string, body?: unknown) =>
+  request<T>(path, { method: "PUT", body: JSON.stringify(body ?? {}) });
+const patch = <T>(path: string, body: unknown) =>
+  request<T>(path, { method: "PATCH", body: JSON.stringify(body) });
+const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
+
+export interface TeamAccessEntry {
+  id: string;
+  accessRight: "use" | "edit" | "admin";
+  targetType: "agent" | "domain";
+  targetId: string;
+  targetName: string;
+}
+
+export interface StatsResponse {
+  days: number;
+  kpis: {
+    sessions: number;
+    activeUsers: number;
+    messages: number;
+    toolCalls: number;
+    activeAgents: number;
+    totalAgents: number;
+    evalPassRate: number | null;
+    evaluatedSessions: number;
+  };
+  sessionsPerAgent: Array<{ agentId: string; agentName: string; count: number }>;
+  sessionsPerDay: Array<{ day: string; count: number }>;
+  toolAuthSplit: Array<{ authType: string | null; count: number }>;
+}
+
 export const api = {
   // setup & auth
-  setupStatus: () => request<{ needsSetup: boolean }>("/api/setup"),
-  setup: (body: {
-    orgName: string;
-    name: string;
-    email: string;
-    password: string;
-  }) =>
-    request<{ user: User }>("/api/setup", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+  setupStatus: () => get<{ needsSetup: boolean }>("/api/setup"),
+  setup: (body: { orgName: string; name: string; email: string; password: string }) =>
+    post<{ user: User }>("/api/setup", body),
   login: (body: { email: string; password: string }) =>
-    request<{ user: User }>("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  logout: () => request<{ ok: true }>("/api/auth/logout", { method: "POST" }),
-  me: () => request<{ user: User }>("/api/auth/me"),
+    post<{ user: User }>("/api/auth/login", body),
+  logout: () => post<{ ok: true }>("/api/auth/logout"),
+  me: () => get<{ user: User }>("/api/auth/me"),
 
   // agents
-  listAgents: () => request<{ agents: Agent[] }>("/api/agents"),
-  getAgent: (id: string) => request<{ agent: Agent }>(`/api/agents/${id}`),
+  listAgents: () => get<{ agents: AgentDirectoryRow[] }>("/api/agents"),
+  getAgent: (id: string) =>
+    get<{ agent: Agent; myRight: "use" | "edit" | "admin" | null }>(
+      `/api/agents/${id}`,
+    ),
   createAgent: (body: Partial<CreateAgentRequest> & { name: string }) =>
-    request<{ agent: Agent }>("/api/agents", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    post<{ agent: Agent }>("/api/agents", body),
   updateAgent: (id: string, body: UpdateAgentRequest) =>
-    request<{ agent: Agent }>(`/api/agents/${id}`, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }),
-  deleteAgent: (id: string) =>
-    request<{ ok: true }>(`/api/agents/${id}`, { method: "DELETE" }),
+    patch<{ agent: Agent }>(`/api/agents/${id}`, body),
+  deleteAgent: (id: string) => del<{ ok: true }>(`/api/agents/${id}`),
+  starAgent: (id: string) => put<{ ok: true }>(`/api/agents/${id}/star`),
+  unstarAgent: (id: string) => del<{ ok: true }>(`/api/agents/${id}/star`),
+  agentTools: (id: string) =>
+    get<{ tools: AgentToolConfig[]; servers: string[] }>(`/api/agents/${id}/tools`),
+  updateAgentTool: (agentId: string, body: UpdateToolConfigRequest) =>
+    patch<{ ok: true }>(`/api/agents/${agentId}/tools`, body),
+  attachMcpServer: (agentId: string, serverId: string) =>
+    put<{ ok: true }>(`/api/agents/${agentId}/mcp-servers/${serverId}`),
+  detachMcpServer: (agentId: string, serverId: string) =>
+    del<{ ok: true }>(`/api/agents/${agentId}/mcp-servers/${serverId}`),
+  subAgents: (id: string) => get<{ subAgents: Agent[] }>(`/api/agents/${id}/sub-agents`),
+  linkSubAgent: (id: string, subId: string) =>
+    put<{ ok: true }>(`/api/agents/${id}/sub-agents/${subId}`),
+  unlinkSubAgent: (id: string, subId: string) =>
+    del<{ ok: true }>(`/api/agents/${id}/sub-agents/${subId}`),
 
   // models
-  modelCatalog: () => request<{ catalog: CatalogModel[] }>("/api/models/catalog"),
-  listModels: () => request<{ models: Model[] }>("/api/models"),
-  providerStatus: () =>
-    request<{ providers: ProviderKeyStatus[] }>("/api/models/providers"),
+  modelCatalog: () => get<{ catalog: CatalogModel[] }>("/api/models/catalog"),
+  listModels: () => get<{ models: Model[] }>("/api/models"),
+  providerStatus: () => get<{ providers: ProviderKeyStatus[] }>("/api/models/providers"),
   setProviderKey: (body: { provider: string; apiKey: string }) =>
-    request<{ ok: true }>("/api/models/providers", {
-      method: "PUT",
-      body: JSON.stringify(body),
-    }),
+    put<{ ok: true }>("/api/models/providers", body),
   enableBuiltIn: (catalogId: string) =>
-    request<{ model: Model }>("/api/models/built-in", {
-      method: "POST",
-      body: JSON.stringify({ catalogId }),
-    }),
+    post<{ model: Model }>("/api/models/built-in", { catalogId }),
   createCustomModel: (body: CreateCustomModelRequest) =>
-    request<{ model: Model }>("/api/models/custom", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
-  deleteModel: (id: string) =>
-    request<{ ok: true }>(`/api/models/${id}`, { method: "DELETE" }),
+    post<{ model: Model }>("/api/models/custom", body),
+  deleteModel: (id: string) => del<{ ok: true }>(`/api/models/${id}`),
 
   // sessions
-  listSessions: () => request<{ sessions: SessionWithAgent[] }>("/api/sessions"),
+  listSessions: () => get<{ sessions: SessionWithAgent[] }>("/api/sessions"),
   createSession: (agentId: string | null) =>
-    request<{ session: SessionWithAgent }>("/api/sessions", {
-      method: "POST",
-      body: JSON.stringify({ agentId }),
-    }),
+    post<{ session: SessionWithAgent }>("/api/sessions", { agentId }),
   getSession: (id: string) =>
-    request<{ session: SessionWithAgent; messages: Message[] }>(
-      `/api/sessions/${id}`,
+    get<{
+      session: SessionWithAgent;
+      messages: Message[];
+      evalResults: SessionEvalResult[];
+    }>(`/api/sessions/${id}`),
+  decideApproval: (sessionId: string, approvalId: string, body: ApprovalDecisionRequest) =>
+    post<{ ok: true }>(`/api/sessions/${sessionId}/approvals/${approvalId}`, body),
+  freezeSession: (sessionId: string, suiteId: string, rubric?: string) =>
+    post<{ case: EvalCase }>(`/api/sessions/${sessionId}/freeze`, { suiteId, rubric }),
+
+  // teams
+  listTeams: () => get<{ teams: Team[] }>("/api/teams"),
+  createTeam: (body: { name: string; parentTeamId?: string | null }) =>
+    post<{ team: Team }>("/api/teams", body),
+  getTeam: (id: string) =>
+    get<{
+      team: Team;
+      members: TeamMember[];
+      subTeams: Team[];
+      access: TeamAccessEntry[];
+    }>(`/api/teams/${id}`),
+  addTeamMember: (teamId: string, userId: string) =>
+    post<{ ok: true }>(`/api/teams/${teamId}/members`, { userId }),
+  removeTeamMember: (teamId: string, userId: string) =>
+    del<{ ok: true }>(`/api/teams/${teamId}/members/${userId}`),
+  deleteTeam: (id: string) => del<{ ok: true }>(`/api/teams/${id}`),
+  listUsers: () =>
+    get<{ users: Array<{ id: string; name: string; email: string; role: string }> }>(
+      "/api/users",
     ),
+
+  // domains
+  listDomains: () => get<{ domains: Domain[] }>("/api/domains"),
+  createDomain: (name: string) => post<{ domain: Domain }>("/api/domains", { name }),
+  deleteDomain: (id: string) => del<{ ok: true }>(`/api/domains/${id}`),
+
+  // grants
+  listGrants: (targetType: "agent" | "domain", targetId: string) =>
+    get<{ grants: Grant[] }>(`/api/grants?targetType=${targetType}&targetId=${targetId}`),
+  createGrant: (body: {
+    subjectType: "user" | "team";
+    subjectId: string;
+    accessRight: "use" | "edit" | "admin";
+    targetType: "agent" | "domain";
+    targetId: string;
+  }) => post<{ grant: Grant }>("/api/grants", body),
+  deleteGrant: (id: string) => del<{ ok: true }>(`/api/grants/${id}`),
+
+  // MCP servers
+  listMcpServers: () => get<{ servers: McpServer[] }>("/api/mcp-servers"),
+  createMcpServer: (body: { name: string; url: string; category: string; token?: string }) =>
+    post<{ server: McpServer }>("/api/mcp-servers", body),
+  refreshMcpServer: (id: string) =>
+    post<{ server: McpServer }>(`/api/mcp-servers/${id}/refresh`),
+  deleteMcpServer: (id: string) => del<{ ok: true }>(`/api/mcp-servers/${id}`),
+
+  // evals
+  listCriteria: (agentId: string) =>
+    get<{ criteria: EvalCriterion[] }>(`/api/agents/${agentId}/criteria`),
+  createCriterion: (agentId: string, body: { name: string; description: string }) =>
+    post<{ criterion: unknown }>(`/api/agents/${agentId}/criteria`, body),
+  deleteCriterion: (id: string) => del<{ ok: true }>(`/api/criteria/${id}`),
+  listSuites: (agentId: string) =>
+    get<{ suites: EvalSuite[] }>(`/api/agents/${agentId}/suites`),
+  createSuite: (agentId: string, body: { name: string; gating?: boolean }) =>
+    post<{ suite: unknown }>(`/api/agents/${agentId}/suites`, body),
+  listCases: (suiteId: string) => get<{ cases: EvalCase[] }>(`/api/suites/${suiteId}/cases`),
+  createCase: (suiteId: string, body: { name: string; input: string; rubric: string }) =>
+    post<{ case: EvalCase }>(`/api/suites/${suiteId}/cases`, body),
+  runSuite: (suiteId: string) =>
+    post<{
+      run: {
+        id: string;
+        status: string;
+        results: Array<{
+          caseId: string;
+          passed: boolean;
+          output: string;
+          reasoning: string;
+        }>;
+      };
+    }>(`/api/suites/${suiteId}/run`),
+
+  // automations
+  listAutomations: (agentId: string) =>
+    get<{ automations: Automation[] }>(`/api/agents/${agentId}/automations`),
+  createAutomation: (agentId: string, body: { name: string; schedule: string; prompt: string }) =>
+    post<{ automation: Automation }>(`/api/agents/${agentId}/automations`, body),
+  toggleAutomation: (id: string, enabled: boolean) =>
+    patch<{ automation: Automation }>(`/api/automations/${id}`, { enabled }),
+  deleteAutomation: (id: string) => del<{ ok: true }>(`/api/automations/${id}`),
+
+  // admin
+  listConnections: () => get<{ connections: Connection[] }>("/api/connections"),
+  createConnection: (body: {
+    vendor: string;
+    name: string;
+    roles: ConnectionRole[];
+    baseUrl?: string | null;
+    token?: string;
+  }) => post<{ connection: Connection }>("/api/connections", body),
+  deleteConnection: (id: string) => del<{ ok: true }>(`/api/connections/${id}`),
+  listApiKeys: () => get<{ keys: ApiKey[] }>("/api/api-keys"),
+  createApiKey: (body: { name: string; scope: "read" | "write" | "admin" }) =>
+    post<{ key: { id: string; name: string; scope: string; prefix: string }; token: string }>(
+      "/api/api-keys",
+      body,
+    ),
+  revokeApiKey: (id: string) => post<{ ok: true }>(`/api/api-keys/${id}/revoke`),
+  listAudit: (action?: string) =>
+    get<{ events: AuditEvent[] }>(`/api/audit${action ? `?action=${action}` : ""}`),
+  getOrg: () => get<{ org: { id: string; name: string; createdAt: string } }>("/api/org"),
+  renameOrg: (name: string) => patch<{ ok: true }>("/api/org", { name }),
+  inviteMember: (body: { name: string; email: string; role?: "admin" | "member" }) =>
+    post<{ user: { id: string; name: string; email: string }; tempPassword: string }>(
+      "/api/members",
+      body,
+    ),
+
+  // profile
+  listAccounts: () => get<{ accounts: ConnectedAccount[] }>("/api/profile/accounts"),
+  connectAccount: (body: { vendor: string; label?: string; token: string }) =>
+    put<{ ok: true }>("/api/profile/accounts", body),
+  disconnectAccount: (vendor: string) =>
+    del<{ ok: true }>(`/api/profile/accounts/${vendor}`),
+  getPreferences: () => get<{ preferences: UserPreferences }>("/api/profile/preferences"),
+  setPreferences: (body: UserPreferences) =>
+    put<{ preferences: UserPreferences }>("/api/profile/preferences", body),
+
+  // stats
+  stats: (days: number) => get<StatsResponse>(`/api/stats?days=${days}`),
 };
 
 /**

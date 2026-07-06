@@ -60,12 +60,20 @@ export function Shell({ user }: { user: User }) {
         >
           <RailIcon d={icons.agents} />
         </NavLink>
-        <button className="rail-btn" title="Teams — coming soon" disabled>
+        <NavLink
+          to="/teams"
+          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
+          title="Teams"
+        >
           <RailIcon d={icons.teams} />
-        </button>
-        <button className="rail-btn" title="Stats — coming soon" disabled>
+        </NavLink>
+        <NavLink
+          to="/stats"
+          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
+          title="Stats"
+        >
           <RailIcon d={icons.stats} />
-        </button>
+        </NavLink>
         <NavLink
           to="/admin"
           className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
@@ -74,6 +82,13 @@ export function Shell({ user }: { user: User }) {
           <RailIcon d={icons.admin} />
         </NavLink>
         <div className="spacer" />
+        <NavLink
+          to="/profile"
+          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
+          title={`${user.name} — profile`}
+        >
+          <span style={{ fontSize: 11, fontWeight: 600 }}>{initials}</span>
+        </NavLink>
         <button
           className="rail-btn"
           title={`${user.name} — sign out`}
@@ -85,7 +100,18 @@ export function Shell({ user }: { user: User }) {
             await queryClient.resetQueries();
           }}
         >
-          <span style={{ fontSize: 11, fontWeight: 600 }}>{initials}</span>
+          <svg
+            width="17"
+            height="17"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9" />
+          </svg>
         </button>
       </nav>
       <Outlet />

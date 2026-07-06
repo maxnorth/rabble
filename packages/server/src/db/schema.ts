@@ -1,11 +1,14 @@
 import {
   boolean,
+  index,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
   uuid,
+  type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
 export const orgs = pgTable("orgs", {
@@ -27,6 +30,7 @@ export const users = pgTable(
     name: text("name").notNull(),
     role: text("role", { enum: ["owner", "admin", "member"] }).notNull(),
     passwordHash: text("password_hash").notNull(),
+    preferences: jsonb("preferences").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -102,6 +106,11 @@ export const agents = pgTable(
     modelId: uuid("model_id").references(() => models.id, {
       onDelete: "set null",
     }),
+    domainId: uuid("domain_id").references(() => domains.id, {
+      onDelete: "set null",
+    }),
+    createdBy: uuid("created_by").references(() => users.id),
+    capabilities: jsonb("capabilities").notNull().default({}),
     status: text("status", { enum: ["active", "draft"] })
       .notNull()
       .default("draft"),
@@ -147,3 +156,385 @@ export const messages = pgTable("messages", {
     .notNull()
     .defaultNow(),
 });
+
+// ---------------------------------------------------------------------------
+// Governance: teams, domains, grants
+// ---------------------------------------------------------------------------
+
+export const teams = pgTable(
+  "teams",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    parentTeamId: uuid("parent_team_id").references(
+      (): AnyPgColumn => teams.id,
+      { onDelete: "cascade" },
+    ),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    isEveryone: boolean("is_everyone").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("teams_org_slug_idx").on(t.orgId, t.slug)],
+);
+
+export const teamMembers = pgTable(
+  "team_members",
+  {
+    teamId: uuid("team_id")
+      .notNull()
+      .references(() => teams.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.teamId, t.userId] })],
+);
+
+export const domains = pgTable(
+  "domains",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("domains_org_slug_idx").on(t.orgId, t.slug)],
+);
+
+export const grants = pgTable(
+  "grants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    subjectType: text("subject_type", { enum: ["user", "team"] }).notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    accessRight: text("access_right", {
+      enum: ["use", "edit", "admin"],
+    }).notNull(),
+    targetType: text("target_type", { enum: ["agent", "domain"] }).notNull(),
+    targetId: uuid("target_id").notNull(),
+    createdBy: uuid("created_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("grants_unique_idx").on(
+      t.orgId,
+      t.subjectType,
+      t.subjectId,
+      t.targetType,
+      t.targetId,
+    ),
+    index("grants_target_idx").on(t.targetType, t.targetId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// MCP servers and per-agent tool configuration
+// ---------------------------------------------------------------------------
+
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    category: text("category").notNull().default("Tools"),
+    encryptedToken: text("encrypted_token"),
+    tools: jsonb("tools").notNull().default([]),
+    status: text("status", { enum: ["connected", "error"] })
+      .notNull()
+      .default("connected"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("mcp_servers_org_slug_idx").on(t.orgId, t.slug)],
+);
+
+export const agentMcpServers = pgTable(
+  "agent_mcp_servers",
+  {
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.serverId] })],
+);
+
+export const agentToolConfigs = pgTable(
+  "agent_tool_configs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    toolName: text("tool_name").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    authType: text("auth_type", { enum: ["service", "user"] })
+      .notNull()
+      .default("service"),
+  },
+  (t) => [
+    uniqueIndex("agent_tool_configs_idx").on(t.agentId, t.serverId, t.toolName),
+  ],
+);
+
+export const agentLinks = pgTable(
+  "agent_links",
+  {
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    subAgentId: uuid("sub_agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.subAgentId] })],
+);
+
+export const automations = pgTable("automations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  schedule: text("schedule").notNull(),
+  prompt: text("prompt").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Admin: connections, API keys, audit log
+// ---------------------------------------------------------------------------
+
+export const connections = pgTable("connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => orgs.id),
+  vendor: text("vendor").notNull(),
+  name: text("name").notNull(),
+  roles: jsonb("roles").notNull().default([]),
+  baseUrl: text("base_url"),
+  encryptedToken: text("encrypted_token"),
+  status: text("status", { enum: ["connected", "needs-auth", "error"] })
+    .notNull()
+    .default("connected"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const apiKeys = pgTable(
+  "api_keys",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    name: text("name").notNull(),
+    scope: text("scope", { enum: ["read", "write", "admin"] }).notNull(),
+    prefix: text("prefix").notNull(),
+    keyHash: text("key_hash").notNull(),
+    createdBy: uuid("created_by").references(() => users.id),
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("api_keys_hash_idx").on(t.keyHash)],
+);
+
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    actorUserId: uuid("actor_user_id").references(() => users.id),
+    action: text("action").notNull(),
+    targetType: text("target_type").notNull(),
+    targetId: text("target_id"),
+    summary: text("summary").notNull(),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("audit_events_org_time_idx").on(t.orgId, t.createdAt)],
+);
+
+// ---------------------------------------------------------------------------
+// Evals
+// ---------------------------------------------------------------------------
+
+export const evalCriteria = pgTable("eval_criteria", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const evalResults = pgTable(
+  "eval_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    criterionId: uuid("criterion_id")
+      .notNull()
+      .references(() => evalCriteria.id, { onDelete: "cascade" }),
+    sessionId: uuid("session_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    messageId: uuid("message_id").references(() => messages.id, {
+      onDelete: "cascade",
+    }),
+    passed: boolean("passed").notNull(),
+    reasoning: text("reasoning").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("eval_results_session_idx").on(t.sessionId),
+    index("eval_results_criterion_idx").on(t.criterionId, t.createdAt),
+  ],
+);
+
+export const evalSuites = pgTable("eval_suites", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  gating: boolean("gating").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const evalCases = pgTable("eval_cases", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  suiteId: uuid("suite_id")
+    .notNull()
+    .references(() => evalSuites.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  input: text("input").notNull(),
+  rubric: text("rubric").notNull(),
+  sourceSessionId: uuid("source_session_id").references(() => sessions.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+export const suiteRuns = pgTable("suite_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  suiteId: uuid("suite_id")
+    .notNull()
+    .references(() => evalSuites.id, { onDelete: "cascade" }),
+  status: text("status", { enum: ["running", "completed", "failed"] })
+    .notNull()
+    .default("running"),
+  startedAt: timestamp("started_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+
+export const caseResults = pgTable("case_results", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  runId: uuid("run_id")
+    .notNull()
+    .references(() => suiteRuns.id, { onDelete: "cascade" }),
+  caseId: uuid("case_id")
+    .notNull()
+    .references(() => evalCases.id, { onDelete: "cascade" }),
+  passed: boolean("passed").notNull(),
+  output: text("output").notNull().default(""),
+  reasoning: text("reasoning").notNull().default(""),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
+// Per-user: favorites, connected accounts
+// ---------------------------------------------------------------------------
+
+export const userFavorites = pgTable(
+  "user_favorites",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.agentId] })],
+);
+
+export const userConnectedAccounts = pgTable(
+  "user_connected_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    vendor: text("vendor").notNull(),
+    label: text("label").notNull().default(""),
+    encryptedToken: text("encrypted_token").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("user_connected_accounts_idx").on(t.userId, t.vendor)],
+);

@@ -133,6 +133,9 @@ export const agentSchema = z.object({
   description: z.string(),
   instructions: z.string(),
   modelId: z.string().uuid().nullable(),
+  domainId: z.string().uuid().nullable(),
+  createdBy: z.string().uuid().nullable(),
+  capabilities: z.record(z.unknown()),
   status: agentStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -153,6 +156,8 @@ export const updateAgentSchema = z.object({
   description: z.string().max(500).optional(),
   instructions: z.string().max(20000).optional(),
   modelId: z.string().uuid().nullable().optional(),
+  domainId: z.string().uuid().nullable().optional(),
+  capabilities: z.record(z.unknown()).optional(),
   status: agentStatusSchema.optional(),
 });
 export type UpdateAgentRequest = z.infer<typeof updateAgentSchema>;
@@ -164,17 +169,30 @@ export type UpdateAgentRequest = z.infer<typeof updateAgentSchema>;
 export const messageRoleSchema = z.enum(["user", "agent"]);
 export type MessageRole = z.infer<typeof messageRoleSchema>;
 
-/**
- * A tool invocation recorded on an agent message. No tools ship in the
- * current slice; the shape exists so transcripts are forward-compatible.
- */
+/** How a user-auth tool call was resolved. */
+export const approvalOutcomeSchema = z.object({
+  status: z.enum([
+    "approved",
+    "denied",
+    "ran-as-service",
+    "auto-approved",
+    "timed-out",
+  ]),
+  decidedByName: z.string().nullable(),
+});
+export type ApprovalOutcome = z.infer<typeof approvalOutcomeSchema>;
+
+/** A tool invocation recorded on an agent message. */
 export const toolCallSchema = z.object({
   id: z.string(),
   name: z.string(),
+  /** Which MCP server (or built-in surface) served the call. */
+  serverName: z.string().nullable().optional(),
   input: z.unknown(),
   output: z.unknown().nullable(),
   /** "service" or "user" — which credential the call ran under. */
   authType: z.enum(["service", "user"]).nullable(),
+  approval: approvalOutcomeSchema.nullable().optional(),
 });
 export type ToolCall = z.infer<typeof toolCallSchema>;
 
@@ -225,6 +243,18 @@ export const streamEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("user-message"), message: messageSchema }),
   /** Incremental agent text. */
   z.object({ type: z.literal("delta"), text: z.string() }),
+  /** A tool call started (input known, output pending). */
+  z.object({ type: z.literal("tool-start"), toolCall: toolCallSchema }),
+  /** A tool call finished (output + approval outcome present). */
+  z.object({ type: z.literal("tool-end"), toolCall: toolCallSchema }),
+  /** A user-auth tool needs an in-thread decision before it can run. */
+  z.object({
+    type: z.literal("approval-request"),
+    approvalId: z.string(),
+    toolName: z.string(),
+    serverName: z.string().nullable(),
+    input: z.unknown(),
+  }),
   /** The completed, persisted agent message. */
   z.object({ type: z.literal("done"), message: messageSchema }),
   z.object({ type: z.literal("error"), error: z.string() }),
@@ -243,3 +273,332 @@ export function slugify(name: string): string {
     .replace(/^-+|-+$/g, "")
     .slice(0, 60);
 }
+
+// ---------------------------------------------------------------------------
+// Governance: teams, domains, grants
+// ---------------------------------------------------------------------------
+
+export const accessRightSchema = z.enum(["use", "edit", "admin"]);
+export type AccessRight = z.infer<typeof accessRightSchema>;
+
+export const RIGHT_ORDER: Record<AccessRight, number> = {
+  use: 1,
+  edit: 2,
+  admin: 3,
+};
+
+export const teamSchema = z.object({
+  id: z.string().uuid(),
+  orgId: z.string().uuid(),
+  parentTeamId: z.string().uuid().nullable(),
+  slug: z.string(),
+  name: z.string(),
+  isEveryone: z.boolean(),
+  memberCount: z.number().int(),
+  createdAt: z.string(),
+});
+export type Team = z.infer<typeof teamSchema>;
+
+export const teamMemberSchema = z.object({
+  userId: z.string().uuid(),
+  name: z.string(),
+  email: z.string(),
+  role: userRoleSchema,
+});
+export type TeamMember = z.infer<typeof teamMemberSchema>;
+
+export const createTeamSchema = z.object({
+  name: z.string().min(1).max(120),
+  parentTeamId: z.string().uuid().nullable().optional(),
+});
+export type CreateTeamRequest = z.infer<typeof createTeamSchema>;
+
+export const domainSchema = z.object({
+  id: z.string().uuid(),
+  orgId: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+  agentCount: z.number().int(),
+  createdAt: z.string(),
+});
+export type Domain = z.infer<typeof domainSchema>;
+
+export const createDomainSchema = z.object({
+  name: z.string().min(1).max(60),
+});
+export type CreateDomainRequest = z.infer<typeof createDomainSchema>;
+
+export const grantSchema = z.object({
+  id: z.string().uuid(),
+  subjectType: z.enum(["user", "team"]),
+  subjectId: z.string().uuid(),
+  subjectName: z.string(),
+  accessRight: accessRightSchema,
+  targetType: z.enum(["agent", "domain"]),
+  targetId: z.string().uuid(),
+  targetName: z.string(),
+  /** Present when the grant reaches an agent through its domain. */
+  viaDomain: z.string().nullable().optional(),
+  createdAt: z.string(),
+});
+export type Grant = z.infer<typeof grantSchema>;
+
+export const createGrantSchema = z.object({
+  subjectType: z.enum(["user", "team"]),
+  subjectId: z.string().uuid(),
+  accessRight: accessRightSchema,
+  targetType: z.enum(["agent", "domain"]),
+  targetId: z.string().uuid(),
+});
+export type CreateGrantRequest = z.infer<typeof createGrantSchema>;
+
+// ---------------------------------------------------------------------------
+// MCP servers & per-agent tools
+// ---------------------------------------------------------------------------
+
+export const mcpToolInfoSchema = z.object({
+  name: z.string(),
+  description: z.string(),
+  inputSchema: z.record(z.unknown()).optional(),
+});
+export type McpToolInfo = z.infer<typeof mcpToolInfoSchema>;
+
+export const mcpServerSchema = z.object({
+  id: z.string().uuid(),
+  orgId: z.string().uuid(),
+  slug: z.string(),
+  name: z.string(),
+  url: z.string(),
+  category: z.string(),
+  hasToken: z.boolean(),
+  tools: z.array(mcpToolInfoSchema),
+  status: z.enum(["connected", "error"]),
+  usedByCount: z.number().int(),
+  createdAt: z.string(),
+});
+export type McpServer = z.infer<typeof mcpServerSchema>;
+
+export const createMcpServerSchema = z.object({
+  name: z.string().min(1).max(120),
+  url: z.string().url(),
+  category: z.string().min(1).max(40).default("Tools"),
+  token: z.string().max(500).optional(),
+});
+export type CreateMcpServerRequest = z.infer<typeof createMcpServerSchema>;
+
+export const agentToolConfigSchema = z.object({
+  serverId: z.string().uuid(),
+  serverName: z.string(),
+  toolName: z.string(),
+  description: z.string(),
+  enabled: z.boolean(),
+  authType: z.enum(["service", "user"]),
+});
+export type AgentToolConfig = z.infer<typeof agentToolConfigSchema>;
+
+export const updateToolConfigSchema = z.object({
+  serverId: z.string().uuid(),
+  toolName: z.string(),
+  enabled: z.boolean().optional(),
+  authType: z.enum(["service", "user"]).optional(),
+});
+export type UpdateToolConfigRequest = z.infer<typeof updateToolConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent capabilities & automations
+// ---------------------------------------------------------------------------
+
+export const agentCapabilitiesSchema = z.object({
+  codeSandbox: z.boolean().default(false),
+  codeExecution: z.boolean().default(false),
+  pullRequestAccess: z.boolean().default(false),
+  outboundWebAccess: z.boolean().default(false),
+  networkAllowlist: z.string().default(""),
+});
+export type AgentCapabilities = z.infer<typeof agentCapabilitiesSchema>;
+
+export const automationSchema = z.object({
+  id: z.string().uuid(),
+  agentId: z.string().uuid(),
+  name: z.string(),
+  schedule: z.string(),
+  prompt: z.string(),
+  enabled: z.boolean(),
+  createdAt: z.string(),
+});
+export type Automation = z.infer<typeof automationSchema>;
+
+export const createAutomationSchema = z.object({
+  name: z.string().min(1).max(120),
+  schedule: z.string().min(1).max(100),
+  prompt: z.string().max(10000).default(""),
+});
+export type CreateAutomationRequest = z.infer<typeof createAutomationSchema>;
+
+// ---------------------------------------------------------------------------
+// Admin: connections, API keys, audit
+// ---------------------------------------------------------------------------
+
+export const connectionRoleSchema = z.enum(["Interface", "Automation", "Tools"]);
+export type ConnectionRole = z.infer<typeof connectionRoleSchema>;
+
+export const connectionSchema = z.object({
+  id: z.string().uuid(),
+  orgId: z.string().uuid(),
+  vendor: z.string(),
+  name: z.string(),
+  roles: z.array(connectionRoleSchema),
+  baseUrl: z.string().nullable(),
+  hasToken: z.boolean(),
+  status: z.enum(["connected", "needs-auth", "error"]),
+  createdAt: z.string(),
+});
+export type Connection = z.infer<typeof connectionSchema>;
+
+export const createConnectionSchema = z.object({
+  vendor: z.string().min(1).max(40),
+  name: z.string().min(1).max(120),
+  roles: z.array(connectionRoleSchema).min(1),
+  baseUrl: z.string().url().nullable().optional(),
+  token: z.string().max(500).optional(),
+});
+export type CreateConnectionRequest = z.infer<typeof createConnectionSchema>;
+
+export const apiKeyScopeSchema = z.enum(["read", "write", "admin"]);
+export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>;
+
+export const apiKeySchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  scope: apiKeyScopeSchema,
+  prefix: z.string(),
+  createdByName: z.string().nullable(),
+  lastUsedAt: z.string().nullable(),
+  revokedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type ApiKey = z.infer<typeof apiKeySchema>;
+
+export const createApiKeySchema = z.object({
+  name: z.string().min(1).max(120),
+  scope: apiKeyScopeSchema,
+});
+export type CreateApiKeyRequest = z.infer<typeof createApiKeySchema>;
+
+export const auditEventSchema = z.object({
+  id: z.string().uuid(),
+  actorName: z.string().nullable(),
+  action: z.string(),
+  targetType: z.string(),
+  targetId: z.string().nullable(),
+  summary: z.string(),
+  metadata: z.record(z.unknown()),
+  createdAt: z.string(),
+});
+export type AuditEvent = z.infer<typeof auditEventSchema>;
+
+// ---------------------------------------------------------------------------
+// Evals
+// ---------------------------------------------------------------------------
+
+export const evalCriterionSchema = z.object({
+  id: z.string().uuid(),
+  agentId: z.string().uuid(),
+  name: z.string(),
+  description: z.string(),
+  enabled: z.boolean(),
+  passRate: z.number().nullable(),
+  sessionCount: z.number().int(),
+  createdAt: z.string(),
+});
+export type EvalCriterion = z.infer<typeof evalCriterionSchema>;
+
+export const createEvalCriterionSchema = z.object({
+  name: z.string().min(1).max(200),
+  description: z.string().max(2000).default(""),
+});
+export type CreateEvalCriterionRequest = z.infer<typeof createEvalCriterionSchema>;
+
+export const sessionEvalResultSchema = z.object({
+  criterionId: z.string().uuid(),
+  criterionName: z.string(),
+  passed: z.boolean(),
+  reasoning: z.string(),
+});
+export type SessionEvalResult = z.infer<typeof sessionEvalResultSchema>;
+
+export const evalSuiteSchema = z.object({
+  id: z.string().uuid(),
+  agentId: z.string().uuid(),
+  name: z.string(),
+  gating: z.boolean(),
+  caseCount: z.number().int(),
+  lastRun: z
+    .object({
+      id: z.string().uuid(),
+      status: z.enum(["running", "completed", "failed"]),
+      passed: z.number().int(),
+      total: z.number().int(),
+      startedAt: z.string(),
+    })
+    .nullable(),
+  createdAt: z.string(),
+});
+export type EvalSuite = z.infer<typeof evalSuiteSchema>;
+
+export const evalCaseSchema = z.object({
+  id: z.string().uuid(),
+  suiteId: z.string().uuid(),
+  name: z.string(),
+  input: z.string(),
+  rubric: z.string(),
+  sourceSessionId: z.string().uuid().nullable(),
+  createdAt: z.string(),
+});
+export type EvalCase = z.infer<typeof evalCaseSchema>;
+
+export const createEvalCaseSchema = z.object({
+  name: z.string().min(1).max(200),
+  input: z.string().min(1).max(20000),
+  rubric: z.string().min(1).max(5000),
+});
+export type CreateEvalCaseRequest = z.infer<typeof createEvalCaseSchema>;
+
+// ---------------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------------
+
+export const userPreferencesSchema = z.object({
+  /** "ask" surfaces the approval card; "auto" approves user-auth tools. */
+  approvalPosture: z.enum(["ask", "auto"]).default("ask"),
+  responseStyle: z.enum(["concise", "balanced", "detailed"]).default("balanced"),
+});
+export type UserPreferences = z.infer<typeof userPreferencesSchema>;
+
+export const connectedAccountSchema = z.object({
+  id: z.string().uuid(),
+  vendor: z.string(),
+  label: z.string(),
+  createdAt: z.string(),
+});
+export type ConnectedAccount = z.infer<typeof connectedAccountSchema>;
+
+// ---------------------------------------------------------------------------
+// Composed views (declared last: they reference schemas defined above)
+// ---------------------------------------------------------------------------
+
+/** Directory listing row: agent plus the trust-surface columns. */
+export const agentDirectoryRowSchema = agentSchema.extend({
+  domainName: z.string().nullable(),
+  evalScore: z.number().nullable(),
+  toolCount: z.number().int(),
+  starred: z.boolean(),
+  /** The caller's effective right on this agent (null = none). */
+  myRight: accessRightSchema.nullable(),
+});
+export type AgentDirectoryRow = z.infer<typeof agentDirectoryRowSchema>;
+
+export const approvalDecisionSchema = z.object({
+  decision: z.enum(["approve", "deny", "run-as-service"]),
+});
+export type ApprovalDecisionRequest = z.infer<typeof approvalDecisionSchema>;

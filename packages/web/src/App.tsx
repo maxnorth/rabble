@@ -7,6 +7,9 @@ import { SetupPage } from "./pages/SetupPage";
 import { SessionsSection } from "./pages/SessionsSection";
 import { AgentsSection } from "./pages/AgentsSection";
 import { AdminSection } from "./pages/AdminSection";
+import { TeamsSection } from "./pages/TeamsSection";
+import { StatsSection } from "./pages/StatsSection";
+import { ProfileSection } from "./pages/ProfileSection";
 
 export function App() {
   const setup = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
@@ -58,7 +61,13 @@ export function App() {
         <Route path="/sessions/:sessionId" element={<SessionsSection />} />
         <Route path="/agents" element={<AgentsSection />} />
         <Route path="/agents/:agentId" element={<AgentsSection />} />
-        <Route path="/admin" element={<Navigate to="/admin/models" replace />} />
+        <Route path="/agents/:agentId/:tab" element={<AgentsSection />} />
+        <Route path="/domains/:domainId" element={<AgentsSection />} />
+        <Route path="/teams" element={<TeamsSection />} />
+        <Route path="/teams/:teamId" element={<TeamsSection />} />
+        <Route path="/stats" element={<StatsSection />} />
+        <Route path="/profile" element={<ProfileSection />} />
+        <Route path="/admin" element={<Navigate to="/admin/connections" replace />} />
         <Route path="/admin/:page" element={<AdminSection />} />
         <Route path="*" element={<Navigate to="/sessions" replace />} />
       </Route>

@@ -1,7 +1,8 @@
 /**
  * Boots the full stack for the e2e suite:
  *   1. recreates a dedicated rabble_e2e database and migrates it
- *   2. starts the mock LLM endpoint (OpenAI-compatible streaming)
+ *   2. starts the emulator (fakes of Anthropic, OpenAI, MCP servers, Slack —
+ *      the real app talks to them via configured base URLs)
  *   3. starts the production server build, serving the built web app
  *
  * The server's log is captured to .artifacts/server.log so tests can assert
@@ -20,7 +21,8 @@ export const serverLogPath = join(artifactsDir, "server.log");
 
 export const E2E_DB = "rabble_e2e";
 export const E2E_PORT = 3178;
-export const MOCK_LLM_PORT = 3199;
+export const EMULATOR_PORT = 4100;
+export const EMULATOR = `http://localhost:${EMULATOR_PORT}`;
 
 const adminUrl =
   process.env.E2E_ADMIN_DATABASE_URL ??
@@ -73,13 +75,17 @@ export default async function globalSetup() {
     DATABASE_URL: e2eDatabaseUrl,
   });
 
-  // 2. Mock LLM
+  // 2. Emulator
   const children: ChildProcess[] = [];
-  const mock = spawn("node", [join(here, "mock-llm.mjs")], {
-    env: { ...process.env, MOCK_LLM_PORT: String(MOCK_LLM_PORT) },
-    stdio: "ignore",
-  });
-  children.push(mock);
+  const emulator = spawn(
+    "node",
+    [join(repoRoot, "packages/emulator/dist/index.js")],
+    {
+      env: { ...process.env, EMULATOR_PORT: String(EMULATOR_PORT) },
+      stdio: "ignore",
+    },
+  );
+  children.push(emulator);
 
   // 3. Server (production build), log captured for assertions
   mkdirSync(artifactsDir, { recursive: true });

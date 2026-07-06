@@ -7,11 +7,20 @@ import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import { ZodError } from "zod";
 import { env } from "./env.js";
-import { resolveUser } from "./auth.js";
+import { enforceApiKeyScope, resolveUser } from "./auth.js";
 import { authRoutes } from "./routes/auth.js";
 import { modelRoutes } from "./routes/models.js";
 import { agentRoutes } from "./routes/agents.js";
 import { sessionRoutes } from "./routes/sessions.js";
+import { teamRoutes } from "./routes/teams.js";
+import { domainRoutes } from "./routes/domains.js";
+import { grantRoutes } from "./routes/grants.js";
+import { mcpRoutes } from "./routes/mcp.js";
+import { evalRoutes } from "./routes/evals.js";
+import { adminRoutes } from "./routes/admin.js";
+import { profileRoutes } from "./routes/profile.js";
+import { automationRoutes } from "./routes/automations.js";
+import { statsRoutes } from "./routes/stats.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -46,8 +55,9 @@ export async function buildServer() {
   });
 
   app.decorateRequest("user", null);
-  app.addHook("preHandler", async (req) => {
+  app.addHook("preHandler", async (req, reply) => {
     req.user = await resolveUser(req);
+    enforceApiKeyScope(req, reply);
   });
 
   app.get("/api/health", async () => ({ ok: true }));
@@ -56,6 +66,15 @@ export async function buildServer() {
   await app.register(modelRoutes);
   await app.register(agentRoutes);
   await app.register(sessionRoutes);
+  await app.register(teamRoutes);
+  await app.register(domainRoutes);
+  await app.register(grantRoutes);
+  await app.register(mcpRoutes);
+  await app.register(evalRoutes);
+  await app.register(adminRoutes);
+  await app.register(profileRoutes);
+  await app.register(automationRoutes);
+  await app.register(statsRoutes);
 
   // In production the server also serves the built web app.
   const webDist = join(

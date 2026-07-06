@@ -1,16 +1,16 @@
-import type { ModelProtocol } from "@rabble/core";
+import type { ConnectionRole, ModelProtocol } from "@rabble/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { NavLink, useParams } from "react-router-dom";
 import { api } from "../api";
 
 const ADMIN_PAGES = [
-  { key: "connections", label: "Connections", enabled: false },
-  { key: "mcp", label: "MCP servers", enabled: false },
-  { key: "models", label: "Models", enabled: true },
-  { key: "api-keys", label: "API keys", enabled: false },
-  { key: "audit", label: "Audit log", enabled: false },
-  { key: "settings", label: "Settings", enabled: false },
+  { key: "connections", label: "Connections" },
+  { key: "mcp", label: "MCP servers" },
+  { key: "models", label: "Models" },
+  { key: "api-keys", label: "API keys" },
+  { key: "audit", label: "Audit log" },
+  { key: "settings", label: "Settings" },
 ];
 
 export function AdminSection() {
@@ -20,50 +20,414 @@ export function AdminSection() {
     <>
       <aside className="sidebar">
         <div className="sidebar-title">Admin</div>
-        {ADMIN_PAGES.map((p) =>
-          p.enabled ? (
-            <NavLink
-              key={p.key}
-              to={`/admin/${p.key}`}
-              className={({ isActive }) =>
-                `sidebar-item${isActive ? " active" : ""}`
-              }
-            >
-              <span className="label">{p.label}</span>
-            </NavLink>
-          ) : (
-            <div
-              key={p.key}
-              className="sidebar-item"
-              style={{ color: "var(--text-muted)", cursor: "default" }}
-              title="Coming soon"
-            >
-              <span className="label">{p.label}</span>
-            </div>
-          ),
-        )}
+        {ADMIN_PAGES.map((p) => (
+          <NavLink
+            key={p.key}
+            to={`/admin/${p.key}`}
+            className={({ isActive }) => `sidebar-item${isActive ? " active" : ""}`}
+          >
+            <span className="label">{p.label}</span>
+          </NavLink>
+        ))}
       </aside>
       <main className="main-pane">
-        {page === "models" ? (
-          <ModelsPage />
-        ) : (
-          <div className="content-col">
-            <p className="page-subtitle">This admin surface is coming soon.</p>
-          </div>
-        )}
+        {page === "connections" && <ConnectionsPage />}
+        {page === "mcp" && <McpServersPage />}
+        {page === "models" && <ModelsPage />}
+        {page === "api-keys" && <ApiKeysPage />}
+        {page === "audit" && <AuditPage />}
+        {page === "settings" && <SettingsPage />}
       </main>
     </>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Connections
+// ---------------------------------------------------------------------------
+
+const VENDORS = ["slack", "github", "linear", "datadog", "pagerduty"];
+
+function ConnectionsPage() {
+  const queryClient = useQueryClient();
+  const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
+  const [showAdd, setShowAdd] = useState(false);
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteConnection(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["connections"] }),
+  });
+
+  return (
+    <div className="content-col">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div>
+          <h1 className="page-title">Connections</h1>
+          <p className="page-subtitle">
+            First-party platform connections. A vendor can host multiple apps;
+            each connection plays one or more roles. Distinct from MCP servers
+            (pure tool endpoints).
+          </p>
+        </div>
+        <button className="btn" onClick={() => setShowAdd(true)}>
+          + Add connection
+        </button>
+      </div>
+      <div className="row-group">
+        {connections.data?.connections.map((c) => (
+          <div className="row" key={c.id}>
+            <span
+              className="status-dot"
+              style={{
+                background:
+                  c.status === "connected"
+                    ? "var(--green)"
+                    : c.status === "needs-auth"
+                      ? "var(--amber)"
+                      : "var(--red)",
+              }}
+            />
+            <div className="grow">
+              <div className="title">{c.name}</div>
+              <div className="sub mono">{c.vendor}</div>
+            </div>
+            {c.roles.map((r) => (
+              <span
+                key={r}
+                className={`chip ${r === "Interface" ? "blue" : r === "Automation" ? "purple" : "green"}`}
+              >
+                {r}
+              </span>
+            ))}
+            <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
+              {c.status}
+            </span>
+            <button
+              className="btn danger"
+              onClick={() => {
+                if (confirm(`Remove connection "${c.name}"?`)) remove.mutate(c.id);
+              }}
+            >
+              Remove
+            </button>
+          </div>
+        ))}
+        {connections.data?.connections.length === 0 && (
+          <div className="row">
+            <div className="sub">No connections yet.</div>
+          </div>
+        )}
+      </div>
+      {showAdd && <AddConnectionModal onClose={() => setShowAdd(false)} />}
+    </div>
+  );
+}
+
+function AddConnectionModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    vendor: "slack",
+    name: "",
+    roles: ["Interface"] as ConnectionRole[],
+    baseUrl: "",
+    token: "",
+  });
+  const create = useMutation({
+    mutationFn: () =>
+      api.createConnection({
+        vendor: form.vendor,
+        name: form.name,
+        roles: form.roles,
+        baseUrl: form.baseUrl.trim() || null,
+        token: form.token || undefined,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["connections"] });
+      onClose();
+    },
+  });
+
+  const toggleRole = (role: ConnectionRole) =>
+    setForm((f) => ({
+      ...f,
+      roles: f.roles.includes(role)
+        ? f.roles.filter((r) => r !== role)
+        : [...f.roles, role],
+    }));
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Add connection</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (form.name.trim() && form.roles.length > 0) create.mutate();
+          }}
+        >
+          <div className="field">
+            <label>Vendor</label>
+            <select
+              value={form.vendor}
+              onChange={(e) => setForm({ ...form, vendor: e.target.value })}
+            >
+              {VENDORS.map((v) => (
+                <option key={v} value={v}>
+                  {v}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Name</label>
+            <input
+              required
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="Acme Slack"
+            />
+          </div>
+          <div className="field">
+            <label>Roles</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["Interface", "Automation", "Tools"] as const).map((r) => (
+                <button
+                  type="button"
+                  key={r}
+                  className={`chip ${form.roles.includes(r) ? "blue" : ""}`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => toggleRole(r)}
+                >
+                  {form.roles.includes(r) ? "✓ " : ""}
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label>API base URL (optional)</label>
+            <input
+              value={form.baseUrl}
+              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              placeholder="https://slack.com"
+            />
+            <span className="hint">Override to point at a proxy or emulator.</span>
+          </div>
+          <div className="field">
+            <label>Token (optional)</label>
+            <input
+              type="password"
+              value={form.token}
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+          </div>
+          {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={create.isPending}>
+              + Add
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MCP servers
+// ---------------------------------------------------------------------------
+
+function McpServersPage() {
+  const queryClient = useQueryClient();
+  const servers = useQuery({ queryKey: ["mcp-servers"], queryFn: api.listMcpServers });
+  const [showAdd, setShowAdd] = useState(false);
+  const [detail, setDetail] = useState<string | null>(null);
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteMcpServer(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] }),
+  });
+
+  const selected = servers.data?.servers.find((s) => s.id === detail);
+
+  return (
+    <div className="content-col">
+      {selected ? (
+        <>
+          <button className="btn" style={{ marginBottom: 16 }} onClick={() => setDetail(null)}>
+            ‹ MCP servers
+          </button>
+          <h1 className="page-title">{selected.name}</h1>
+          <p className="page-subtitle mono">{selected.url}</p>
+          <div className="row-group">
+            {selected.tools.map((t) => (
+              <div className="row" key={t.name}>
+                <div className="grow">
+                  <div className="title mono" style={{ fontSize: 12 }}>
+                    {t.name}
+                  </div>
+                  <div className="sub">{t.description}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          <div
+            style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}
+          >
+            <div>
+              <h1 className="page-title">MCP servers</h1>
+              <p className="page-subtitle">
+                Pure tool endpoints, defined once and reused across agents.
+              </p>
+            </div>
+            <button className="btn" onClick={() => setShowAdd(true)}>
+              + Add server
+            </button>
+          </div>
+          <div className="row-group">
+            {servers.data?.servers.map((s) => (
+              <div
+                className="row"
+                key={s.id}
+                style={{ cursor: "pointer" }}
+                onClick={() => setDetail(s.id)}
+              >
+                <span
+                  className="status-dot"
+                  style={{
+                    background: s.status === "connected" ? "var(--green)" : "var(--red)",
+                  }}
+                />
+                <div className="grow">
+                  <div className="title">{s.name}</div>
+                  <div className="sub mono">{s.url}</div>
+                </div>
+                <span className="chip">{s.category}</span>
+                <span className="chip blue">{s.tools.length} tools</span>
+                <span className="chip purple">used by {s.usedByCount}</span>
+                <button
+                  className="btn danger"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (confirm(`Remove MCP server "${s.name}"?`)) remove.mutate(s.id);
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            {servers.data?.servers.length === 0 && (
+              <div className="row">
+                <div className="sub">No MCP servers registered.</div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {showAdd && <AddMcpServerModal onClose={() => setShowAdd(false)} />}
+    </div>
+  );
+}
+
+function AddMcpServerModal({ onClose }: { onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({ name: "", url: "", category: "Tools", token: "" });
+  const create = useMutation({
+    mutationFn: () =>
+      api.createMcpServer({
+        name: form.name,
+        url: form.url,
+        category: form.category,
+        token: form.token || undefined,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+      onClose();
+    },
+  });
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Add MCP server</h2>
+        <p className="page-subtitle">
+          Rabble connects, discovers the tool list, and adds it to the library.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            create.mutate();
+          }}
+        >
+          <div className="field">
+            <label>Name</label>
+            <input
+              autoFocus
+              required
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="GitHub"
+            />
+          </div>
+          <div className="field">
+            <label>URL</label>
+            <input
+              required
+              className="mono"
+              value={form.url}
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+              placeholder="https://mcp.example.com/mcp"
+            />
+          </div>
+          <div className="field">
+            <label>Category</label>
+            <select
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+            >
+              {["Code", "Project", "Comms", "Ops", "Internal", "Tools"].map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Bearer token (optional)</label>
+            <input
+              type="password"
+              value={form.token}
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+          </div>
+          {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={create.isPending}>
+              {create.isPending ? "Connecting…" : "+ Add"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Models (unchanged behavior from the first slice)
+// ---------------------------------------------------------------------------
+
 function ModelsPage() {
   const queryClient = useQueryClient();
   const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: api.modelCatalog });
-  const providers = useQuery({
-    queryKey: ["providers"],
-    queryFn: api.providerStatus,
-  });
+  const providers = useQuery({ queryKey: ["providers"], queryFn: api.providerStatus });
   const [showCustom, setShowCustom] = useState(false);
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
 
@@ -80,14 +444,8 @@ function ModelsPage() {
       refresh();
     },
   });
-  const enable = useMutation({
-    mutationFn: api.enableBuiltIn,
-    onSuccess: refresh,
-  });
-  const removeModel = useMutation({
-    mutationFn: api.deleteModel,
-    onSuccess: refresh,
-  });
+  const enable = useMutation({ mutationFn: api.enableBuiltIn, onSuccess: refresh });
+  const removeModel = useMutation({ mutationFn: api.deleteModel, onSuccess: refresh });
 
   const registered = models.data?.models ?? [];
   const registeredCatalogIds = new Set(
@@ -99,8 +457,7 @@ function ModelsPage() {
       <h1 className="page-title">Models</h1>
       <p className="page-subtitle">
         Built-in models use one provider key for the whole org. Custom models
-        bring their own key and can point at any compatible endpoint or
-        gateway.
+        bring their own key and can point at any compatible endpoint or gateway.
       </p>
 
       <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
@@ -126,9 +483,7 @@ function ModelsPage() {
               type="password"
               placeholder={p.configured ? "Replace key…" : "Paste API key…"}
               value={keyDraft[p.provider] ?? ""}
-              onChange={(e) =>
-                setKeyDraft((d) => ({ ...d, [p.provider]: e.target.value }))
-              }
+              onChange={(e) => setKeyDraft((d) => ({ ...d, [p.provider]: e.target.value }))}
               style={{ width: 180 }}
             />
             <button
@@ -196,16 +551,12 @@ function ModelsPage() {
                 {m.baseUrl ? ` · ${m.baseUrl}` : ""}
               </div>
             </div>
-            <span className={`chip ${m.kind === "built-in" ? "blue" : "purple"}`}>
-              {m.kind}
-            </span>
+            <span className={`chip ${m.kind === "built-in" ? "blue" : "purple"}`}>{m.kind}</span>
             <button
               className="btn danger"
               disabled={removeModel.isPending}
               onClick={() => {
-                if (confirm(`Remove model "${m.displayName}"?`)) {
-                  removeModel.mutate(m.id);
-                }
+                if (confirm(`Remove model "${m.displayName}"?`)) removeModel.mutate(m.id);
               }}
             >
               Remove
@@ -215,25 +566,20 @@ function ModelsPage() {
         {registered.length === 0 && (
           <div className="row">
             <div className="sub">
-              No models registered yet — enable a built-in model or add a
-              custom one.
+              No models registered yet — enable a built-in model or add a custom one.
             </div>
           </div>
         )}
       </div>
 
-      {showCustom && <CustomModelModal onClose={() => setShowCustom(false)} onDone={refresh} />}
+      {showCustom && (
+        <CustomModelModal onClose={() => setShowCustom(false)} onDone={refresh} />
+      )}
     </div>
   );
 }
 
-function CustomModelModal({
-  onClose,
-  onDone,
-}: {
-  onClose: () => void;
-  onDone: () => void;
-}) {
+function CustomModelModal({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const [form, setForm] = useState({
     displayName: "",
     protocol: "anthropic" as ModelProtocol,
@@ -298,9 +644,7 @@ function CustomModelModal({
               onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
               placeholder="https://my-gateway.example.com"
             />
-            <span className="hint">
-              Leave blank to use the provider's default endpoint.
-            </span>
+            <span className="hint">Leave blank to use the provider's default endpoint.</span>
           </div>
           <div className="field">
             <label>Model ID</label>
@@ -321,9 +665,7 @@ function CustomModelModal({
               onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
             />
           </div>
-          {create.isError && (
-            <p className="error-text">{(create.error as Error).message}</p>
-          )}
+          {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button type="button" className="btn" onClick={onClose}>
               Cancel
@@ -334,6 +676,306 @@ function CustomModelModal({
           </div>
         </form>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// API keys
+// ---------------------------------------------------------------------------
+
+function ApiKeysPage() {
+  const queryClient = useQueryClient();
+  const keys = useQuery({ queryKey: ["api-keys"], queryFn: api.listApiKeys });
+  const [form, setForm] = useState({ name: "", scope: "read" as "read" | "write" | "admin" });
+  const [freshToken, setFreshToken] = useState<string | null>(null);
+
+  const create = useMutation({
+    mutationFn: () => api.createApiKey(form),
+    onSuccess: (result) => {
+      setFreshToken(result.token);
+      setForm({ name: "", scope: "read" });
+      void queryClient.invalidateQueries({ queryKey: ["api-keys"] });
+    },
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeApiKey(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["api-keys"] }),
+  });
+
+  return (
+    <div className="content-col">
+      <h1 className="page-title">API keys</h1>
+      <p className="page-subtitle">Programmatic access to the platform API.</p>
+
+      {freshToken && (
+        <div
+          className="card"
+          style={{ padding: 14, marginBottom: 16, borderColor: "rgba(52,211,153,0.4)" }}
+        >
+          <div style={{ fontSize: 13, marginBottom: 6 }}>
+            Copy this key now — it won't be shown again.
+          </div>
+          <code className="mono" style={{ fontSize: 12, wordBreak: "break-all" }}>
+            {freshToken}
+          </code>
+          <div style={{ marginTop: 8 }}>
+            <button className="btn" onClick={() => setFreshToken(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="row-group" style={{ marginBottom: 16 }}>
+        {keys.data?.keys.map((k) => (
+          <div className="row" key={k.id}>
+            <div className="grow">
+              <div className="title">{k.name}</div>
+              <div className="sub mono">
+                {k.prefix}_•••••••• · created by {k.createdByName ?? "?"} ·{" "}
+                {k.lastUsedAt
+                  ? `last used ${new Date(k.lastUsedAt).toLocaleString()}`
+                  : "never used"}
+              </div>
+            </div>
+            <span
+              className={`chip ${k.scope === "admin" ? "purple" : k.scope === "write" ? "blue" : "green"}`}
+            >
+              {k.scope}
+            </span>
+            {k.revokedAt ? (
+              <span className="chip amber">revoked</span>
+            ) : (
+              <button className="btn danger" onClick={() => revoke.mutate(k.id)}>
+                Revoke
+              </button>
+            )}
+          </div>
+        ))}
+        {keys.data?.keys.length === 0 && (
+          <div className="row">
+            <div className="sub">No API keys.</div>
+          </div>
+        )}
+        <div className="row">
+          <input
+            placeholder="Key name, e.g. CI pipeline"
+            value={form.name}
+            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            style={{ flex: 1 }}
+          />
+          <div className="segmented">
+            {(["read", "write", "admin"] as const).map((s) => (
+              <button
+                key={s}
+                className={form.scope === s ? "active" : ""}
+                onClick={() => setForm({ ...form, scope: s })}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+          <button
+            className="btn primary"
+            disabled={!form.name.trim() || create.isPending}
+            onClick={() => create.mutate()}
+          >
+            + Create key
+          </button>
+        </div>
+      </div>
+      {(create.isError || revoke.isError) && (
+        <p className="error-text">{((create.error ?? revoke.error) as Error).message}</p>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Audit log
+// ---------------------------------------------------------------------------
+
+function AuditPage() {
+  const [filter, setFilter] = useState("");
+  const audit = useQuery({
+    queryKey: ["audit", filter],
+    queryFn: () => api.listAudit(filter || undefined),
+  });
+
+  return (
+    <div className="content-col" style={{ maxWidth: 880 }}>
+      <h1 className="page-title">Audit log</h1>
+      <p className="page-subtitle">
+        Control-plane state changes only — session transcripts live on sessions.
+      </p>
+      <div className="filter-bar">
+        <select value={filter} onChange={(e) => setFilter(e.target.value)}>
+          <option value="">All actions</option>
+          {[
+            "agent",
+            "grant",
+            "team",
+            "domain",
+            "model",
+            "mcp",
+            "connection",
+            "api-key",
+            "eval",
+            "member",
+            "org",
+          ].map((a) => (
+            <option key={a} value={a}>
+              {a}.*
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="row-group">
+        {audit.data?.events.map((e) => (
+          <div className="row" key={e.id}>
+            <span className="chip mono">{e.action}</span>
+            <div className="grow">
+              <div className="title" style={{ fontWeight: 400 }}>
+                {e.summary}
+              </div>
+              <div className="sub">
+                {e.actorName ?? "system"} · {new Date(e.createdAt).toLocaleString()}
+              </div>
+            </div>
+          </div>
+        ))}
+        {audit.data?.events.length === 0 && (
+          <div className="row">
+            <div className="sub">No events match.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+function SettingsPage() {
+  const queryClient = useQueryClient();
+  const org = useQuery({ queryKey: ["org"], queryFn: api.getOrg });
+  const users = useQuery({ queryKey: ["users"], queryFn: api.listUsers });
+  const [orgName, setOrgName] = useState<string | null>(null);
+  const [invite, setInvite] = useState({ name: "", email: "", role: "member" as "admin" | "member" });
+  const [tempCredentials, setTempCredentials] = useState<{
+    email: string;
+    password: string;
+  } | null>(null);
+
+  const rename = useMutation({
+    mutationFn: () => api.renameOrg(orgName!),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["org"] }),
+  });
+  const doInvite = useMutation({
+    mutationFn: () => api.inviteMember(invite),
+    onSuccess: (result) => {
+      setTempCredentials({ email: result.user.email, password: result.tempPassword });
+      setInvite({ name: "", email: "", role: "member" });
+      void queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+
+  const name = orgName ?? org.data?.org.name ?? "";
+
+  return (
+    <div className="content-col">
+      <h1 className="page-title">Settings</h1>
+      <p className="page-subtitle">Organization and members.</p>
+
+      <div className="field" style={{ maxWidth: 420 }}>
+        <label>Organization name</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input value={name} onChange={(e) => setOrgName(e.target.value)} style={{ flex: 1 }} />
+          <button
+            className="btn primary"
+            disabled={rename.isPending || !name.trim()}
+            onClick={() => rename.mutate()}
+          >
+            Save
+          </button>
+        </div>
+      </div>
+
+      <div className="sidebar-title" style={{ padding: "14px 0 8px" }}>
+        Members
+      </div>
+      {tempCredentials && (
+        <div
+          className="card"
+          style={{ padding: 14, marginBottom: 12, borderColor: "rgba(52,211,153,0.4)" }}
+        >
+          <div style={{ fontSize: 13, marginBottom: 6 }}>
+            Share these sign-in details — the temporary password won't be shown again.
+          </div>
+          <code className="mono" style={{ fontSize: 12 }}>
+            {tempCredentials.email} / {tempCredentials.password}
+          </code>
+          <div style={{ marginTop: 8 }}>
+            <button className="btn" onClick={() => setTempCredentials(null)}>
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="row-group">
+        {users.data?.users.map((u) => (
+          <div className="row" key={u.id}>
+            <div className="grow">
+              <div className="title">{u.name}</div>
+              <div className="sub mono">{u.email}</div>
+            </div>
+            <span className={`chip ${u.role === "owner" ? "purple" : u.role === "admin" ? "blue" : ""}`}>
+              {u.role}
+            </span>
+          </div>
+        ))}
+        <div className="row">
+          <input
+            placeholder="Name"
+            value={invite.name}
+            onChange={(e) => setInvite({ ...invite, name: e.target.value })}
+            style={{ width: 140 }}
+          />
+          <input
+            placeholder="Email"
+            type="email"
+            value={invite.email}
+            onChange={(e) => setInvite({ ...invite, email: e.target.value })}
+            style={{ flex: 1 }}
+          />
+          <div className="segmented">
+            {(["member", "admin"] as const).map((r) => (
+              <button
+                key={r}
+                className={invite.role === r ? "active" : ""}
+                onClick={() => setInvite({ ...invite, role: r })}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+          <button
+            className="btn primary"
+            disabled={!invite.name.trim() || !invite.email.trim() || doInvite.isPending}
+            onClick={() => doInvite.mutate()}
+          >
+            + Invite
+          </button>
+        </div>
+      </div>
+      {doInvite.isError && (
+        <p className="error-text" style={{ marginTop: 8 }}>
+          {(doInvite.error as Error).message}
+        </p>
+      )}
     </div>
   );
 }

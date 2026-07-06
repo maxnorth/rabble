@@ -1,8 +1,10 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
+  approvalDecisionSchema,
   createSessionSchema,
   postMessageSchema,
   type StreamEvent,
+  type ToolCall,
 } from "@rabble/core";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
@@ -10,6 +12,9 @@ import { agents, messages, models, sessions } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
+import { decideApproval } from "../runtime/approvals.js";
+import { hasRight, rightsForAllAgents } from "../rights.js";
+import { judgeSession } from "../evals/judge.js";
 
 function sendEvent(reply: FastifyReply, event: StreamEvent) {
   reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
@@ -42,31 +47,39 @@ export async function sessionRoutes(app: FastifyInstance) {
 
   app.post("/api/sessions", async (req, reply) => {
     const body = createSessionSchema.parse(req.body ?? {});
+    const rights = await rightsForAllAgents(req.user!);
     let agentId = body.agentId ?? null;
 
     if (agentId) {
       const [agent] = await db
-        .select({ id: agents.id })
+        .select({ id: agents.id, status: agents.status })
         .from(agents)
         .where(and(eq(agents.id, agentId), eq(agents.orgId, req.user!.orgId)))
         .limit(1);
       if (!agent) return reply.code(404).send({ error: "Agent not found" });
+      if (!hasRight(rights.get(agentId) ?? null, "use")) {
+        return reply
+          .code(403)
+          .send({ error: "You don't have use access to this agent" });
+      }
     } else {
-      // "Auto": pick an active agent. Real routing comes later.
-      const [agent] = await db
+      // "Auto": pick an active agent the user can actually use.
+      const candidates = await db
         .select({ id: agents.id })
         .from(agents)
         .where(
           and(eq(agents.orgId, req.user!.orgId), eq(agents.status, "active")),
         )
-        .orderBy(agents.name)
-        .limit(1);
-      if (!agent) {
+        .orderBy(agents.name);
+      const usable = candidates.find((c) =>
+        hasRight(rights.get(c.id) ?? null, "use"),
+      );
+      if (!usable) {
         return reply
           .code(409)
-          .send({ error: "No active agents available. Create one first." });
+          .send({ error: "No agents available to you. Ask for access or create one." });
       }
-      agentId = agent.id;
+      agentId = usable.id;
     }
 
     const [row] = await db
@@ -98,6 +111,19 @@ export async function sessionRoutes(app: FastifyInstance) {
       .where(eq(messages.sessionId, id))
       .orderBy(messages.createdAt);
 
+    const { evalResults, evalCriteria } = await import("../db/schema.js");
+    const evals = await db
+      .select({
+        criterionId: evalResults.criterionId,
+        criterionName: evalCriteria.name,
+        passed: evalResults.passed,
+        reasoning: evalResults.reasoning,
+      })
+      .from(evalResults)
+      .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
+      .where(eq(evalResults.sessionId, id))
+      .orderBy(evalCriteria.name);
+
     return {
       session: {
         ...serializeSession(row.session),
@@ -105,7 +131,30 @@ export async function sessionRoutes(app: FastifyInstance) {
         agentSlug: row.agentSlug,
       },
       messages: history.map(serializeMessage),
+      evalResults: evals,
     };
+  });
+
+  // Resolve a pending in-thread approval
+  app.post("/api/sessions/:id/approvals/:approvalId", async (req, reply) => {
+    const { id, approvalId } = req.params as { id: string; approvalId: string };
+    const body = approvalDecisionSchema.parse(req.body);
+    const ok = decideApproval(
+      approvalId,
+      id,
+      req.user!.id,
+      body.decision === "approve"
+        ? "approve"
+        : body.decision === "deny"
+          ? "deny"
+          : "run-as-service",
+    );
+    if (!ok) {
+      return reply
+        .code(404)
+        .send({ error: "This approval is no longer pending" });
+    }
+    return { ok: true };
   });
 
   // Post a user message; the agent's reply streams back as SSE.
@@ -159,7 +208,6 @@ export async function sessionRoutes(app: FastifyInstance) {
         message: serializeMessage(userMessage!),
       });
 
-      // First message titles the session.
       if (history.length === 0) {
         const title =
           body.content.length > 60 ? `${body.content.slice(0, 57)}…` : body.content;
@@ -167,18 +215,31 @@ export async function sessionRoutes(app: FastifyInstance) {
       }
 
       let fullText = "";
-      const toolCalls = [];
+      const toolCalls: ToolCall[] = [];
       for await (const event of runAgentTurn({
         agent: row.agent,
         model,
+        user: req.user!,
+        sessionId: id,
         history,
         userContent: body.content,
       })) {
         if (event.type === "text") {
           fullText += event.text;
           sendEvent(reply, { type: "delta", text: event.text });
-        } else {
+        } else if (event.type === "tool-start") {
+          sendEvent(reply, { type: "tool-start", toolCall: event.toolCall });
+        } else if (event.type === "tool-end") {
           toolCalls.push(event.toolCall);
+          sendEvent(reply, { type: "tool-end", toolCall: event.toolCall });
+        } else if (event.type === "approval-request") {
+          sendEvent(reply, {
+            type: "approval-request",
+            approvalId: event.approvalId,
+            toolName: event.toolName,
+            serverName: event.serverName,
+            input: event.input,
+          });
         }
       }
 
@@ -194,6 +255,14 @@ export async function sessionRoutes(app: FastifyInstance) {
         type: "done",
         message: serializeMessage(agentMessage!),
       });
+
+      // Live evals: judge this session against the agent's criteria in the
+      // background — results appear on the session when it's next loaded.
+      void judgeSession({
+        sessionId: id,
+        agent: row.agent,
+        model,
+      }).catch((err) => req.log.warn({ err }, "live eval failed"));
     } catch (err) {
       req.log.error(err);
       sendEvent(reply, {

@@ -692,3 +692,362 @@ a {
   background: var(--hover-3);
   color: var(--text-1);
 }
+
+/* ---- Inline tool calls ---- */
+
+.tool-call {
+  background: var(--surface-tool);
+  border: 1px solid var(--border-1);
+  border-radius: 9px;
+  padding: 8px 12px;
+  margin: 6px 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 560px;
+}
+
+.tool-call:hover {
+  background: var(--hover-2);
+}
+
+.tool-call .tool-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.tool-call .tool-server {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tool-call .spin {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--border-2);
+  border-top-color: var(--accent-text);
+  border-radius: 50%;
+  animation: rotate 0.9s linear infinite;
+  flex-shrink: 0;
+}
+
+@keyframes rotate {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Approval card ---- */
+
+.approval-card {
+  background: var(--surface-1);
+  border: 1px solid rgba(251, 191, 36, 0.35);
+  border-radius: 10px;
+  padding: 14px;
+  margin: 8px 0;
+  max-width: 560px;
+}
+
+.approval-card .title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.approval-card .detail {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+}
+
+.approval-card .detail .mono {
+  color: var(--text-2);
+}
+
+.approval-card .actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.approval-card.resolved {
+  opacity: 0.75;
+}
+
+/* ---- Right detail drawer ---- */
+
+.drawer {
+  width: 420px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border-1);
+  background: var(--bg-panel);
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.drawer h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.drawer .drawer-close {
+  float: right;
+  color: var(--text-muted);
+  font-size: 16px;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.drawer .drawer-close:hover {
+  background: var(--hover-2);
+}
+
+.drawer pre {
+  background: var(--surface-group);
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-2);
+  margin: 8px 0 14px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.drawer .section-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-label);
+  margin-top: 14px;
+}
+
+/* ---- Filter popup & chips ---- */
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  background: var(--hover-3);
+  border: 1px solid var(--border-2);
+  color: var(--text-2);
+}
+
+.filter-chip button {
+  color: var(--text-muted);
+  padding: 0 4px;
+  border-radius: 50%;
+}
+
+.filter-chip button:hover {
+  color: var(--text-1);
+}
+
+.filter-popup {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  min-width: 210px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: 10px;
+  padding: 4px;
+  z-index: 30;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.filter-popup button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.filter-popup button:hover {
+  background: var(--hover-2);
+}
+
+/* ---- Star button ---- */
+
+.star-btn {
+  color: var(--text-muted);
+  font-size: 15px;
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.star-btn:hover {
+  background: var(--hover-2);
+}
+
+.star-btn.starred {
+  color: var(--amber);
+}
+
+/* ---- Toggle switch ---- */
+
+.toggle {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: var(--border-2);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+
+.toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.toggle.on {
+  background: var(--accent);
+}
+
+.toggle.on::after {
+  transform: translateX(15px);
+  background: #fff;
+}
+
+/* ---- Stats ---- */
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.kpi {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.kpi .value {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.kpi .label {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.bar-chart {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bar-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.bar-row .bar-label {
+  width: 140px;
+  text-align: right;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.bar-row .bar-track {
+  flex: 1;
+  height: 18px;
+  display: flex;
+  align-items: center;
+}
+
+.bar-row .bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  min-width: 2px;
+}
+
+.bar-row .bar-value {
+  width: 40px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.chart-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.chart-card h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  color: var(--text-2);
+}
+
+/* ---- Eval chips on sessions ---- */
+
+.eval-strip {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+}
+
+/* ---- Session layout with drawer ---- */
+
+.session-with-drawer {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.session-with-drawer .thread {
+  min-width: 0;
+}

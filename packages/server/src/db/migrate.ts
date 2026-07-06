@@ -13,12 +13,36 @@ const migrationsDir = join(
   "migrations",
 );
 
+const CONNECT_RETRY_MS = 30_000;
+
+/** Postgres may still be starting (fresh `docker compose up`) — retry. */
+async function connectWithRetry(connectionString: string): Promise<pg.Client> {
+  const deadline = Date.now() + CONNECT_RETRY_MS;
+  for (;;) {
+    const client = new pg.Client({
+      connectionString,
+      ssl: env.databaseSsl ? { rejectUnauthorized: false } : undefined,
+    });
+    try {
+      await client.connect();
+      return client;
+    } catch (err) {
+      await client.end().catch(() => {});
+      const code = (err as { code?: string }).code;
+      const retryable =
+        code === "ECONNREFUSED" ||
+        code === "ECONNRESET" ||
+        code === "57P03" || // cannot_connect_now: server is starting up
+        /starting up|Connection terminated/i.test(String(err));
+      if (!retryable || Date.now() >= deadline) throw err;
+      console.log("waiting for Postgres…");
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+}
+
 export async function migrate(connectionString = env.databaseUrl) {
-  const client = new pg.Client({
-    connectionString,
-    ssl: env.databaseSsl ? { rejectUnauthorized: false } : undefined,
-  });
-  await client.connect();
+  const client = await connectWithRetry(connectionString);
   try {
     await client.query(
       `CREATE TABLE IF NOT EXISTS _migrations (
@@ -62,6 +86,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       process.exit(0);
     })
     .catch((err) => {
+      console.error("migration failed:", err instanceof Error ? err.message : err);
+      if ((err as { code?: string }).code === "ECONNREFUSED") {
+        console.error(
+          "Postgres isn't reachable. Start it first: docker compose up -d --wait postgres\n" +
+            `(connection string: ${env.databaseUrl.replace(/:[^:@/]+@/, ":***@")})`,
+        );
+      }
       console.error(err);
       process.exit(1);
     });

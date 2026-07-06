@@ -16,7 +16,7 @@ _.file = ".env"
 description = "First-time setup: install deps, start Postgres, migrate"
 run = [
   "pnpm install",
-  "docker compose up -d postgres",
+  "docker compose up -d --wait postgres",
   "pnpm --filter @rabble/server db:migrate",
 ]
 
@@ -62,8 +62,8 @@ depends = ["typecheck", "test", "e2e"]
 # ---------------------------------------------------------------------------
 
 [tasks.db]
-description = "Start Postgres (docker compose)"
-run = "docker compose up -d postgres"
+description = "Start Postgres (docker compose) and wait until it's ready"
+run = "docker compose up -d --wait postgres"
 
 [tasks."db:psql"]
 description = "Open a psql shell on the dev database"

@@ -351,6 +351,15 @@ test("stats dashboards reflect real usage", async () => {
     page.locator(".chart-card", { hasText: "Pass rate by agent" }),
   ).toContainText("Eng On-Call");
 
+  // Drill down: clicking the agent's bar lists its failing cases (the
+  // overturned verdict from the spot-check flow)
+  await page.locator(".bar-row", { hasText: "Eng On-Call" }).first().click();
+  const failCard = page.locator(".chart-card", {
+    has: page.getByRole("heading", { name: "Failing cases" }),
+  });
+  await expect(failCard).toContainText("Stays on topic");
+  await expect(failCard.locator("a", { hasText: "open session →" }).first()).toBeVisible();
+
   // Usage & spend tab: token usage recorded from the emulator's usage blocks
   await page.locator(".sidebar-item", { hasText: "Usage & spend" }).click();
   await expect(page.locator(".kpi", { hasText: "Output tokens" })).toBeVisible();

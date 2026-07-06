@@ -115,7 +115,12 @@ export interface StatsResponse {
     passRate: number;
     results: number;
   }>;
-  evalByAgent: Array<{ agentName: string; passRate: number; results: number }>;
+  evalByAgent: Array<{
+    agentId: string;
+    agentName: string;
+    passRate: number;
+    results: number;
+  }>;
   turnDistribution: Array<{ label: string; count: number }>;
 }
 
@@ -359,6 +364,17 @@ export const api = {
     put<{ preferences: UserPreferences }>("/api/profile/preferences", body),
 
   // stats
+  statFailures: (agentId: string, days = 30) =>
+    get<{
+      failures: Array<{
+        id: string;
+        criterionName: string;
+        reasoning: string;
+        sessionId: string;
+        sessionTitle: string;
+        createdAt: string;
+      }>;
+    }>(`/api/stats/failures?agentId=${agentId}&days=${days}`),
   stats: (days: number, agentId?: string) =>
     get<StatsResponse>(`/api/stats?days=${days}${agentId ? `&agentId=${agentId}` : ""}`),
 };

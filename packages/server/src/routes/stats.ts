@@ -13,6 +13,49 @@ import { requireUser } from "../auth.js";
 export async function statsRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
 
+  // Drill-down: an agent's failing judge verdicts in the window.
+  app.get("/api/stats/failures", async (req) => {
+    const { agentId, days: daysRaw } = req.query as {
+      agentId?: string;
+      days?: string;
+    };
+    const days = Math.min(Math.max(Number(daysRaw ?? 30), 1), 365);
+    const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    const rows = await db
+      .select({
+        id: evalResults.id,
+        criterionName: evalCriteria.name,
+        reasoning: evalResults.reasoning,
+        sessionId: evalResults.sessionId,
+        sessionTitle: sessions.title,
+        createdAt: evalResults.createdAt,
+      })
+      .from(evalResults)
+      .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
+      .innerJoin(sessions, eq(evalResults.sessionId, sessions.id))
+      .innerJoin(agents, eq(evalCriteria.agentId, agents.id))
+      .where(
+        and(
+          eq(agents.orgId, req.user!.orgId),
+          eq(evalResults.passed, false),
+          gte(evalResults.createdAt, since),
+          ...(agentId ? [eq(evalCriteria.agentId, agentId)] : []),
+        ),
+      )
+      .orderBy(sql`${evalResults.createdAt} DESC`)
+      .limit(50);
+    return {
+      failures: rows.map((r) => ({
+        id: r.id,
+        criterionName: r.criterionName,
+        reasoning: r.reasoning,
+        sessionId: r.sessionId,
+        sessionTitle: r.sessionTitle,
+        createdAt: r.createdAt.toISOString(),
+      })),
+    };
+  });
+
   app.get("/api/stats", async (req) => {
     const { days: daysRaw, agentId } = req.query as {
       days?: string;
@@ -126,6 +169,7 @@ export async function statsRoutes(app: FastifyInstance) {
 
     const evalByAgent = await db
       .select({
+        agentId: agents.id,
         agentName: agents.name,
         passRate: sql<number>`round(avg(CASE WHEN ${evalResults.passed} THEN 100.0 ELSE 0.0 END))::int`,
         results: sql<number>`count(*)::int`,
@@ -134,7 +178,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
       .innerJoin(agents, eq(evalCriteria.agentId, agents.id))
       .where(and(eq(agents.orgId, orgId), gte(evalResults.createdAt, since)))
-      .groupBy(agents.name)
+      .groupBy(agents.id, agents.name)
       .orderBy(sql`round(avg(CASE WHEN ${evalResults.passed} THEN 100.0 ELSE 0.0 END)) DESC`);
 
     const perAgent = await db

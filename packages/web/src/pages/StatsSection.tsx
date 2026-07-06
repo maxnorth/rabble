@@ -14,15 +14,22 @@ type Page = (typeof PAGES)[number];
 function Bars({
   rows,
   color = "var(--accent)",
+  onSelect,
 }: {
-  rows: Array<{ label: string; value: number; suffix?: string; color?: string }>;
+  rows: Array<{ label: string; value: number; suffix?: string; color?: string; key?: string }>;
   color?: string;
+  onSelect?: (key: string) => void;
 }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   return (
     <div className="bar-chart">
       {rows.map((r, i) => (
-        <div className="bar-row" key={i}>
+        <div
+          className="bar-row"
+          key={i}
+          style={onSelect && r.key ? { cursor: "pointer" } : undefined}
+          onClick={onSelect && r.key ? () => onSelect(r.key!) : undefined}
+        >
           <span className="bar-label" title={r.label}>
             {r.label}
           </span>
@@ -35,6 +42,53 @@ function Bars({
           <span className="bar-value">
             {r.value}
             {r.suffix ?? ""}
+          </span>
+        </div>
+      ))}
+      {rows.length === 0 && (
+        <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No data in this range.</p>
+      )}
+    </div>
+  );
+}
+
+function Columns({ rows }: { rows: Array<{ label: string; value: number }> }) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-end",
+        gap: 4,
+        height: 120,
+        padding: "8px 2px 0",
+      }}
+    >
+      {rows.map((r, i) => (
+        <div
+          key={i}
+          title={`${r.label}: ${r.value}`}
+          style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}
+        >
+          <div
+            style={{
+              height: Math.max(3, Math.round((92 * r.value) / max)),
+              marginTop: "auto",
+              borderRadius: "3px 3px 0 0",
+              background: "var(--purple)",
+              opacity: 0.55 + 0.45 * (r.value / max),
+            }}
+          />
+          <span
+            style={{
+              fontSize: 8.5,
+              color: "var(--text-muted)",
+              textAlign: "center",
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {r.label.slice(5)}
           </span>
         </div>
       ))}
@@ -209,16 +263,19 @@ function Overview({ data }: { data: StatsResponse }) {
       </div>
       <div className="chart-card">
         <h3>Sessions per day</h3>
-        <Bars
-          rows={data.sessionsPerDay.map((d) => ({ label: d.day, value: d.count }))}
-          color="var(--purple)"
-        />
+        <Columns rows={data.sessionsPerDay.map((d) => ({ label: d.day, value: d.count }))} />
       </div>
     </>
   );
 }
 
 function EvalPerformance({ data }: { data: StatsResponse }) {
+  const [drillAgent, setDrillAgent] = useState<string | null>(null);
+  const failures = useQuery({
+    queryKey: ["stat-failures", drillAgent, data.days],
+    queryFn: () => api.statFailures(drillAgent!, data.days),
+    enabled: Boolean(drillAgent),
+  });
   return (
     <>
       <div className="kpi-grid">
@@ -236,7 +293,9 @@ function EvalPerformance({ data }: { data: StatsResponse }) {
       <div className="chart-card">
         <h3>Pass rate by agent</h3>
         <Bars
+          onSelect={(id) => setDrillAgent((prev) => (prev === id ? null : id))}
           rows={data.evalByAgent.map((a) => ({
+            key: a.agentId,
             label: `${a.agentName} (${a.results})`,
             value: a.passRate,
             suffix: "%",
@@ -248,7 +307,39 @@ function EvalPerformance({ data }: { data: StatsResponse }) {
                   : "var(--amber)",
           }))}
         />
+        <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+          Click an agent to see its failing cases.
+        </p>
       </div>
+      {drillAgent && (
+        <div className="chart-card">
+          <h3>Failing cases</h3>
+          <div className="row-group">
+            {failures.data?.failures.map((f) => (
+              <div className="row" key={f.id}>
+                <span className="chip amber">FAIL</span>
+                <div className="grow">
+                  <div className="title">{f.criterionName}</div>
+                  <div className="sub">
+                    "{f.sessionTitle}" · {f.reasoning || "no reasoning recorded"}
+                  </div>
+                </div>
+                <a
+                  href={`/sessions/${f.sessionId}`}
+                  style={{ fontSize: 12, color: "var(--accent-text)" }}
+                >
+                  open session →
+                </a>
+              </div>
+            ))}
+            {failures.data?.failures.length === 0 && (
+              <div className="row">
+                <div className="sub">No failing cases in this window. 🎉</div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
       <div className="chart-card">
         <h3>Pass rate by criterion (worst first)</h3>
         <Bars

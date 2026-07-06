@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { api } from "../api";
 import { GrantEditor } from "./AgentsSection";
+import { relativeTime } from "../lib/time";
 
 const ADMIN_PAGES = [
   { key: "connections", label: "Connections" },
@@ -308,6 +309,10 @@ function McpServersPage() {
     mutationFn: (id: string) => api.deleteMcpServer(id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] }),
   });
+  const refresh = useMutation({
+    mutationFn: (id: string) => api.refreshMcpServer(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] }),
+  });
 
   const selected = servers.data?.servers.find((s) => s.id === detail);
 
@@ -318,9 +323,40 @@ function McpServersPage() {
           <button className="btn" style={{ marginBottom: 16 }} onClick={() => setDetail(null)}>
             ‹ MCP servers
           </button>
-          <h1 className="page-title">{selected.name}</h1>
-          <p className="page-subtitle mono">{selected.url}</p>
-          <div className="row-group">
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <h1 className="page-title">{selected.name}</h1>
+              <p className="page-subtitle mono">{selected.url}</p>
+            </div>
+            <button
+              className="btn"
+              disabled={refresh.isPending}
+              onClick={() => refresh.mutate(selected.id)}
+            >
+              {refresh.isPending ? "Testing…" : "Test connection"}
+            </button>
+          </div>
+          {refresh.isError && (
+            <p className="error-text">{(refresh.error as Error).message}</p>
+          )}
+          <div
+            className="card"
+            style={{ padding: 12, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap" }}
+          >
+            <span className={`chip ${selected.status === "connected" ? "green" : "amber"}`}>
+              {selected.status}
+            </span>
+            <span className="chip">{selected.category}</span>
+            <span className="chip blue">{selected.tools.length} tools</span>
+            <span style={{ fontSize: 12, color: "var(--text-dim)", alignSelf: "center" }}>
+              Test connection re-discovers the tool catalog. Enablement and
+              service/user auth are set per agent on its MCP tab.
+            </span>
+          </div>
+          <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+            Tools
+          </div>
+          <div className="row-group" style={{ marginBottom: 18 }}>
             {selected.tools.map((t) => (
               <div className="row" key={t.name}>
                 <div className="grow">
@@ -332,6 +368,25 @@ function McpServersPage() {
               </div>
             ))}
           </div>
+          <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+            Used by
+          </div>
+          {selected.usedBy.length > 0 ? (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              {selected.usedBy.map((a) => (
+                <span key={a.id} className="chip" style={{ gap: 6 }}>
+                  {a.name}
+                  <Link to={`/agents/${a.id}/mcp`} style={{ color: "var(--accent-text)" }}>
+                    configure →
+                  </Link>
+                </span>
+              ))}
+            </div>
+          ) : (
+            <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Not attached to any agent yet.
+            </p>
+          )}
         </>
       ) : (
         <>
@@ -903,9 +958,10 @@ function ApiKeysPage() {
             <div className="grow">
               <div className="title">{k.name}</div>
               <div className="sub mono">
-                {k.prefix}_•••••••• · created by {k.createdByName ?? "?"} ·{" "}
+                {k.prefix}_•••••••• · created {relativeTime(k.createdAt)} by{" "}
+                {k.createdByName ?? "?"} ·{" "}
                 {k.lastUsedAt
-                  ? `last used ${new Date(k.lastUsedAt).toLocaleString()}`
+                  ? `last used ${relativeTime(k.lastUsedAt)}`
                   : "never used"}
               </div>
             </div>
@@ -1015,19 +1071,56 @@ function AuditPage() {
         </a>
       </div>
       <div className="row-group">
-        {audit.data?.events.map((e) => (
-          <div className="row" key={e.id}>
-            <span className="chip mono">{e.action}</span>
-            <div className="grow">
-              <div className="title" style={{ fontWeight: 400 }}>
-                {e.summary}
+        {audit.data?.events.map((e) => {
+          const category = e.action.split(".")[0] ?? "";
+          const chipColor =
+            category === "grant" || category === "member"
+              ? "purple"
+              : category === "agent"
+                ? "blue"
+                : category === "eval"
+                  ? "green"
+                  : category === "org" || category === "api-key"
+                    ? "amber"
+                    : "";
+          return (
+            <div className="row" key={e.id}>
+              <span
+                className="rail-logo"
+                title={e.actorName ?? "system"}
+                style={{
+                  width: 26,
+                  height: 26,
+                  fontSize: 10,
+                  marginBottom: 0,
+                  background: e.actorName ? "var(--surface-tool)" : "var(--purple)",
+                  color: "var(--text-2)",
+                  flexShrink: 0,
+                }}
+              >
+                {(e.actorName ?? "sys")
+                  .split(/\s+/)
+                  .map((part) => part[0])
+                  .slice(0, 2)
+                  .join("")
+                  .toUpperCase()}
+              </span>
+              <div className="grow">
+                <div className="title" style={{ fontWeight: 400 }}>
+                  {e.summary}
+                </div>
+                <div className="sub mono">{e.action}</div>
               </div>
-              <div className="sub">
-                {e.actorName ?? "system"} · {new Date(e.createdAt).toLocaleString()}
-              </div>
+              <span className={`chip ${chipColor}`}>{category}</span>
+              <span
+                style={{ fontSize: 11.5, color: "var(--text-muted)", width: 84, textAlign: "right" }}
+                title={new Date(e.createdAt).toLocaleString()}
+              >
+                {relativeTime(e.createdAt)}
+              </span>
             </div>
-          </div>
-        ))}
+          );
+        })}
         {audit.data?.events.length === 0 && (
           <div className="row">
             <div className="sub">No events match.</div>

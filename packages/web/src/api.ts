@@ -227,7 +227,10 @@ export const api = {
   deleteGrant: (id: string) => del<{ ok: true }>(`/api/grants/${id}`),
 
   // MCP servers
-  listMcpServers: () => get<{ servers: McpServer[] }>("/api/mcp-servers"),
+  listMcpServers: () =>
+    get<{ servers: Array<McpServer & { usedBy: Array<{ id: string; name: string }> }> }>(
+      "/api/mcp-servers",
+    ),
   createMcpServer: (body: { name: string; url: string; category: string; token?: string }) =>
     post<{ server: McpServer }>("/api/mcp-servers", body),
   refreshMcpServer: (id: string) =>

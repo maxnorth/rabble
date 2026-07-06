@@ -57,6 +57,14 @@ test("admin: register the emulated GitHub MCP server (tools discovered)", async 
     "create_issue",
     "search_repos",
   ]);
+
+  // Server detail: connection card, live re-test, and (empty) used-by list
+  await row.click();
+  await expect(page.getByRole("heading", { name: "GitHub" })).toBeVisible();
+  await expect(page.getByText("Not attached to any agent yet.")).toBeVisible();
+  await page.getByRole("button", { name: "Test connection" }).click();
+  await expect(page.locator(".chip", { hasText: "2 tools" })).toBeVisible();
+  await page.getByRole("button", { name: "‹ MCP servers" }).click();
 });
 
 test("agent config: attach server, set create_issue to user auth", async () => {
@@ -82,6 +90,14 @@ test("agent config: attach server, set create_issue to user auth", async () => {
   await expect(page.getByText("2 of 2 enabled")).toBeVisible();
   await expect(page.locator(".chip", { hasText: "1 service" })).toBeVisible();
   await expect(page.locator(".chip", { hasText: "1 user" })).toBeVisible();
+
+  // The MCP server's detail now lists this agent under "Used by"
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await page.locator(".row", { hasText: "GitHub" }).click();
+  await expect(page.locator(".chip", { hasText: "Eng On-Call" })).toContainText(
+    "configure →",
+  );
 });
 
 test("service-auth tool runs inline with no approval", async () => {

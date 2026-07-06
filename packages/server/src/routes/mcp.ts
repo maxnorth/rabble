@@ -45,11 +45,22 @@ export async function mcpRoutes(app: FastifyInstance) {
       .select({
         server: mcpServers,
         usedByCount: sql<number>`(SELECT count(*)::int FROM agent_mcp_servers a WHERE a.server_id = mcp_servers.id)`,
+        usedBy: sql<Array<{ id: string; name: string }>>`coalesce(
+          (SELECT jsonb_agg(jsonb_build_object('id', ag.id, 'name', ag.name) ORDER BY ag.name)
+           FROM agent_mcp_servers ams JOIN agents ag ON ag.id = ams.agent_id
+           WHERE ams.server_id = mcp_servers.id),
+          '[]'::jsonb
+        )`,
       })
       .from(mcpServers)
       .where(eq(mcpServers.orgId, req.user!.orgId))
       .orderBy(mcpServers.name);
-    return { servers: rows.map((r) => serializeServer(r.server, r.usedByCount)) };
+    return {
+      servers: rows.map((r) => ({
+        ...serializeServer(r.server, r.usedByCount),
+        usedBy: r.usedBy,
+      })),
+    };
   });
 
   // Register an MCP server: connects, discovers tools, stores the catalog.

@@ -59,4 +59,20 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
 - Emulator scripting: `POST /admin/llm/enqueue` `{type:"tool_call",
   toolName, toolArgs}` makes the next model call request that tool; default
   reply echoes the last user message ("Mock reply to: ..."); judge prompts
-  (containing "Respond with exactly PASS or FAIL") get "PASS".
+  (containing "Respond with exactly PASS or FAIL") get "PASS". Slack
+  directory (user id → email, channel id → name) via `PUT /admin/slack`.
+- Gating: PATCH /api/agents/:id runs the agent's gating suites against the
+  CANDIDATE config for behavior changes (name/description/instructions/
+  tone/model) and 409s on a failing case — remember this when e2e edits a
+  gated agent (each gate run consumes emulator LLM calls).
+- Sessions carry `surface`/`surface_key`; inbound Slack events land at
+  POST /api/inbound/slack (Slack v0 HMAC signing over the RAW body — the
+  route scope has its own string content-type parser; don't move it under
+  the JSON-parsed tree).
+- Trust data (spot-check queue, scope violations 30d, graded count, judge
+  model) comes from GET /api/agents/:id/trust; scope violations are
+  recorded by the runtime when the model calls a tool outside its governed
+  set + runtime built-ins (see RUNTIME_BUILTINS in agentTurn.ts).
+- e2e global-setup refuses to start if :4100/:3178 are already bound —
+  kill stale processes (`fuser -k 4100/tcp 3178/tcp`) instead of letting
+  tests hit an old build.

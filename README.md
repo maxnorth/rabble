@@ -8,13 +8,35 @@ measured track records, and full auditability.
 Website: [rabblehq.com](https://rabblehq.com) · npm packages live under the
 [`@rabblehq`](https://www.npmjs.com/org/rabblehq) org.
 
-What works today: streaming agent sessions with inline tool calls and
-in-thread approval cards (service vs. user auth on every tool), an MCP
-server library with per-agent tool configuration, teams / domains / grants
-with real enforcement, live eval criteria (LLM-judged against real
-sessions) and offline eval suites, connections, scoped API keys, a
-control-plane audit log, org stats, and per-user profiles — all built on
-the design prototype's dark, dense visual system.
+What works today:
+
+- **Sessions** — streaming agent chat with inline tool calls, in-thread
+  approval cards (service vs. user auth on every tool, with the agent's
+  track record as evidence), file artifacts, and per-user approval
+  postures (always ask / once per session / trust) under an org-wide
+  approval floor.
+- **Surfaces** — a Slack channel mapped to an agent turns channel messages
+  into governed sessions (signed Slack Events webhooks, thread = session,
+  replies threaded back); every session shows its origin surface.
+- **Governance** — teams / domains / grants with real enforcement and
+  cascade (no owners, only grants), model-access grants, org policies
+  (who can create agents, approval floor, retention), and a full
+  control-plane audit log with CSV export.
+- **Evals as evidence** — live criteria judged on real sessions, offline
+  suites with freeze-a-session-as-test-case, **gating suites that block a
+  regressing agent change before it saves**, a judge spot-check queue
+  (disagree → human review → uphold/overturn), scope-violation tracking,
+  and 30-day trust trends.
+- **Automations** — defined per agent and runnable on demand as real
+  governed sessions on the Automation surface (recurring schedules land
+  with the Hatchet-based scheduler).
+- **Operations** — MCP server library with per-agent tool config, model
+  registry (built-in catalog on one org key, or bring-your-own custom
+  endpoints) with per-model pricing, usage & **spend** dashboards with
+  prior-period trends, connections, scoped API keys, and per-user
+  profiles/connected accounts.
+
+All built on the design prototype's dark, dense visual system.
 
 ## Architecture
 

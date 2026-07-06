@@ -26,7 +26,13 @@ export async function sessionRoutes(app: FastifyInstance) {
 
   app.get("/api/sessions", async (req) => {
     const rows = await db
-      .select({ session: sessions, agentName: agents.name, agentSlug: agents.slug })
+      .select({
+        session: sessions,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        agentIcon: agents.icon,
+        agentColor: agents.color,
+      })
       .from(sessions)
       .innerJoin(agents, eq(sessions.agentId, agents.id))
       .where(
@@ -42,6 +48,8 @@ export async function sessionRoutes(app: FastifyInstance) {
         ...serializeSession(r.session),
         agentName: r.agentName,
         agentSlug: r.agentSlug,
+        agentIcon: r.agentIcon ?? "",
+        agentColor: r.agentColor ?? "",
       })),
     };
   });
@@ -93,7 +101,13 @@ export async function sessionRoutes(app: FastifyInstance) {
   app.get("/api/sessions/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const [row] = await db
-      .select({ session: sessions, agentName: agents.name, agentSlug: agents.slug })
+      .select({
+        session: sessions,
+        agentName: agents.name,
+        agentSlug: agents.slug,
+        agentIcon: agents.icon,
+        agentColor: agents.color,
+      })
       .from(sessions)
       .innerJoin(agents, eq(sessions.agentId, agents.id))
       .where(
@@ -130,6 +144,8 @@ export async function sessionRoutes(app: FastifyInstance) {
         ...serializeSession(row.session),
         agentName: row.agentName,
         agentSlug: row.agentSlug,
+        agentIcon: row.agentIcon ?? "",
+        agentColor: row.agentColor ?? "",
       },
       messages: history.map(serializeMessage),
       evalResults: evals,

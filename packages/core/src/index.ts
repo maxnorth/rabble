@@ -230,6 +230,8 @@ export type Session = z.infer<typeof sessionSchema>;
 export const sessionWithAgentSchema = sessionSchema.extend({
   agentName: z.string(),
   agentSlug: z.string(),
+  agentIcon: z.string().default(""),
+  agentColor: z.string().default(""),
 });
 export type SessionWithAgent = z.infer<typeof sessionWithAgentSchema>;
 

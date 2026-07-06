@@ -127,13 +127,23 @@ a {
 }
 
 .rail-btn {
-  width: 38px;
-  height: 38px;
+  width: 46px;
+  min-height: 40px;
+  padding: 5px 0 4px;
   border-radius: 9px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
   color: var(--text-muted);
+}
+
+.rail-btn .rail-label {
+  font-size: 8.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
 }
 
 .rail-btn:hover {

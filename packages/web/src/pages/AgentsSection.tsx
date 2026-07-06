@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { AgentConfig } from "./AgentConfig";
-import { relativeTime } from "../lib/time";
+import { relativeTime, AGENT_COLORS } from "../lib/time";
 
 export function AgentsSection() {
   const { agentId, domainId } = useParams();
@@ -25,6 +25,17 @@ export function AgentsSection() {
         <button className="btn" style={{ margin: "0 4px 12px" }} onClick={() => setShowNew(true)}>
           + New agent
         </button>
+        {favorites.length === 0 && (
+          <>
+            <div className="sidebar-title">★ Favorites</div>
+            <div
+              className="sidebar-item"
+              style={{ color: "var(--text-muted)", cursor: "default", fontSize: 12 }}
+            >
+              No favorites yet — star agents in All agents to pin them here.
+            </div>
+          </>
+        )}
         {favorites.length > 0 && (
           <>
             <div className="sidebar-title">★ Favorites</div>
@@ -348,12 +359,33 @@ function AgentDirectory() {
                 </span>
               </td>
               <td>
-                <div style={{ fontWeight: 500, color: "var(--text-1)" }}>
-                  {a.name}{" "}
-                  {a.status === "draft" && <span className="chip amber">draft</span>}
-                </div>
-                <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  {a.slug}
+                <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                  <span
+                    style={{
+                      width: 26,
+                      height: 26,
+                      borderRadius: 7,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      flexShrink: 0,
+                      fontSize: 13,
+                      background: "var(--surface-tool)",
+                      border: "1px solid var(--border-1)",
+                      color: AGENT_COLORS[a.color] ?? "var(--accent-text)",
+                    }}
+                  >
+                    {a.icon || a.name[0]}
+                  </span>
+                  <span>
+                    <span style={{ fontWeight: 500, color: "var(--text-1)", display: "block" }}>
+                      {a.name}{" "}
+                      {a.status === "draft" && <span className="chip amber">draft</span>}
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                      {a.description || <span className="mono">{a.slug}</span>}
+                    </span>
+                  </span>
                 </div>
               </td>
               <td>{a.domainName ?? <span style={{ color: "var(--text-muted)" }}>—</span>}</td>

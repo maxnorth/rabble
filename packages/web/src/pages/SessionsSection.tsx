@@ -35,7 +35,7 @@ export function SessionsSection() {
         <NavLink to="/sessions" end className="btn" style={{ margin: "0 4px 12px" }}>
           + New session
         </NavLink>
-        <div className="sidebar-title">Recent</div>
+        <div className="sidebar-title">Recent sessions</div>
         {sessions.data?.sessions.map((s) => (
           <NavLink
             key={s.id}
@@ -44,7 +44,7 @@ export function SessionsSection() {
           >
             <span
               className="status-dot"
-              style={{ background: "var(--green)" }}
+              style={{ background: AGENT_COLORS[s.agentColor] ?? "var(--green)" }}
               title={s.agentName}
             />
             <span className="label">
@@ -94,7 +94,11 @@ function AgentTargetPill({
       <button type="button" className="target-pill" onClick={() => setOpen((v) => !v)}>
         <span
           className="status-dot"
-          style={{ background: target ? "var(--green)" : "var(--blue)" }}
+          style={{
+            background: target
+              ? (AGENT_COLORS[target.color] ?? "var(--green)")
+              : "var(--blue)",
+          }}
         />
         {target ? target.name : "Auto"}
         <span style={{ color: "var(--text-muted)" }}>▾</span>
@@ -529,6 +533,9 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+  const agentGlyph = session.data?.session.agentIcon || initials;
+  const agentColor =
+    AGENT_COLORS[session.data?.session.agentColor ?? ""] ?? "var(--accent-text)";
   const evalResults = session.data?.evalResults ?? [];
 
   const passedCount = evalResults.filter((r) => r.passed).length;
@@ -546,6 +553,24 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             minHeight: 48,
           }}
         >
+          <span
+            className="avatar"
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 6,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 13,
+              background: "var(--surface-tool)",
+              border: "1px solid var(--border-1)",
+              color: agentColor,
+            }}
+            title={agentName}
+          >
+            {agentGlyph}
+          </span>
           <span className="mono" style={{ fontSize: 13, color: "var(--text-1)" }}>
             {session.data?.session.title || "New session"}
           </span>
@@ -575,7 +600,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           >
             <span style={{ fontSize: 13, fontWeight: 500 }}>{agentName}</span>
             <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
-              view agent →
+              {agentRow ? `${agentRow.toolCount} tools · ` : ""}view agent →
             </span>
           </button>
         </div>
@@ -590,14 +615,14 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                 <div key={m.id} className="msg-agent">
                   <div
                     className="avatar"
-                    style={{ cursor: "pointer" }}
+                    style={{ cursor: "pointer", color: agentColor }}
                     title="Agent profile"
                     onClick={() =>
                       session.data &&
                       setDrawer({ kind: "agent", agentId: session.data.session.agentId })
                     }
                   >
-                    {initials}
+                    {agentGlyph}
                   </div>
                   <div className="bubble">
                     <div className="agent-name">{agentName}</div>

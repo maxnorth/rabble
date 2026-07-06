@@ -45,42 +45,33 @@ export function Shell({ user }: { user: User }) {
   return (
     <div className="app-shell">
       <nav className="icon-rail">
-        <div className="rail-logo">R</div>
-        <NavLink
-          to="/sessions"
-          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
-          title="Sessions"
+        <div
+          className="rail-logo"
+          title="Home — Sessions"
+          style={{ cursor: "pointer" }}
+          onClick={() => navigate("/sessions")}
         >
-          <RailIcon d={icons.sessions} />
-        </NavLink>
-        <NavLink
-          to="/agents"
-          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
-          title="Agents"
-        >
-          <RailIcon d={icons.agents} />
-        </NavLink>
-        <NavLink
-          to="/teams"
-          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
-          title="Teams"
-        >
-          <RailIcon d={icons.teams} />
-        </NavLink>
-        <NavLink
-          to="/stats"
-          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
-          title="Stats"
-        >
-          <RailIcon d={icons.stats} />
-        </NavLink>
-        <NavLink
-          to="/admin"
-          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
-          title="Admin"
-        >
-          <RailIcon d={icons.admin} />
-        </NavLink>
+          R
+        </div>
+        {(
+          [
+            ["/sessions", "Sessions", icons.sessions],
+            ["/agents", "Agents", icons.agents],
+            ["/teams", "Teams", icons.teams],
+            ["/stats", "Stats", icons.stats],
+            ["/admin", "Admin", icons.admin],
+          ] as const
+        ).map(([to, label, d]) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
+            title={label}
+          >
+            <RailIcon d={d} />
+            <span className="rail-label">{label}</span>
+          </NavLink>
+        ))}
         <div className="spacer" />
         <NavLink
           to="/profile"

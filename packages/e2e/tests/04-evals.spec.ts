@@ -281,3 +281,40 @@ test("auto routes by intent across usable agents", async () => {
   );
   expect(routed).toEqual([{ slug: "eng-on-call" }]);
 });
+
+test("spot-check: a disputed verdict queues for review; overturn flips it", async () => {
+  // Disagree with the judge from the session's eval drawer
+  await page.locator("nav a[title='Sessions']").click();
+  await page.locator(".sidebar-item", { hasText: "Is prod healthy?" }).click();
+  await page.locator("button.chip", { hasText: "criteria" }).click();
+  await page.getByRole("button", { name: "Disagree →" }).click();
+  await expect(page.locator(".drawer .chip", { hasText: "in review" })).toBeVisible();
+
+  const open = await dbQuery<{ review_status: string }>(
+    "SELECT review_status FROM eval_results WHERE review_status IS NOT NULL",
+  );
+  expect(open).toEqual([{ review_status: "open" }]);
+
+  // The agent's evals tab shows the queue; a human overturns the judge
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "evals" }).click();
+  await expect(page.getByText("1 in spot-check queue")).toBeVisible();
+  await page.getByRole("button", { name: "Overturn" }).click();
+  await expect(page.getByText("0 in spot-check queue")).toBeVisible();
+
+  const resolved = await dbQuery<{ review_status: string; passed: boolean }>(
+    "SELECT review_status, passed FROM eval_results WHERE review_status IS NOT NULL",
+  );
+  expect(resolved).toEqual([{ review_status: "overturned", passed: false }]);
+
+  const audit = await dbQuery<{ action: string }>(
+    `SELECT action FROM audit_events
+     WHERE action IN ('eval.result.dispute', 'eval.review.resolve')
+     ORDER BY action`,
+  );
+  expect(audit.map((a) => a.action)).toEqual([
+    "eval.result.dispute",
+    "eval.review.resolve",
+  ]);
+});

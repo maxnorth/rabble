@@ -867,6 +867,18 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: ["suites", agentId] }),
   });
+  const trust = useQuery({
+    queryKey: ["trust", agentId],
+    queryFn: () => api.agentTrust(agentId),
+  });
+  const resolve = useMutation({
+    mutationFn: ({ id, outcome }: { id: string; outcome: "upheld" | "overturned" }) =>
+      api.resolveEvalResult(id, outcome),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["trust", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["criteria", agentId] });
+    },
+  });
 
   const measured = (criteria.data?.criteria ?? []).filter((c) => c.passRate !== null);
   const evaluatedSessions = (criteria.data?.criteria ?? []).reduce(
@@ -926,10 +938,34 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
           </div>
           <div style={{ fontSize: 11, color: "var(--text-muted)" }}>suites</div>
         </div>
+        <div>
+          <div
+            style={{
+              fontSize: 22,
+              fontWeight: 600,
+              color:
+                (trust.data?.scopeViolations30d ?? 0) > 0
+                  ? "var(--amber)"
+                  : "var(--green)",
+            }}
+          >
+            {trust.data?.scopeViolations30d ?? 0}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            scope violations · 30d
+          </div>
+        </div>
         <span style={{ flex: 1 }} />
-        <Link to="/stats" style={{ fontSize: 12, color: "var(--accent-text)" }}>
-          View in Stats →
-        </Link>
+        <div style={{ textAlign: "right" }}>
+          <Link to="/stats" style={{ fontSize: 12, color: "var(--accent-text)" }}>
+            View in Stats →
+          </Link>
+          <div className="mono" style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 4 }}>
+            judge: {trust.data?.judgeModel ?? "—"}
+            {" · "}
+            {trust.data?.openReviews.length ?? 0} in spot-check queue
+          </div>
+        </div>
       </div>
 
       <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
@@ -991,6 +1027,49 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
           </div>
         )}
       </div>
+
+      {(trust.data?.openReviews.length ?? 0) > 0 && (
+        <>
+          <div className="sidebar-title" style={{ padding: "14px 0 8px" }}>
+            Spot-check queue
+          </div>
+          <div className="row-group" style={{ marginBottom: 12 }}>
+            {trust.data!.openReviews.map((r) => (
+              <div className="row" key={r.id}>
+                <span className={`chip ${r.passed ? "green" : "amber"}`}>
+                  {r.passed ? "PASS" : "FAIL"}
+                </span>
+                <div className="grow">
+                  <div className="title">{r.criterionName}</div>
+                  <div className="sub">
+                    "{r.sessionTitle}" · judge said: {r.reasoning || "—"}
+                  </div>
+                </div>
+                {canEdit && (
+                  <>
+                    <button
+                      className="btn"
+                      disabled={resolve.isPending}
+                      title="The judge was right — keep the verdict"
+                      onClick={() => resolve.mutate({ id: r.id, outcome: "upheld" })}
+                    >
+                      Uphold
+                    </button>
+                    <button
+                      className="btn danger"
+                      disabled={resolve.isPending}
+                      title="The judge was wrong — flip the verdict"
+                      onClick={() => resolve.mutate({ id: r.id, outcome: "overturned" })}
+                    >
+                      Overturn
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="sidebar-title" style={{ padding: "14px 0 8px" }}>
         Suites

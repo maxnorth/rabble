@@ -176,6 +176,144 @@ export async function evalRoutes(app: FastifyInstance) {
     return { suite: row };
   });
 
+  // --- Judge spot-checking: dispute a verdict, review the queue ---
+
+  app.post("/api/eval-results/:resultId/dispute", async (req, reply) => {
+    const { resultId } = req.params as { resultId: string };
+    const [row] = await db
+      .select({ result: evalResults, session: sessions })
+      .from(evalResults)
+      .innerJoin(sessions, eq(evalResults.sessionId, sessions.id))
+      .where(eq(evalResults.id, resultId))
+      .limit(1);
+    if (!row || row.session.orgId !== req.user!.orgId) {
+      return reply.code(404).send({ error: "Eval result not found" });
+    }
+    // The session's owner (or an org admin) can contest the judge.
+    const isAdmin = req.user!.role === "owner" || req.user!.role === "admin";
+    if (!isAdmin && row.session.userId !== req.user!.id) {
+      return reply.code(403).send({ error: "Only the session owner can dispute this" });
+    }
+    if (row.result.reviewStatus) {
+      return reply.code(409).send({ error: "Already in review" });
+    }
+    await db
+      .update(evalResults)
+      .set({ reviewStatus: "open", disputedBy: req.user!.id, disputedAt: new Date() })
+      .where(eq(evalResults.id, resultId));
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "eval.result.dispute",
+      targetType: "session",
+      targetId: row.session.id,
+      summary: `Disputed a ${row.result.passed ? "PASS" : "FAIL"} judge verdict`,
+    });
+    return { ok: true };
+  });
+
+  app.post("/api/eval-results/:resultId/resolve", async (req, reply) => {
+    const { resultId } = req.params as { resultId: string };
+    const { outcome } = req.body as { outcome?: "upheld" | "overturned" };
+    if (outcome !== "upheld" && outcome !== "overturned") {
+      return reply.code(400).send({ error: "outcome must be upheld or overturned" });
+    }
+    const [row] = await db
+      .select({ result: evalResults, criterion: evalCriteria })
+      .from(evalResults)
+      .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
+      .where(eq(evalResults.id, resultId))
+      .limit(1);
+    if (!row) return reply.code(404).send({ error: "Eval result not found" });
+    if (row.result.reviewStatus !== "open") {
+      return reply.code(409).send({ error: "This verdict is not awaiting review" });
+    }
+    if (!(await requireEdit(req, row.criterion.agentId))) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    await db
+      .update(evalResults)
+      .set({
+        reviewStatus: outcome,
+        // Overturning flips the verdict — the human is the source of truth.
+        passed: outcome === "overturned" ? !row.result.passed : row.result.passed,
+      })
+      .where(eq(evalResults.id, resultId));
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "eval.review.resolve",
+      targetType: "agent",
+      targetId: row.criterion.agentId,
+      summary:
+        outcome === "overturned"
+          ? `Overturned the judge on "${row.criterion.name}"`
+          : `Upheld the judge on "${row.criterion.name}"`,
+    });
+    return { ok: true };
+  });
+
+  // Trust panel: review queue + scope violations + judge disclosure.
+  app.get("/api/agents/:agentId/trust", async (req) => {
+    const { agentId } = req.params as { agentId: string };
+    const { scopeViolations } = await import("../db/schema.js");
+
+    const openReviews = await db
+      .select({
+        id: evalResults.id,
+        criterionName: evalCriteria.name,
+        passed: evalResults.passed,
+        reasoning: evalResults.reasoning,
+        sessionId: evalResults.sessionId,
+        sessionTitle: sessions.title,
+        disputedAt: evalResults.disputedAt,
+      })
+      .from(evalResults)
+      .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
+      .innerJoin(sessions, eq(evalResults.sessionId, sessions.id))
+      .where(
+        and(eq(evalCriteria.agentId, agentId), eq(evalResults.reviewStatus, "open")),
+      )
+      .orderBy(desc(evalResults.disputedAt));
+
+    const [violations] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(scopeViolations)
+      .where(
+        and(
+          eq(scopeViolations.agentId, agentId),
+          sql`${scopeViolations.createdAt} > now() - interval '30 days'`,
+        ),
+      );
+
+    const [agentRow] = await db
+      .select({ modelId: agents.modelId })
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .limit(1);
+    const [judge] = agentRow?.modelId
+      ? await db
+          .select({ displayName: models.displayName })
+          .from(models)
+          .where(eq(models.id, agentRow.modelId))
+          .limit(1)
+      : [];
+
+    return {
+      openReviews: openReviews.map((r) => ({
+        id: r.id,
+        criterionName: r.criterionName,
+        passed: r.passed,
+        reasoning: r.reasoning,
+        sessionId: r.sessionId,
+        sessionTitle: r.sessionTitle,
+        disputedAt: r.disputedAt?.toISOString() ?? null,
+      })),
+      scopeViolations30d: violations?.count ?? 0,
+      judgeModel: judge?.displayName ?? null,
+    };
+  });
+
   app.patch("/api/suites/:suiteId", async (req, reply) => {
     const { suiteId } = req.params as { suiteId: string };
     const [suite] = await db

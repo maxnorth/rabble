@@ -129,10 +129,12 @@ export async function sessionRoutes(app: FastifyInstance) {
     const { evalResults, evalCriteria } = await import("../db/schema.js");
     const evals = await db
       .select({
+        id: evalResults.id,
         criterionId: evalResults.criterionId,
         criterionName: evalCriteria.name,
         passed: evalResults.passed,
         reasoning: evalResults.reasoning,
+        reviewStatus: evalResults.reviewStatus,
       })
       .from(evalResults)
       .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))

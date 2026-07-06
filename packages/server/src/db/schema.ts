@@ -468,6 +468,11 @@ export const evalResults = pgTable(
     }),
     passed: boolean("passed").notNull(),
     reasoning: text("reasoning").notNull().default(""),
+    reviewStatus: text("review_status", {
+      enum: ["open", "upheld", "overturned"],
+    }),
+    disputedBy: uuid("disputed_by").references(() => users.id),
+    disputedAt: timestamp("disputed_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -571,4 +576,25 @@ export const userConnectedAccounts = pgTable(
       .defaultNow(),
   },
   (t) => [uniqueIndex("user_connected_accounts_idx").on(t.userId, t.vendor)],
+);
+
+export const scopeViolations = pgTable(
+  "scope_violations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    orgId: uuid("org_id")
+      .notNull()
+      .references(() => orgs.id),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    sessionId: uuid("session_id").references(() => sessions.id, {
+      onDelete: "set null",
+    }),
+    toolName: text("tool_name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("scope_violations_agent_idx").on(t.agentId, t.createdAt)],
 );

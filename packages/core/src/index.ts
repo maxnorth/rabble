@@ -539,10 +539,13 @@ export const createEvalCriterionSchema = z.object({
 export type CreateEvalCriterionRequest = z.infer<typeof createEvalCriterionSchema>;
 
 export const sessionEvalResultSchema = z.object({
+  id: z.string().uuid(),
   criterionId: z.string().uuid(),
   criterionName: z.string(),
   passed: z.boolean(),
   reasoning: z.string(),
+  /** Spot-check state: null = trusted, open = queued for human review. */
+  reviewStatus: z.enum(["open", "upheld", "overturned"]).nullable().default(null),
 });
 export type SessionEvalResult = z.infer<typeof sessionEvalResultSchema>;
 

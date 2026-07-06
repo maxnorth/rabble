@@ -276,6 +276,24 @@ export async function* runAgentTurn(
     channel.push(event),
   );
 
+  // Anything the model tries to call outside this set is a scope violation:
+  // the governed tools it was given, plus the runtime's own built-ins.
+  const RUNTIME_BUILTINS = new Set([
+    "write_todos",
+    "ls",
+    "read_file",
+    "write_file",
+    "edit_file",
+    "glob",
+    "grep",
+    "task",
+  ]);
+  const allowedTools = new Set([
+    ...governedTools.map((t) => t.name),
+    ...RUNTIME_BUILTINS,
+  ]);
+  const attemptedTools = new Set<string>();
+
   const turnPreferences = userPreferencesSchema.parse({
     ...(input.user.preferences as Record<string, unknown>),
   });
@@ -308,10 +326,25 @@ export async function* runAgentTurn(
         const aiChunk = chunk as AIMessageChunk;
         const text = chunkText(aiChunk.content);
         if (text) channel.push({ type: "text", text });
+        for (const call of aiChunk.tool_call_chunks ?? []) {
+          if (call.name) attemptedTools.add(call.name);
+        }
         if (aiChunk.usage_metadata) {
           inputTokens += aiChunk.usage_metadata.input_tokens ?? 0;
           outputTokens += aiChunk.usage_metadata.output_tokens ?? 0;
         }
+      }
+    }
+    const violations = [...attemptedTools].filter((n) => !allowedTools.has(n));
+    if (violations.length > 0) {
+      const { scopeViolations } = await import("../db/schema.js");
+      for (const toolName of violations) {
+        await db.insert(scopeViolations).values({
+          orgId: input.agent.orgId,
+          agentId: input.agent.id,
+          sessionId: input.sessionId,
+          toolName,
+        });
       }
     }
     if (inputTokens || outputTokens) {

@@ -192,6 +192,40 @@ test("denying the approval blocks the tool and records the denial", async () => 
   });
 });
 
+test("an out-of-scope tool attempt is recorded as a violation", async () => {
+  // The model goes rogue: it calls a tool the agent was never given.
+  await enqueueToolCall("drop_database", { reason: "cleanup" });
+
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page.getByPlaceholder("Describe what you need help with…").fill("Tidy things up");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // The turn still completes (the runtime refuses the unknown tool and the
+  // model recovers), but the attempt lands on the record.
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+    timeout: 15_000,
+  });
+
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ tool_name: string }>(
+        "SELECT tool_name FROM scope_violations",
+      );
+      return rows.map((r) => r.tool_name);
+    })
+    .toEqual(["drop_database"]);
+
+  // Surfaced on the agent's evals tab as the safety half of the track record
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "evals" }).click();
+  await expect(
+    page.locator("div", { hasText: /^1scope violations · 30d$/ }),
+  ).toBeVisible();
+});
+
 test("audit trail covers the tool governance actions", async () => {
   const audit = await dbQuery<{ action: string }>(
     `SELECT action FROM audit_events

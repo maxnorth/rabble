@@ -236,6 +236,24 @@ export const api = {
   deleteCriterion: (id: string) => del<{ ok: true }>(`/api/criteria/${id}`),
   listSuites: (agentId: string) =>
     get<{ suites: EvalSuite[] }>(`/api/agents/${agentId}/suites`),
+  disputeEvalResult: (resultId: string) =>
+    post<{ ok: true }>(`/api/eval-results/${resultId}/dispute`),
+  resolveEvalResult: (resultId: string, outcome: "upheld" | "overturned") =>
+    post<{ ok: true }>(`/api/eval-results/${resultId}/resolve`, { outcome }),
+  agentTrust: (agentId: string) =>
+    get<{
+      openReviews: Array<{
+        id: string;
+        criterionName: string;
+        passed: boolean;
+        reasoning: string;
+        sessionId: string;
+        sessionTitle: string;
+        disputedAt: string | null;
+      }>;
+      scopeViolations30d: number;
+      judgeModel: string | null;
+    }>(`/api/agents/${agentId}/trust`),
   updateSuite: (suiteId: string, body: { gating: boolean }) =>
     patch<{ ok: true }>(`/api/suites/${suiteId}`, body),
   createSuite: (agentId: string, body: { name: string; gating?: boolean }) =>

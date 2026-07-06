@@ -4,7 +4,7 @@ import type {
   SessionEvalResult,
   ToolCall,
 } from "@rabblehq/core";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, streamMessage } from "../api";
@@ -770,19 +770,13 @@ function SessionThread({ sessionId }: { sessionId: string }) {
               <p className="page-subtitle">
                 Live criteria evaluated against this session.
               </p>
-              {drawer.results.map((r) => (
-                <div key={r.criterionId} style={{ marginBottom: 14 }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                    <span className={`chip ${r.passed ? "green" : "amber"}`}>
-                      {r.passed ? "PASS" : "FAIL"}
-                    </span>
-                    <strong style={{ fontSize: 13 }}>{r.criterionName}</strong>
-                  </div>
-                  <p style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
-                    {r.reasoning}
-                  </p>
-                </div>
+              {(session.data?.evalResults ?? drawer.results).map((r) => (
+                <EvalResultRow key={r.id} result={r} sessionId={sessionId} />
               ))}
+              <p style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                Every grade is spot-checkable — disagree to queue it for human
+                review on the agent's evals tab.
+              </p>
               {session.data && (
                 <FreezeCard
                   sessionId={sessionId}
@@ -1006,6 +1000,48 @@ function FreezeCard({ sessionId, agentId }: { sessionId: string; agentId: string
   );
 }
 
+function EvalResultRow({
+  result,
+  sessionId,
+}: {
+  result: SessionEvalResult;
+  sessionId: string;
+}) {
+  const queryClient = useQueryClient();
+  const dispute = useMutation({
+    mutationFn: () => api.disputeEvalResult(result.id),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["session", sessionId] }),
+  });
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <span className={`chip ${result.passed ? "green" : "amber"}`}>
+          {result.passed ? "PASS" : "FAIL"}
+        </span>
+        <strong style={{ fontSize: 13, flex: 1 }}>{result.criterionName}</strong>
+        {result.reviewStatus === "open" ? (
+          <span className="chip blue">in review</span>
+        ) : result.reviewStatus ? (
+          <span className="chip">{result.reviewStatus}</span>
+        ) : (
+          <button
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+            title="Queue this verdict for human review"
+            disabled={dispute.isPending}
+            onClick={() => dispute.mutate()}
+          >
+            Disagree →
+          </button>
+        )}
+      </div>
+      <p style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
+        {result.reasoning}
+      </p>
+    </div>
+  );
+}
+
 function TrackRecordDrawer({ agentId }: { agentId: string }) {
   const agents = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
   const criteria = useQuery({
@@ -1017,6 +1053,10 @@ function TrackRecordDrawer({ agentId }: { agentId: string }) {
     queryFn: () => api.listSuites(agentId),
   });
   const agent = agents.data?.agents.find((a) => a.id === agentId);
+  const trust = useQuery({
+    queryKey: ["trust", agentId],
+    queryFn: () => api.agentTrust(agentId),
+  });
   const graded =
     (criteria.data?.criteria.reduce((sum, c) => sum + c.sessionCount, 0) ?? 0) +
     (suites.data?.suites.reduce((sum, s) => sum + (s.lastRun?.total ?? 0), 0) ?? 0);
@@ -1032,6 +1072,18 @@ function TrackRecordDrawer({ agentId }: { agentId: string }) {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
           Overall pass rate · {graded} graded sessions &amp; cases
+        </div>
+        <div style={{ fontSize: 12, marginTop: 4 }}>
+          <span
+            style={{
+              color:
+                (trust.data?.scopeViolations30d ?? 0) > 0
+                  ? "var(--amber)"
+                  : "var(--green)",
+            }}
+          >
+            {trust.data?.scopeViolations30d ?? 0} scope violations · 30d
+          </span>
         </div>
       </div>
       <div className="section-label">Live criteria</div>

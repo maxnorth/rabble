@@ -697,6 +697,8 @@ export const agentDirectoryRowSchema = agentSchema.extend({
   /** When the caller last talked to this agent (null = never). */
   lastUsedAt: z.string().nullable(),
   updatedByEmail: z.string().nullable(),
+  /** Open spot-check reviews or scope violations in the last 30 days. */
+  needsAttention: z.boolean().default(false),
 });
 export type AgentDirectoryRow = z.infer<typeof agentDirectoryRowSchema>;
 

@@ -60,6 +60,17 @@ export async function agentRoutes(app: FastifyInstance) {
         domainName: domains.name,
         toolCount: sql<number>`(SELECT count(*)::int FROM agent_tool_configs c WHERE c.agent_id = agents.id AND c.enabled)`,
         updatedByEmail: sql<string | null>`(SELECT u.email FROM users u WHERE u.id = agents.updated_by)`,
+        needsAttention: sql<boolean>`(
+          EXISTS (
+            SELECT 1 FROM eval_results er
+            JOIN eval_criteria ec ON ec.id = er.criterion_id
+            WHERE ec.agent_id = agents.id AND er.review_status = 'open'
+          ) OR EXISTS (
+            SELECT 1 FROM scope_violations sv
+            WHERE sv.agent_id = agents.id
+              AND sv.created_at > now() - interval '30 days'
+          )
+        )`,
         lastUsedAt: sql<string | null>`(
           SELECT max(s.updated_at)::text FROM sessions s
           WHERE s.agent_id = agents.id AND s.user_id = ${req.user!.id}
@@ -111,6 +122,7 @@ export async function agentRoutes(app: FastifyInstance) {
         scope: r.scope,
         lastUsedAt: r.lastUsedAt,
         updatedByEmail: r.updatedByEmail,
+        needsAttention: r.needsAttention,
       })),
     };
   });

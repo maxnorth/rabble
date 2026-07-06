@@ -381,6 +381,14 @@ function AgentDirectory() {
                     <span style={{ fontWeight: 500, color: "var(--text-1)", display: "block" }}>
                       {a.name}{" "}
                       {a.status === "draft" && <span className="chip amber">draft</span>}
+                      {a.needsAttention && (
+                        <span
+                          className="chip amber"
+                          title="Open spot-check reviews or scope violations in the last 30 days — see the evals tab"
+                        >
+                          needs attention
+                        </span>
+                      )}
                     </span>
                     <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
                       {a.description || <span className="mono">{a.slug}</span>}

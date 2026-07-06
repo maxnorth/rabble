@@ -289,6 +289,12 @@ test("an out-of-scope tool attempt is recorded as a violation", async () => {
 
   // Surfaced on the agent's evals tab as the safety half of the track record
   await page.locator("nav a[title='Agents']").click();
+  // ...and flagged right in the directory where people pick agents
+  await expect(
+    page
+      .locator(".dir-table tbody tr", { hasText: "Eng On-Call" })
+      .locator(".chip", { hasText: "needs attention" }),
+  ).toBeVisible();
   await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
   await page.getByRole("button", { name: "evals" }).click();
   await expect(

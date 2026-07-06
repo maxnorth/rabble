@@ -967,6 +967,83 @@ test("'agent from this session' hands the transcript to the Builder", async () =
   );
 });
 
+test("pulse-back: a sagging pass rate DMs the agent's owner", async () => {
+  // Three planted recent failures + today's failing judgment cross the
+  // alert floor (>= 4 graded in 7 days at <= 60% pass).
+  await dbQuery(
+    `INSERT INTO eval_results (criterion_id, session_id, passed, reasoning, created_at)
+     SELECT ec.id, s.id, false, 'planted for alert', now() - (n || ' hours')::interval
+     FROM eval_criteria ec
+     JOIN agents a ON a.id = ec.agent_id AND a.name = 'Eng On-Call'
+     CROSS JOIN (SELECT id FROM sessions ORDER BY created_at LIMIT 1) s
+     CROSS JOIN generate_series(1, 3) n
+     WHERE ec.enabled LIMIT 3`,
+  );
+
+  // Script the turn reply plus a FAIL verdict for each enabled criterion.
+  const [criteria] = await dbQuery<{ n: number }>(
+    `SELECT count(*)::int AS n FROM eval_criteria ec
+     JOIN agents a ON a.id = ec.agent_id
+     WHERE a.name = 'Eng On-Call' AND ec.enabled`,
+  );
+  expect(criteria!.n).toBeGreaterThan(0);
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([
+      { type: "text", text: "Deploys are on fire, sorry." },
+      ...Array.from({ length: criteria!.n }, () => ({
+        type: "text",
+        text: "FAIL\nThe reply did not help.",
+      })),
+    ]),
+  });
+
+  await page.goto("/sessions");
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("How are deploys looking today?");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Deploys are on fire",
+    { timeout: 15000 },
+  );
+
+  // The judgment lands, the floor is crossed, the owner gets pinged.
+  await expect
+    .poll(
+      async () => {
+        const rows = await dbQuery<{ summary: string }>(
+          "SELECT summary FROM audit_events WHERE action = 'eval.alert'",
+        );
+        return rows[0]?.summary ?? "";
+      },
+      { timeout: 15000 },
+    )
+    .toMatch(/Pass rate dropped to \d+% \(\d+ graded, 7d\) for "Eng On-Call"/);
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { channel?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.channel === "U777" &&
+          r.body.text?.includes("pass rate dropped") &&
+          r.body.text?.includes("Eng On-Call"),
+      );
+    })
+    .toBe(true);
+
+  // Clean the planted rows so later stats stay grounded in real judgments.
+  await dbQuery("DELETE FROM eval_results WHERE reasoning = 'planted for alert'");
+});
+
 test("hitting an access limit becomes a request an admin approves", async ({
   browser,
 }) => {

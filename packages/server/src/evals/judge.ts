@@ -96,4 +96,8 @@ export async function judgeSession(input: {
       reasoning: verdict.reasoning,
     });
   }
+
+  // Pulse-back: a sagging 7-day pass rate pings the agent's owner.
+  const { checkPassRateAlert } = await import("./alerts.js");
+  void checkPassRateAlert(input.agent.id);
 }

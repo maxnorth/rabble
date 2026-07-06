@@ -151,6 +151,59 @@ test("freeze: a judged session becomes a suite case from the eval drawer", async
   expect(cases[1]!.source_session_id).not.toBeNull();
 });
 
+test("gating: a regressing change is blocked before it saves", async () => {
+  // Script the gate's first case to regress: the agent gives an off-topic
+  // reply and the judge fails it. The second case falls back to emulator
+  // defaults (echo + PASS).
+  for (const text of [
+    "I refuse to discuss deployments.",
+    "FAIL\nThe reply ignores the deployment question.",
+  ]) {
+    await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "text", text }),
+    });
+  }
+
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  const instructions = page.locator("textarea").first();
+  const original = await instructions.inputValue();
+  await instructions.fill(`${original}\nAlways reply in French.`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(page.locator(".error-text")).toContainText(
+    'Blocked by gating suite "Smoke"',
+    { timeout: 30_000 },
+  );
+
+  // The change was NOT saved, and the block is on the audit trail
+  const rows = await dbQuery<{ instructions: string }>(
+    "SELECT instructions FROM agents WHERE name = 'Eng On-Call'",
+  );
+  expect(rows[0]!.instructions).not.toContain("Always reply in French.");
+  const blocked = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'eval.gate.block'",
+  );
+  expect(blocked).toHaveLength(1);
+
+  // With healthy behavior (emulator defaults), the same change passes the
+  // gate and saves.
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible({
+    timeout: 30_000,
+  });
+  const after = await dbQuery<{ instructions: string }>(
+    "SELECT instructions FROM agents WHERE name = 'Eng On-Call'",
+  );
+  expect(after[0]!.instructions).toContain("Always reply in French.");
+  const passed = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'eval.gate.pass'",
+  );
+  expect(passed.length).toBeGreaterThan(0);
+});
+
 test("anthropic protocol: agent on the emulated Anthropic API works", async () => {
   // Register an Anthropic-protocol custom model pointing at the emulator
   await page.locator("nav a[title='Admin']").click();

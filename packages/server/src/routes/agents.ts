@@ -199,6 +199,106 @@ export async function agentRoutes(app: FastifyInstance) {
     if (body.tone !== undefined) updates.tone = body.tone;
     if (body.status !== undefined) updates.status = body.status;
 
+    const [current] = await db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!current) return reply.code(404).send({ error: "Agent not found" });
+
+    // Gating: behavior-affecting changes must pass the agent's gating
+    // suites *before* they are saved. The suites run against the candidate
+    // configuration; a failing case blocks the change.
+    const candidate = {
+      name: (updates.name as string | undefined) ?? current.name,
+      description: (updates.description as string | undefined) ?? current.description,
+      instructions: (updates.instructions as string | undefined) ?? current.instructions,
+      modelId:
+        body.modelId !== undefined ? (body.modelId ?? null) : current.modelId,
+      tone: (updates.tone as string | undefined) ?? current.tone,
+    };
+    const behaviorChanged =
+      candidate.instructions !== current.instructions ||
+      candidate.description !== current.description ||
+      candidate.name !== current.name ||
+      candidate.tone !== current.tone ||
+      candidate.modelId !== current.modelId;
+
+    if (behaviorChanged && candidate.modelId) {
+      const { evalSuites, evalCases, models } = await import("../db/schema.js");
+      const { executeSuiteCases, recordSuiteRun } = await import(
+        "../evals/suiteRunner.js"
+      );
+      const gatingSuites = await db
+        .select()
+        .from(evalSuites)
+        .where(and(eq(evalSuites.agentId, id), eq(evalSuites.gating, true)));
+      const [model] = await db
+        .select()
+        .from(models)
+        .where(eq(models.id, candidate.modelId))
+        .limit(1);
+      if (model) {
+        for (const suite of gatingSuites) {
+          const cases = await db
+            .select({ id: evalCases.id })
+            .from(evalCases)
+            .where(eq(evalCases.suiteId, suite.id));
+          if (cases.length === 0) continue;
+          const outcomes = await executeSuiteCases(
+            suite.id,
+            {
+              name: candidate.name,
+              description: candidate.description,
+              instructions: candidate.instructions,
+            },
+            model,
+          );
+          await recordSuiteRun(suite.id, outcomes);
+          const failed = outcomes.filter((o) => !o.passed);
+          if (failed.length > 0) {
+            await recordAudit({
+              orgId: req.user!.orgId,
+              actorUserId: req.user!.id,
+              action: "eval.gate.block",
+              targetType: "agent",
+              targetId: id,
+              summary:
+                `Gating suite "${suite.name}" blocked a change to ` +
+                `"${current.name}" (${failed.length}/${outcomes.length} cases failed)`,
+              metadata: {
+                suiteId: suite.id,
+                failures: failed.map((f) => ({ case: f.caseName, reasoning: f.reasoning })),
+              },
+            });
+            return reply.code(409).send({
+              error:
+                `Blocked by gating suite "${suite.name}": ` +
+                `${failed.length} of ${outcomes.length} cases failed ` +
+                `(${failed.map((f) => f.caseName).join(", ")}). ` +
+                "The change was not saved.",
+              gate: {
+                suiteId: suite.id,
+                suiteName: suite.name,
+                failures: failed.map((f) => ({
+                  caseName: f.caseName,
+                  reasoning: f.reasoning,
+                })),
+              },
+            });
+          }
+          await recordAudit({
+            orgId: req.user!.orgId,
+            actorUserId: req.user!.id,
+            action: "eval.gate.pass",
+            targetType: "agent",
+            targetId: id,
+            summary: `Gating suite "${suite.name}" passed (${outcomes.length}/${outcomes.length}) for a change to "${current.name}"`,
+          });
+        }
+      }
+    }
+
     const [row] = await db
       .update(agents)
       .set(updates)

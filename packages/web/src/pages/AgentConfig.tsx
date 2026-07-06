@@ -882,7 +882,9 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
     <>
       <p className="page-subtitle">
         Criteria are evaluated live against real sessions; suites are offline
-        test cases. Track record is evidence in access decisions.
+        test cases. Gating suites run automatically before any behavior
+        change ships — a regression blocks the save. Track record is
+        evidence in access decisions.
       </p>
 
       <div

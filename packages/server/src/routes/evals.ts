@@ -23,6 +23,7 @@ import { recordAudit } from "../audit.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
 import { chatModelFor } from "../models/chat.js";
 import { judgeText } from "../evals/judge.js";
+import { executeSuiteCases, recordSuiteRun } from "../evals/suiteRunner.js";
 
 async function requireEdit(req: { user: unknown }, agentId: string) {
   const rights = await rightsForAllAgents(req.user as never);
@@ -321,79 +322,34 @@ export async function evalRoutes(app: FastifyInstance) {
       .limit(1);
     if (!model) return reply.code(409).send({ error: "Model not found" });
 
-    const cases = await db
-      .select()
+    const caseCount = await db
+      .select({ id: evalCases.id })
       .from(evalCases)
-      .where(eq(evalCases.suiteId, suiteId))
-      .orderBy(evalCases.createdAt);
-    if (cases.length === 0) {
+      .where(eq(evalCases.suiteId, suiteId));
+    if (caseCount.length === 0) {
       return reply.code(409).send({ error: "This suite has no test cases yet" });
     }
 
-    const [run] = await db
-      .insert(suiteRuns)
-      .values({ suiteId, status: "running" })
-      .returning();
+    const outcomes = await executeSuiteCases(
+      suiteId,
+      { name: agent.name, description: agent.description, instructions: agent.instructions },
+      model,
+    );
+    const runId = await recordSuiteRun(suiteId, outcomes);
 
-    try {
-      const chat = await chatModelFor(model);
-      for (const testCase of cases) {
-        const reply2 = await chat.invoke([
-          new SystemMessage(
-            `You are ${agent.name}. ${agent.description}\n\n${agent.instructions}`,
-          ),
-          new HumanMessage(testCase.input),
-        ]);
-        const output =
-          typeof reply2.content === "string"
-            ? reply2.content
-            : reply2.content
-                .map((b) =>
-                  typeof b === "string" ? b : ((b as { text?: string }).text ?? ""),
-                )
-                .join("");
-        const verdict = await judgeText(
-          model,
-          testCase.rubric,
-          `The agent was asked:\n${testCase.input}\n\nThe agent replied:\n${output}`,
-        );
-        await db.insert(caseResults).values({
-          runId: run!.id,
-          caseId: testCase.id,
-          passed: verdict.passed,
-          output: output.slice(0, 5000),
-          reasoning: verdict.reasoning,
-        });
-      }
-      await db
-        .update(suiteRuns)
-        .set({ status: "completed", completedAt: new Date() })
-        .where(eq(suiteRuns.id, run!.id));
-    } catch (err) {
-      await db
-        .update(suiteRuns)
-        .set({ status: "failed", completedAt: new Date() })
-        .where(eq(suiteRuns.id, run!.id));
-      throw err;
-    }
-
-    const results = await db
-      .select()
-      .from(caseResults)
-      .where(eq(caseResults.runId, run!.id));
     await recordAudit({
       orgId: req.user!.orgId,
       actorUserId: req.user!.id,
       action: "eval.suite.run",
       targetType: "agent",
       targetId: suite.agentId,
-      summary: `Ran suite "${suite.name}": ${results.filter((r) => r.passed).length}/${results.length} passed`,
+      summary: `Ran suite "${suite.name}": ${outcomes.filter((r) => r.passed).length}/${outcomes.length} passed`,
     });
     return {
       run: {
-        id: run!.id,
+        id: runId,
         status: "completed",
-        results: results.map((r) => ({
+        results: outcomes.map((r) => ({
           caseId: r.caseId,
           passed: r.passed,
           output: r.output,

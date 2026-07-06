@@ -31,6 +31,13 @@ export function mountSlack(app: FastifyInstance): void {
     return { ok: true, user: { id: user, profile: { email } } };
   });
 
+  // Interactivity response_url sink: logs message replacements
+  app.post("/mock/slack.com/response/:ref", async (req) => {
+    const { ref } = req.params as { ref: string };
+    logRequest("slack.com", "POST", `/response/${ref}`, req.body ?? null);
+    return { ok: true };
+  });
+
   app.post("/mock/slack.com/api/users.lookupByEmail", async (req) => {
     logRequest("slack.com", "POST", "/api/users.lookupByEmail", req.body ?? null);
     const { email } = (req.body ?? {}) as { email?: string };

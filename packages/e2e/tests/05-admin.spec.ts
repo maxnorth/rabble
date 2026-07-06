@@ -387,6 +387,7 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
   const payload = JSON.stringify({
     type: "block_actions",
     user: { id: "U777" },
+    response_url: `${EMULATOR}/mock/slack.com/response/appr-1`,
     actions: [{ action_id: "rabble_approve", value }],
   });
   const rawForm = `payload=${encodeURIComponent(payload)}`;
@@ -413,6 +414,23 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
     authType: "user",
     approval: { status: "approved", decidedByName: "Alex Lin" },
   });
+
+  // The DM's buttons were replaced with the outcome
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { replace_original?: boolean; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/response/appr-1" &&
+          r.body.replace_original === true &&
+          r.body.text?.includes("Approved"),
+      );
+    })
+    .toBe(true);
 });
 
 test("a Slack-raised approval can be decided from the web session", async () => {

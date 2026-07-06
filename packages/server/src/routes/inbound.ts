@@ -345,6 +345,7 @@ export async function inboundRoutes(app: FastifyInstance) {
       let payload: {
         type?: string;
         user?: { id?: string };
+        response_url?: string;
         actions?: Array<{ action_id?: string; value?: string }>;
       };
       try {
@@ -393,15 +394,21 @@ export async function inboundRoutes(app: FastifyInstance) {
               action.action_id === "rabble_approve" ? "approve" : "deny",
             )
           : false;
-      return {
-        ok: true,
-        resolved: ok,
-        text: ok
-          ? action.action_id === "rabble_approve"
-            ? "Approved — the agent is continuing."
-            : "Denied — the agent was told no."
-          : "This approval already resolved or isn't yours to decide.",
-      };
+      const outcomeText = ok
+        ? action.action_id === "rabble_approve"
+          ? "✅ Approved — the agent is continuing."
+          : "🚫 Denied — the agent was told no."
+        : "This approval already resolved or isn't yours to decide.";
+
+      // Swap the buttons out of the DM so the ask can't be double-clicked.
+      if (payload.response_url) {
+        void fetch(payload.response_url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ replace_original: true, text: outcomeText }),
+        }).catch(() => {});
+      }
+      return { ok: true, resolved: ok, text: outcomeText };
     });
 
     scope.post("/api/inbound/slack", async (req, reply) => {

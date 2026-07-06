@@ -108,13 +108,18 @@ The research docs are context, not specs: they explain *why* the design is shape
 
 > Status: a v1 exists. Every org ships with a built-in **Builder** agent
 > (usable by Everyone; directory shows a "built-in" chip) whose platform
-> tools — `create_agent_draft`, `add_eval_criterion`, `attach_mcp_server`,
-> `list_mcp_servers`, `request_access` — run through the standard governed
-> tool pipeline: inline tool-call UI, the user-auth consent gate, rights
-> enforced per-tool against the asking user, audit rows attributed
-> "via Builder". `request_access` feeds Admin › Access requests (below).
-> Still open from the original vision: trial-session test-case mining,
-> "create an agent from this session", and the Share verb.
+> tools — `create_agent_draft`, `update_agent_draft` (correctability,
+> drafts only), `add_eval_criterion`, `add_test_case` (adversarial cases +
+> session mining), `attach_mcp_server`, `list_mcp_servers`,
+> `request_access` — run through the standard governed tool pipeline:
+> inline tool-call UI, the user-auth consent gate, rights enforced
+> per-tool against the asking user, audit rows attributed "via Builder".
+> Both §5 trigger surfaces exist: the Sessions-landing affordance and
+> "✦ agent from this" on any session (seeds a Builder session with what
+> the user kept asking). **Share is one verb** on the agent header:
+> audience picker (teams first), plain-language rights sentence,
+> track-record chip as evidence, optional deploy-to-Slack, visible
+> pause/unshare. Still open: ambient repeated-pattern detection.
 
 From the J1 journey mapping (full detail in the journey map doc's "Planned solutions" section):
 
@@ -130,16 +135,24 @@ From the J1 journey mapping (full detail in the journey map doc's "Planned solut
 
 ## 6. Other open threads (not yet built)
 
-- **Grant editing** is display-only everywhere (agent Access tab, team Agent-access, domain grants, model access). Wiring it end-to-end is the biggest missing interaction after the Builder.
+- ~~**Grant editing** display-only~~ — SHIPPED: grants are editable
+  everywhere (agent Access tab, domain grants, model access) and via the
+  Share modal; enforcement is live.
 - ~~The **approval screen for access requests**~~ — SHIPPED: Admin ›
   Access requests (open-count badge, approve materializes the grant with
   right-upgrade semantics, deny recorded; admins get a Slack DM ping when
   a request lands; everything audited).
-- **The "cap lifted" hero flow** (the pitch demo): risky action → blocked → owner grants scoped access with track-record evidence → action runs → audit trail. Pieces exist; the connected flow doesn't.
+- **The "cap lifted" hero flow** — the pieces now connect end-to-end:
+  hit a limit (web "Request access" on the agent page, or the Builder
+  detects it) → admin approves next to the track-record evidence chip →
+  the grant materializes → the action runs → audit trail. What remains
+  is scripting it as a demo.
 - Creation flows are stubs (+ New agent/team, Register model, Add connection, + Create key…).
 - Only **one scripted session** (Eng On-Call CI triage). More scripted sessions hitting different personas would strengthen demos.
 - Stats/Audit filters and exports are display-only. Model selector and logo picker on Identity are static.
-- Stage 7 of J1 (pulse-back: digests, pass-rate-drop alerts) is acknowledged but undesigned.
+- Stage 7 of J1 (pulse-back): **pass-rate-drop alerts shipped** (7-day
+  rate ≤60% with ≥4 graded → owner gets a Slack DM + audit event, daily
+  dedupe). Digests remain, landing with the Hatchet scheduler.
 
 ---
 

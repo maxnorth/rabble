@@ -86,9 +86,14 @@ export interface StatsResponse {
     priorSessions: number;
     activeUsers: number;
     messages: number;
+    priorMessages: number;
     toolCalls: number;
+    priorToolCalls: number;
     inputTokens: number;
     outputTokens: number;
+    priorOutputTokens: number;
+    spend: number;
+    avgCostPerSession: number;
     avgTurns: number;
     activeAgents: number;
     totalAgents: number;
@@ -99,7 +104,8 @@ export interface StatsResponse {
   sessionsPerDay: Array<{ day: string; count: number }>;
   toolAuthSplit: Array<{ authType: string | null; count: number }>;
   perTool: Array<{ tool: string; server: string | null; count: number }>;
-  perModel: Array<{ modelName: string; count: number }>;
+  perModel: Array<{ modelName: string; count: number; tokens: number }>;
+  spendByAgent: Array<{ agentName: string; sessions: number; spend: number }>;
   perCriterion: Array<{
     criterionId: string;
     criterionName: string;

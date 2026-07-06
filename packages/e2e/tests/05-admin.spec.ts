@@ -311,6 +311,17 @@ test("stats dashboards reflect real usage", async () => {
   // Usage & spend tab: token usage recorded from the emulator's usage blocks
   await page.locator(".sidebar-item", { hasText: "Usage & spend" }).click();
   await expect(page.locator(".kpi", { hasText: "Output tokens" })).toBeVisible();
+
+  // Spend: the Mock Model is priced ($3/$15 per MTok), so the emulator's
+  // usage blocks produce a real (tiny) dollar figure.
+  const spendKpi = page.locator(".kpi", { hasText: "Spend" }).first();
+  await expect(spendKpi.locator(".value")).toContainText("$");
+  await expect(
+    page.locator(".chart-card", { hasText: "Spend by agent" }),
+  ).toContainText("Eng On-Call");
+  await expect(
+    page.locator(".chart-card", { hasText: "Token use by model" }),
+  ).toContainText("Mock Model");
   await expect(
     page.locator(".chart-card", { hasText: "Turns per session" }).locator(".bar-row").first(),
   ).toBeVisible();

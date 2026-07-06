@@ -147,6 +147,10 @@ export async function modelRoutes(app: FastifyInstance) {
         displayName: entry.displayName,
         protocol: entry.protocol,
         modelId: entry.modelId,
+        priceInputPerMtok:
+          entry.priceInputPerMtok !== null ? String(entry.priceInputPerMtok) : null,
+        priceOutputPerMtok:
+          entry.priceOutputPerMtok !== null ? String(entry.priceOutputPerMtok) : null,
       })
       .returning();
     return { model: serializeModel(row!) };
@@ -165,6 +169,10 @@ export async function modelRoutes(app: FastifyInstance) {
         baseUrl: body.baseUrl ?? null,
         modelId: body.modelId,
         encryptedKey: encryptSecret(body.apiKey),
+        priceInputPerMtok:
+          body.priceInputPerMtok != null ? String(body.priceInputPerMtok) : null,
+        priceOutputPerMtok:
+          body.priceOutputPerMtok != null ? String(body.priceOutputPerMtok) : null,
       })
       .returning();
     return { model: serializeModel(row!) };

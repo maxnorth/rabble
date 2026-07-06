@@ -724,6 +724,8 @@ function CustomModelModal({ onClose, onDone }: { onClose: () => void; onDone: ()
     baseUrl: "",
     modelId: "",
     apiKey: "",
+    priceIn: "",
+    priceOut: "",
   });
   const create = useMutation({
     mutationFn: () =>
@@ -733,6 +735,8 @@ function CustomModelModal({ onClose, onDone }: { onClose: () => void; onDone: ()
         baseUrl: form.baseUrl.trim() || null,
         modelId: form.modelId,
         apiKey: form.apiKey,
+        priceInputPerMtok: form.priceIn ? Number(form.priceIn) : null,
+        priceOutputPerMtok: form.priceOut ? Number(form.priceOut) : null,
       }),
     onSuccess: () => {
       onDone();
@@ -803,6 +807,34 @@ function CustomModelModal({ onClose, onDone }: { onClose: () => void; onDone: ()
               onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
             />
           </div>
+          <div style={{ display: "flex", gap: 16 }}>
+            <div className="field" style={{ flex: 1 }}>
+              <label>Input $ / MTok (optional)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="3.00"
+                value={form.priceIn}
+                onChange={(e) => setForm({ ...form, priceIn: e.target.value })}
+              />
+            </div>
+            <div className="field" style={{ flex: 1 }}>
+              <label>Output $ / MTok (optional)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="15.00"
+                value={form.priceOut}
+                onChange={(e) => setForm({ ...form, priceOut: e.target.value })}
+              />
+            </div>
+          </div>
+          <span className="hint" style={{ display: "block", marginTop: -6, marginBottom: 10 }}>
+            Powers the Usage &amp; spend dashboard. Leave blank to exclude this
+            model from $ figures.
+          </span>
           {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button type="button" className="btn" onClick={onClose}>

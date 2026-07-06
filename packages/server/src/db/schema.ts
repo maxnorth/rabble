@@ -3,6 +3,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgTable,
   primaryKey,
   text,
@@ -86,6 +87,9 @@ export const models = pgTable(
     baseUrl: text("base_url"),
     modelId: text("model_id").notNull(),
     encryptedKey: text("encrypted_key"),
+    // USD per 1M tokens; null = unpriced (excluded from spend figures)
+    priceInputPerMtok: numeric("price_input_per_mtok", { precision: 10, scale: 4 }),
+    priceOutputPerMtok: numeric("price_output_per_mtok", { precision: 10, scale: 4 }),
     enabled: boolean("enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

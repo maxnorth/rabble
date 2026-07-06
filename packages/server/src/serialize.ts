@@ -29,6 +29,9 @@ export function serializeModel(row: typeof models.$inferSelect): Model {
     baseUrl: row.baseUrl,
     modelId: row.modelId,
     hasKey: row.encryptedKey !== null,
+    priceInputPerMtok: row.priceInputPerMtok !== null ? Number(row.priceInputPerMtok) : null,
+    priceOutputPerMtok:
+      row.priceOutputPerMtok !== null ? Number(row.priceOutputPerMtok) : null,
     enabled: row.enabled,
     createdAt: row.createdAt.toISOString(),
   };

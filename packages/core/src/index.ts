@@ -66,6 +66,9 @@ export const catalogModelSchema = z.object({
   provider: z.string(),
   modelId: z.string(),
   description: z.string(),
+  /** USD per 1M tokens — powers the spend dashboards. */
+  priceInputPerMtok: z.number().nullable().default(null),
+  priceOutputPerMtok: z.number().nullable().default(null),
 });
 export type CatalogModel = z.infer<typeof catalogModelSchema>;
 
@@ -83,6 +86,9 @@ export const modelSchema = z.object({
   modelId: z.string(),
   /** Whether a usable API key is configured (the key itself is never returned). */
   hasKey: z.boolean(),
+  /** USD per 1M tokens; null = unpriced (excluded from spend figures). */
+  priceInputPerMtok: z.number().nullable().default(null),
+  priceOutputPerMtok: z.number().nullable().default(null),
   enabled: z.boolean(),
   createdAt: z.string(),
 });
@@ -94,6 +100,8 @@ export const createCustomModelSchema = z.object({
   baseUrl: z.string().url().nullable().optional(),
   modelId: z.string().min(1).max(200),
   apiKey: z.string().min(1).max(500),
+  priceInputPerMtok: z.number().min(0).nullable().optional(),
+  priceOutputPerMtok: z.number().min(0).nullable().optional(),
 });
 export type CreateCustomModelRequest = z.infer<typeof createCustomModelSchema>;
 

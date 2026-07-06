@@ -64,6 +64,22 @@ export async function statsRoutes(app: FastifyInstance) {
           ...agentFilter,
         ),
       );
+    const [priorMessageKpis] = await db
+      .select({
+        messages: sql<number>`count(*)::int`,
+        toolCalls: sql<number>`coalesce(sum(jsonb_array_length(${messages.toolCalls})), 0)::int`,
+        outputTokens: sql<number>`coalesce(sum(${messages.outputTokens}), 0)::int`,
+      })
+      .from(messages)
+      .innerJoin(sessions, eq(messages.sessionId, sessions.id))
+      .where(
+        and(
+          eq(sessions.orgId, orgId),
+          gte(messages.createdAt, priorSince),
+          sql`${messages.createdAt} < ${since}`,
+          ...agentFilter,
+        ),
+      );
 
     // Session length: average turns (user+agent message pairs) and buckets
     const turnRows = await db
@@ -161,11 +177,41 @@ export async function statsRoutes(app: FastifyInstance) {
       count: number;
     }>).map((r) => ({ tool: r.tool ?? "unknown", server: r.server, count: Number(r.count) }));
 
+    // $ spend: message tokens priced at the agent's model rates. Unpriced
+    // models contribute nothing (pricedSessions tracks coverage).
+    const spendResult = await db.execute(sql`
+      SELECT a.name AS agent_name,
+             count(DISTINCT s.id)::int AS sessions,
+             sum(m.input_tokens  * coalesce(mo.price_input_per_mtok, 0)  / 1e6
+               + m.output_tokens * coalesce(mo.price_output_per_mtok, 0) / 1e6
+             )::numeric(12,4) AS spend
+      FROM messages m
+      JOIN sessions s ON s.id = m.session_id
+      JOIN agents a ON a.id = s.agent_id
+      LEFT JOIN models mo ON mo.id = a.model_id
+      WHERE s.org_id = ${orgId} AND m.created_at >= ${since}
+        ${agentId ? sql`AND s.agent_id = ${agentId}` : sql``}
+      GROUP BY a.name
+      ORDER BY spend DESC
+    `);
+    const spendByAgent = (spendResult.rows as Array<{
+      agent_name: string;
+      sessions: number;
+      spend: string | null;
+    }>).map((r) => ({
+      agentName: r.agent_name,
+      sessions: Number(r.sessions),
+      spend: Number(r.spend ?? 0),
+    }));
+    const totalSpend = spendByAgent.reduce((sum, r) => sum + r.spend, 0);
+    const totalSpendSessions = spendByAgent.reduce((sum, r) => sum + r.sessions, 0);
+
     // Messages per model ("usage & spend")
     const perModel = await db
       .select({
         modelName: sql<string>`coalesce(mo.display_name, '(no model)')`,
         count: sql<number>`count(*)::int`,
+        tokens: sql<number>`coalesce(sum(${messages.inputTokens} + ${messages.outputTokens}), 0)::int`,
       })
       .from(messages)
       .innerJoin(sessions, eq(messages.sessionId, sessions.id))
@@ -211,15 +257,24 @@ export async function statsRoutes(app: FastifyInstance) {
         priorSessions: priorKpis?.sessions ?? 0,
         activeUsers: kpis?.users ?? 0,
         messages: messageKpis?.messages ?? 0,
+        priorMessages: priorMessageKpis?.messages ?? 0,
         toolCalls: messageKpis?.toolCalls ?? 0,
+        priorToolCalls: priorMessageKpis?.toolCalls ?? 0,
         inputTokens: tokenKpis?.inputTokens ?? 0,
         outputTokens: tokenKpis?.outputTokens ?? 0,
+        priorOutputTokens: priorMessageKpis?.outputTokens ?? 0,
+        spend: Math.round(totalSpend * 100) / 100,
+        avgCostPerSession:
+          totalSpendSessions > 0
+            ? Math.round((totalSpend / totalSpendSessions) * 100) / 100
+            : 0,
         avgTurns,
         activeAgents: agentKpis?.active ?? 0,
         totalAgents: agentKpis?.total ?? 0,
         evalPassRate: evalKpis?.passRate ?? null,
         evaluatedSessions: evalKpis?.evaluated ?? 0,
       },
+      spendByAgent,
       sessionsPerAgent: perAgent,
       sessionsPerDay: perDay,
       toolAuthSplit: authSplit.filter((r) => r.authType),

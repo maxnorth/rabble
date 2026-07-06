@@ -73,10 +73,15 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-function sessionsDelta(current: number, prior: number): string | undefined {
+function deltaVsPrior(current: number, prior: number): string | undefined {
   if (prior === 0) return undefined;
   const pct = Math.round((100 * (current - prior)) / prior);
   return pct === 0 ? "· flat vs prior" : `· ${pct > 0 ? "↑" : "↓"} ${Math.abs(pct)}% vs prior`;
+}
+const sessionsDelta = deltaVsPrior;
+
+function fmtUsd(n: number): string {
+  return n >= 100 ? `$${Math.round(n).toLocaleString()}` : `$${n.toFixed(2)}`;
 }
 
 export function StatsSection() {
@@ -163,8 +168,16 @@ function Overview({ data }: { data: StatsResponse }) {
           label="Sessions"
           delta={sessionsDelta(data.kpis.sessions, data.kpis.priorSessions)}
         />
-        <Kpi value={data.kpis.messages} label="Messages" />
-        <Kpi value={data.kpis.toolCalls} label="Tool calls" />
+        <Kpi
+          value={data.kpis.messages}
+          label="Messages"
+          delta={deltaVsPrior(data.kpis.messages, data.kpis.priorMessages)}
+        />
+        <Kpi
+          value={data.kpis.toolCalls}
+          label="Tool calls"
+          delta={deltaVsPrior(data.kpis.toolCalls, data.kpis.priorToolCalls)}
+        />
         <Kpi value={data.kpis.avgTurns} label="Avg turns / session" />
         <Kpi value={data.kpis.activeUsers} label="Active users" />
         <Kpi
@@ -265,15 +278,40 @@ function UsageSpend({ data }: { data: StatsResponse }) {
           label="Sessions"
           delta={sessionsDelta(data.kpis.sessions, data.kpis.priorSessions)}
         />
-        <Kpi value={data.kpis.messages} label="Messages" />
+        <Kpi value={fmtUsd(data.kpis.spend)} label="Spend" />
+        <Kpi value={fmtUsd(data.kpis.avgCostPerSession)} label="Avg cost / session" />
         <Kpi value={fmtTokens(data.kpis.inputTokens)} label="Input tokens" />
-        <Kpi value={fmtTokens(data.kpis.outputTokens)} label="Output tokens" />
+        <Kpi
+          value={fmtTokens(data.kpis.outputTokens)}
+          label="Output tokens"
+          delta={deltaVsPrior(data.kpis.outputTokens, data.kpis.priorOutputTokens)}
+        />
         <Kpi value={data.kpis.avgTurns} label="Avg turns / session" />
-        <Kpi value={data.kpis.activeUsers} label="Active users" />
       </div>
       <div className="chart-card">
-        <h3>Messages by model</h3>
-        <Bars rows={data.perModel.map((m) => ({ label: m.modelName, value: m.count }))} />
+        <h3>Spend by agent</h3>
+        <Bars
+          rows={data.spendByAgent
+            .filter((a) => a.spend > 0)
+            .map((a) => ({
+              label: a.agentName,
+              value: Math.round(a.spend * 100) / 100,
+              suffix: " $",
+            }))}
+        />
+        <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
+          Token cost this period, at each agent's model rates. Models without
+          pricing contribute $0 — set prices in Admin › Models.
+        </p>
+      </div>
+      <div className="chart-card">
+        <h3>Token use by model</h3>
+        <Bars
+          rows={data.perModel.map((m) => ({
+            label: m.modelName,
+            value: m.tokens,
+          }))}
+        />
       </div>
       <div className="chart-card">
         <h3>Sessions per agent</h3>

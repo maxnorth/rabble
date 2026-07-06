@@ -85,6 +85,8 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
     .fill("http://localhost:4100/mock/api.openai.com/v1");
   await page.getByPlaceholder("claude-sonnet-5").fill("mock-1");
   await page.locator(".modal input[type=password]").fill("test-key-secret");
+  await page.getByPlaceholder("3.00").fill("3");
+  await page.getByPlaceholder("15.00").fill("15");
   await page.getByRole("button", { name: "Add model" }).click();
 
   await expect(page.locator(".row", { hasText: "Mock Model" })).toBeVisible();
@@ -102,6 +104,11 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
   // API keys are stored encrypted, never in plaintext
   expect(models[0]!.encrypted_key).toMatch(/^v1:/);
   expect(models[0]!.encrypted_key).not.toContain("test-key-secret");
+
+  const priced = await dbQuery<{ price_input_per_mtok: string }>(
+    "SELECT price_input_per_mtok FROM models",
+  );
+  expect(Number(priced[0]!.price_input_per_mtok)).toBe(3);
 });
 
 test("agents: create, configure, and activate an agent", async () => {

@@ -13,6 +13,8 @@ export const MODEL_CATALOG: CatalogModel[] = [
     provider: "anthropic",
     modelId: "claude-sonnet-5",
     description: "Balanced intelligence and speed — the default choice.",
+    priceInputPerMtok: 3,
+    priceOutputPerMtok: 15,
   },
   {
     catalogId: "claude-opus-4-8",
@@ -21,6 +23,8 @@ export const MODEL_CATALOG: CatalogModel[] = [
     provider: "anthropic",
     modelId: "claude-opus-4-8",
     description: "Highest capability for complex, high-stakes agent work.",
+    priceInputPerMtok: 15,
+    priceOutputPerMtok: 75,
   },
   {
     catalogId: "claude-haiku-4-5",
@@ -29,6 +33,8 @@ export const MODEL_CATALOG: CatalogModel[] = [
     provider: "anthropic",
     modelId: "claude-haiku-4-5-20251001",
     description: "Fast and inexpensive for high-volume, simple tasks.",
+    priceInputPerMtok: 1,
+    priceOutputPerMtok: 5,
   },
 ];
 

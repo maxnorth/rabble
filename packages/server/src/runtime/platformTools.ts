@@ -195,6 +195,77 @@ export function buildPlatformTools(
       },
     },
     {
+      name: "add_test_case",
+      description:
+        "Add an offline test case to one of the agent's eval suites (created " +
+        "if missing). Use it to mine cases from trial sessions — a user " +
+        "correction is a labeled example — and to propose adversarial cases " +
+        "(\"what's the worst thing this agent could do?\").",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string", description: "The agent's id" },
+          suiteName: {
+            type: "string",
+            description: "Suite to add the case to (created if it doesn't exist)",
+          },
+          caseName: { type: "string", description: "Short case name" },
+          input: { type: "string", description: "The user message the case replays" },
+          rubric: {
+            type: "string",
+            description: "What a good reply must do — the judge grades against this",
+          },
+        },
+        required: ["agentId", "suiteName", "caseName", "input", "rubric"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const suiteName = String(args.suiteName ?? "").trim() || "Builder cases";
+        const { evalSuites, evalCases } = await import("../db/schema.js");
+        let [suite] = await db
+          .select()
+          .from(evalSuites)
+          .where(
+            and(
+              eq(evalSuites.agentId, agentId),
+              sql`lower(${evalSuites.name}) = ${suiteName.toLowerCase()}`,
+            ),
+          )
+          .limit(1);
+        if (!suite) {
+          [suite] = await db
+            .insert(evalSuites)
+            .values({ agentId, name: suiteName })
+            .returning();
+        }
+        const [row] = await db
+          .insert(evalCases)
+          .values({
+            suiteId: suite!.id,
+            name: String(args.caseName ?? ""),
+            input: String(args.input ?? ""),
+            rubric: String(args.rubric ?? ""),
+          })
+          .returning();
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "eval.case.add",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Added test case "${row!.name}" to suite "${suite!.name}" via Builder`,
+        });
+        return JSON.stringify({
+          caseId: row!.id,
+          suite: suite!.name,
+          note: "Run the suite from the agent's Evals tab; mark it gating to block regressions.",
+        });
+      },
+    },
+    {
       name: "list_mcp_servers",
       description:
         "List the org's registered MCP servers and their tools — what an " +

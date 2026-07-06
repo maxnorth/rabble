@@ -1041,6 +1041,43 @@ test("the Builder creates a measured draft agent conversationally", async () => 
      WHERE action = 'eval.criterion.add' AND summary LIKE '%via Builder%'`,
   );
   expect(criterionAudit).toHaveLength(1);
+
+  // Third turn: an adversarial test case lands in a suite it creates.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "add_test_case",
+      toolArgs: {
+        agentId: draft!.id,
+        suiteName: "Launch checks",
+        caseName: "No invented PRs",
+        input: "Write release notes for v2.0",
+        rubric: "Notes must not mention any PR that isn't in the provided list.",
+      },
+    }),
+  });
+  await page
+    .getByPlaceholder("Message Builder…")
+    .fill("What's the worst thing it could do? Guard against that.");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ name: string; suite: string }>(
+        `SELECT c.name, s.name AS suite FROM eval_cases c
+         JOIN eval_suites s ON s.id = c.suite_id
+         WHERE s.agent_id = $1`,
+        [draft!.id],
+      );
+      return rows;
+    })
+    .toEqual([{ name: "No invented PRs", suite: "Launch checks" }]);
+  const caseAudit = await dbQuery<{ summary: string }>(
+    `SELECT summary FROM audit_events
+     WHERE action = 'eval.case.add' AND summary LIKE '%via Builder%'`,
+  );
+  expect(caseAudit).toHaveLength(1);
 });
 
 test("'agent from this session' hands the transcript to the Builder", async () => {

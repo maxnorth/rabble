@@ -13,7 +13,7 @@ import {
 import { requireUser } from "../auth.js";
 import { serializeAgent } from "../serialize.js";
 import { recordAudit } from "../audit.js";
-import { hasRight, rightsForAllAgents } from "../rights.js";
+import { agentInOrg, hasRight, rightsForAllAgents } from "../rights.js";
 
 async function uniqueSlug(orgId: string, name: string, excludeId?: string) {
   const base = slugify(name) || "agent";
@@ -224,7 +224,7 @@ export async function agentRoutes(app: FastifyInstance) {
       candidate.tone !== current.tone ||
       candidate.modelId !== current.modelId;
 
-    if (behaviorChanged && candidate.modelId) {
+    if (behaviorChanged) {
       const { evalSuites, evalCases, models } = await import("../db/schema.js");
       const { executeSuiteCases, recordSuiteRun } = await import(
         "../evals/suiteRunner.js"
@@ -233,11 +233,32 @@ export async function agentRoutes(app: FastifyInstance) {
         .select()
         .from(evalSuites)
         .where(and(eq(evalSuites.agentId, id), eq(evalSuites.gating, true)));
-      const [model] = await db
-        .select()
-        .from(models)
-        .where(eq(models.id, candidate.modelId))
-        .limit(1);
+      const [model] = candidate.modelId
+        ? await db
+            .select()
+            .from(models)
+            .where(eq(models.id, candidate.modelId))
+            .limit(1)
+        : [];
+      // Gating suites can't run without a model — refuse to save silently
+      // ungated rather than let a regression slip through the hole.
+      if (gatingSuites.length > 0 && !model) {
+        const withCases = [];
+        for (const suite of gatingSuites) {
+          const cases = await db
+            .select({ id: evalCases.id })
+            .from(evalCases)
+            .where(eq(evalCases.suiteId, suite.id));
+          if (cases.length > 0) withCases.push(suite);
+        }
+        if (withCases.length > 0) {
+          return reply.code(409).send({
+            error:
+              `This agent has gating suites (${withCases.map((g) => `"${g.name}"`).join(", ")}) ` +
+              "but no model to run them against. Pick a model, or unmark the suites as gating.",
+          });
+        }
+      }
       if (model) {
         for (const suite of gatingSuites) {
           const cases = await db
@@ -371,8 +392,11 @@ export async function agentRoutes(app: FastifyInstance) {
   });
 
   // Sub-agent links (the "agents" tab): which agents this one can call
-  app.get("/api/agents/:id/sub-agents", async (req) => {
+  app.get("/api/agents/:id/sub-agents", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!(await agentInOrg(req.user!.orgId, id))) {
+      return reply.code(404).send({ error: "Agent not found" });
+    }
     const { agentLinks } = await import("../db/schema.js");
     const links = await db
       .select({ subAgentId: agentLinks.subAgentId, note: agentLinks.note })
@@ -458,8 +482,11 @@ export async function agentRoutes(app: FastifyInstance) {
   });
 
   // Per-agent tool configuration lives in agent routes for cohesion
-  app.get("/api/agents/:id/tools", async (req) => {
+  app.get("/api/agents/:id/tools", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!(await agentInOrg(req.user!.orgId, id))) {
+      return reply.code(404).send({ error: "Agent not found" });
+    }
     const { agentMcpServers, mcpServers } = await import("../db/schema.js");
     const attached = await db
       .select({ server: mcpServers })
@@ -496,8 +523,11 @@ export async function agentRoutes(app: FastifyInstance) {
 
   // --- Surfaces: where this agent is reachable ---
 
-  app.get("/api/agents/:id/surfaces", async (req) => {
+  app.get("/api/agents/:id/surfaces", async (req, reply) => {
     const { id } = req.params as { id: string };
+    if (!(await agentInOrg(req.user!.orgId, id))) {
+      return reply.code(404).send({ error: "Agent not found" });
+    }
     const { agentSurfaces, connections } = await import("../db/schema.js");
     const rows = await db
       .select({ surface: agentSurfaces, connection: connections })

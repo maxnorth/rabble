@@ -822,7 +822,9 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             )}
             {(streamingText !== null || liveTools.length > 0 || approvals.length > 0) && (
               <div className="msg-agent">
-                <div className="avatar">{initials}</div>
+                <div className="avatar" style={{ color: agentColor }}>
+                  {agentGlyph}
+                </div>
                 <div className="bubble">
                   <div className="agent-name">{agentName}</div>
                   {liveTools.map((t) => (

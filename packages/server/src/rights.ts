@@ -132,3 +132,19 @@ export function hasRight(
 ): boolean {
   return actual !== null && RIGHT_ORDER[actual] >= RIGHT_ORDER[required];
 }
+
+/**
+ * Multi-tenant guard for agent-scoped reads: the agent must belong to the
+ * caller's org. (Write paths already check rights, which are org-scoped.)
+ */
+export async function agentInOrg(orgId: string, agentId: string): Promise<boolean> {
+  const { agents } = await import("./db/schema.js");
+  const { db } = await import("./db/client.js");
+  const { and, eq } = await import("drizzle-orm");
+  const [row] = await db
+    .select({ id: agents.id })
+    .from(agents)
+    .where(and(eq(agents.id, agentId), eq(agents.orgId, orgId)))
+    .limit(1);
+  return Boolean(row);
+}

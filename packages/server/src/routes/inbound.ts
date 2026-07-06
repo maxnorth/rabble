@@ -27,6 +27,7 @@ import { executeTurnAndPersist } from "../runtime/executeTurn.js";
 interface SlackEnvelope {
   type: string;
   challenge?: string;
+  event_id?: string;
   event?: {
     type: string;
     subtype?: string;
@@ -67,6 +68,24 @@ async function slackApi(
     body: JSON.stringify(body),
   });
   return (await res.json()) as Record<string, unknown>;
+}
+
+/**
+ * Slack redelivers events it thinks failed (slow responses trigger retries
+ * after ~3s). Remember recent event ids so a redelivery never runs a second
+ * agent turn or posts a duplicate reply.
+ */
+const seenSlackEvents = new Set<string>();
+const SEEN_EVENTS_CAP = 5000;
+function alreadyDelivered(eventId: string | undefined): boolean {
+  if (!eventId) return false;
+  if (seenSlackEvents.has(eventId)) return true;
+  seenSlackEvents.add(eventId);
+  if (seenSlackEvents.size > SEEN_EVENTS_CAP) {
+    const oldest = seenSlackEvents.values().next().value;
+    if (oldest) seenSlackEvents.delete(oldest);
+  }
+  return false;
 }
 
 export async function inboundRoutes(app: FastifyInstance) {
@@ -124,6 +143,12 @@ export async function inboundRoutes(app: FastifyInstance) {
       }
       if (envelope.type !== "event_callback" || !envelope.event) {
         return { ok: true, ignored: "unsupported envelope" };
+      }
+      if (
+        Number(req.headers["x-slack-retry-num"] ?? 0) > 0 ||
+        alreadyDelivered(envelope.event_id)
+      ) {
+        return { ok: true, ignored: "duplicate delivery" };
       }
 
       const event = envelope.event;

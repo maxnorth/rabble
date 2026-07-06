@@ -20,7 +20,7 @@ import {
 } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { recordAudit } from "../audit.js";
-import { hasRight, rightsForAllAgents } from "../rights.js";
+import { agentInOrg, hasRight, rightsForAllAgents } from "../rights.js";
 import { chatModelFor } from "../models/chat.js";
 import { judgeText } from "../evals/judge.js";
 import { executeSuiteCases, recordSuiteRun } from "../evals/suiteRunner.js";
@@ -35,8 +35,11 @@ export async function evalRoutes(app: FastifyInstance) {
 
   // --- Criteria (live, evaluated against real sessions) ---
 
-  app.get("/api/agents/:agentId/criteria", async (req) => {
+  app.get("/api/agents/:agentId/criteria", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
+    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+      return reply.code(404).send({ error: "Agent not found" });
+    }
     const rows = await db
       .select({
         criterion: evalCriteria,
@@ -120,8 +123,11 @@ export async function evalRoutes(app: FastifyInstance) {
 
   // --- Suites (offline mock-session test cases) ---
 
-  app.get("/api/agents/:agentId/suites", async (req) => {
+  app.get("/api/agents/:agentId/suites", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
+    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+      return reply.code(404).send({ error: "Agent not found" });
+    }
     const rows = await db
       .select()
       .from(evalSuites)
@@ -208,7 +214,7 @@ export async function evalRoutes(app: FastifyInstance) {
     // The session's owner (or an org admin) can contest the judge.
     const isAdmin = req.user!.role === "owner" || req.user!.role === "admin";
     if (!isAdmin && row.session.userId !== req.user!.id) {
-      return reply.code(403).send({ error: "Only the session owner can dispute this" });
+      return reply.code(403).send({ error: "Only the session's user can dispute this" });
     }
     if (row.result.reviewStatus) {
       return reply.code(409).send({ error: "Already in review" });
@@ -270,8 +276,11 @@ export async function evalRoutes(app: FastifyInstance) {
   });
 
   // Trust panel: review queue + scope violations + judge disclosure.
-  app.get("/api/agents/:agentId/trust", async (req) => {
+  app.get("/api/agents/:agentId/trust", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
+    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+      return reply.code(404).send({ error: "Agent not found" });
+    }
     const { scopeViolations } = await import("../db/schema.js");
 
     const openReviews = await db

@@ -59,6 +59,26 @@ export async function agentRoutes(app: FastifyInstance) {
         agent: agents,
         domainName: domains.name,
         toolCount: sql<number>`(SELECT count(*)::int FROM agent_tool_configs c WHERE c.agent_id = agents.id AND c.enabled)`,
+        updatedByEmail: sql<string | null>`(SELECT u.email FROM users u WHERE u.id = agents.updated_by)`,
+        lastUsedAt: sql<string | null>`(
+          SELECT max(s.updated_at)::text FROM sessions s
+          WHERE s.agent_id = agents.id AND s.user_id = ${req.user!.id}
+        )`,
+        scope: sql<string>`CASE
+          WHEN EXISTS (
+            SELECT 1 FROM grants g JOIN teams t ON t.id = g.subject_id
+            WHERE g.subject_type = 'team' AND t.is_everyone
+              AND ((g.target_type = 'agent' AND g.target_id = agents.id)
+                OR (g.target_type = 'domain' AND g.target_id = agents.domain_id))
+          ) THEN 'org-wide'
+          WHEN EXISTS (
+            SELECT 1 FROM grants g
+            WHERE g.subject_type = 'team'
+              AND ((g.target_type = 'agent' AND g.target_id = agents.id)
+                OR (g.target_type = 'domain' AND g.target_id = agents.domain_id))
+          ) THEN 'team'
+          ELSE 'personal'
+        END`,
       })
       .from(agents)
       .leftJoin(domains, eq(agents.domainId, domains.id))
@@ -88,6 +108,9 @@ export async function agentRoutes(app: FastifyInstance) {
         toolCount: r.toolCount,
         starred: starred.has(r.agent.id),
         myRight: rights.get(r.agent.id) ?? null,
+        scope: r.scope,
+        lastUsedAt: r.lastUsedAt,
+        updatedByEmail: r.updatedByEmail,
       })),
     };
   });
@@ -108,8 +131,24 @@ export async function agentRoutes(app: FastifyInstance) {
     return { agent: serializeAgent(row), myRight };
   });
 
-  app.post("/api/agents", async (req) => {
+  app.post("/api/agents", async (req, reply) => {
     const body = createAgentSchema.parse(req.body);
+    const { orgs } = await import("../db/schema.js");
+    const { orgSettingsSchema } = await import("@rabble/core");
+    const [org] = await db
+      .select({ settings: orgs.settings })
+      .from(orgs)
+      .where(eq(orgs.id, req.user!.orgId))
+      .limit(1);
+    const settings = orgSettingsSchema.parse({ ...(org?.settings as object) });
+    if (
+      settings.whoCanCreateAgents === "designated" &&
+      req.user!.role === "member"
+    ) {
+      return reply.code(403).send({
+        error: "Agent creation is limited to designated members in this org.",
+      });
+    }
     const [row] = await db
       .insert(agents)
       .values({
@@ -142,7 +181,10 @@ export async function agentRoutes(app: FastifyInstance) {
       return reply.code(403).send({ error: "You need edit access to configure this agent" });
     }
 
-    const updates: Partial<typeof agents.$inferInsert> = { updatedAt: new Date() };
+    const updates: Partial<typeof agents.$inferInsert> = {
+      updatedAt: new Date(),
+      updatedBy: req.user!.id,
+    };
     if (body.name !== undefined) {
       updates.name = body.name;
       updates.slug = await uniqueSlug(req.user!.orgId, body.name, id);
@@ -152,6 +194,9 @@ export async function agentRoutes(app: FastifyInstance) {
     if (body.modelId !== undefined) updates.modelId = body.modelId;
     if (body.domainId !== undefined) updates.domainId = body.domainId;
     if (body.capabilities !== undefined) updates.capabilities = body.capabilities;
+    if (body.icon !== undefined) updates.icon = body.icon;
+    if (body.color !== undefined) updates.color = body.color;
+    if (body.tone !== undefined) updates.tone = body.tone;
     if (body.status !== undefined) updates.status = body.status;
 
     const [row] = await db
@@ -321,5 +366,75 @@ export async function agentRoutes(app: FastifyInstance) {
       });
     });
     return { tools, servers: attached.map((a) => a.server.id) };
+  });
+
+  // --- Surfaces: where this agent is reachable ---
+
+  app.get("/api/agents/:id/surfaces", async (req) => {
+    const { id } = req.params as { id: string };
+    const { agentSurfaces, connections } = await import("../db/schema.js");
+    const rows = await db
+      .select({ surface: agentSurfaces, connection: connections })
+      .from(agentSurfaces)
+      .innerJoin(connections, eq(agentSurfaces.connectionId, connections.id))
+      .where(eq(agentSurfaces.agentId, id))
+      .orderBy(connections.vendor);
+    return {
+      surfaces: rows.map((r) => ({
+        id: r.surface.id,
+        agentId: r.surface.agentId,
+        connectionId: r.surface.connectionId,
+        connectionName: r.connection.name,
+        vendor: r.connection.vendor,
+        label: r.surface.label,
+        status: r.connection.status,
+        createdAt: r.surface.createdAt.toISOString(),
+      })),
+    };
+  });
+
+  app.post("/api/agents/:id/surfaces", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { createAgentSurfaceSchema } = await import("@rabble/core");
+    const body = createAgentSurfaceSchema.parse(req.body);
+    const rights = await rightsForAllAgents(req.user!);
+    if (!hasRight(rights.get(id) ?? null, "edit")) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    const { agentSurfaces, connections } = await import("../db/schema.js");
+    const [connection] = await db
+      .select()
+      .from(connections)
+      .where(
+        and(eq(connections.id, body.connectionId), eq(connections.orgId, req.user!.orgId)),
+      )
+      .limit(1);
+    if (!connection) return reply.code(404).send({ error: "Connection not found" });
+    const [row] = await db
+      .insert(agentSurfaces)
+      .values({ agentId: id, connectionId: body.connectionId, label: body.label })
+      .returning();
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "agent.surface.add",
+      targetType: "agent",
+      targetId: id,
+      summary: `Added surface ${connection.vendor}${body.label ? ` ${body.label}` : ""}`,
+    });
+    return { surface: { id: row!.id } };
+  });
+
+  app.delete("/api/agents/:id/surfaces/:surfaceId", async (req, reply) => {
+    const { id, surfaceId } = req.params as { id: string; surfaceId: string };
+    const rights = await rightsForAllAgents(req.user!);
+    if (!hasRight(rights.get(id) ?? null, "edit")) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    const { agentSurfaces } = await import("../db/schema.js");
+    await db
+      .delete(agentSurfaces)
+      .where(and(eq(agentSurfaces.id, surfaceId), eq(agentSurfaces.agentId, id)));
+    return { ok: true };
   });
 }

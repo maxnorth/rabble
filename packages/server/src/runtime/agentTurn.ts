@@ -43,10 +43,15 @@ interface AgentTurnInput {
   sessionId: string;
   history: Array<typeof messages.$inferSelect>;
   userContent: string;
+  /** Org floor: when true, user-auth tools always prompt. */
+  requireApproval: boolean;
+  /** An earlier call in this session was already approved by this user. */
+  sessionApproved: boolean;
 }
 
 export type AgentTurnEvent =
   | { type: "text"; text: string }
+  | { type: "usage"; inputTokens: number; outputTokens: number }
   | { type: "tool-start"; toolCall: ToolCall }
   | { type: "tool-end"; toolCall: ToolCall }
   | {
@@ -57,12 +62,24 @@ export type AgentTurnEvent =
       input: unknown;
     };
 
-function buildSystemPrompt(agent: typeof agents.$inferSelect): string {
+function buildSystemPrompt(
+  agent: typeof agents.$inferSelect,
+  preferences: { responseStyle: string; suggestNextSteps: boolean },
+): string {
   const parts = [
     `You are ${agent.name}, an agent operating inside Rabble, your organization's agent platform.`,
   ];
   if (agent.description) parts.push(`Your role: ${agent.description}`);
   if (agent.instructions) parts.push(agent.instructions);
+  if (agent.tone) parts.push(`Tone & style: ${agent.tone}`);
+  parts.push(
+    preferences.responseStyle === "detailed"
+      ? "The user prefers detailed replies with full reasoning."
+      : "The user prefers concise, direct replies.",
+  );
+  if (!preferences.suggestNextSteps) {
+    parts.push("Do not propose follow-up actions unless the user asks.");
+  }
   return parts.join("\n\n");
 }
 
@@ -126,6 +143,7 @@ async function buildGovernedTools(
         tool(
           async (args: Record<string, unknown>) => {
             const callId = randomUUID();
+            const startedAt = Date.now();
             const call: ToolCall = {
               id: callId,
               name: toolInfo.name,
@@ -139,7 +157,11 @@ async function buildGovernedTools(
 
             let approval: ApprovalOutcome | null = null;
             if (authType === "user") {
-              if (preferences.approvalPosture === "auto") {
+              const autoApprove =
+                !input.requireApproval &&
+                (preferences.approvalPosture === "trust" ||
+                  (preferences.approvalPosture === "session" && input.sessionApproved));
+              if (autoApprove) {
                 approval = { status: "auto-approved", decidedByName: input.user.name };
               } else {
                 const { approvalId, decision } = requestApproval({
@@ -163,6 +185,7 @@ async function buildGovernedTools(
                     ...call,
                     output: "The user declined this action.",
                     approval,
+                    durationMs: Date.now() - startedAt,
                   };
                   emit({ type: "tool-end", toolCall: denied });
                   return "The user declined this action. Do not retry it; explain what you were unable to do.";
@@ -181,12 +204,22 @@ async function buildGovernedTools(
                 args,
                 server.encryptedToken ? decryptSecret(server.encryptedToken) : null,
               );
-              const finished: ToolCall = { ...call, output, approval };
+              const finished: ToolCall = {
+                ...call,
+                output,
+                approval,
+                durationMs: Date.now() - startedAt,
+              };
               emit({ type: "tool-end", toolCall: finished });
               return output;
             } catch (err) {
               const message = err instanceof Error ? err.message : "Tool call failed";
-              const failed: ToolCall = { ...call, output: `Error: ${message}`, approval };
+              const failed: ToolCall = {
+                ...call,
+                output: `Error: ${message}`,
+                approval,
+                durationMs: Date.now() - startedAt,
+              };
               emit({ type: "tool-end", toolCall: failed });
               return `Error: ${message}`;
             }
@@ -223,10 +256,13 @@ export async function* runAgentTurn(
     channel.push(event),
   );
 
+  const turnPreferences = userPreferencesSchema.parse({
+    ...(input.user.preferences as Record<string, unknown>),
+  });
   const deepAgent = createDeepAgent({
     name: input.agent.slug,
     model: chatModel,
-    systemPrompt: buildSystemPrompt(input.agent),
+    systemPrompt: buildSystemPrompt(input.agent, turnPreferences),
     tools: governedTools,
   });
 
@@ -244,12 +280,22 @@ export async function* runAgentTurn(
       { messages: turnMessages },
       { streamMode: "messages", recursionLimit: 50 },
     );
+    let inputTokens = 0;
+    let outputTokens = 0;
     for await (const item of stream) {
       const [chunk] = item as [unknown, unknown];
       if (isAIMessageChunk(chunk as AIMessageChunk)) {
-        const text = chunkText((chunk as AIMessageChunk).content);
+        const aiChunk = chunk as AIMessageChunk;
+        const text = chunkText(aiChunk.content);
         if (text) channel.push({ type: "text", text });
+        if (aiChunk.usage_metadata) {
+          inputTokens += aiChunk.usage_metadata.input_tokens ?? 0;
+          outputTokens += aiChunk.usage_metadata.output_tokens ?? 0;
+        }
       }
+    }
+    if (inputTokens || outputTokens) {
+      channel.push({ type: "usage", inputTokens, outputTokens });
     }
   })();
   void run.finally(() => channel.close()).catch(() => channel.close());

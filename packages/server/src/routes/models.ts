@@ -4,7 +4,7 @@ import {
   enableBuiltInModelSchema,
   setProviderKeySchema,
 } from "@rabble/core";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { models, providerKeys } from "../db/schema.js";
 import { encryptSecret } from "../crypto.js";
@@ -20,11 +20,66 @@ export async function modelRoutes(app: FastifyInstance) {
 
   app.get("/api/models", async (req) => {
     const rows = await db
-      .select()
+      .select({
+        model: models,
+        usedBy: sql<string[]>`coalesce(
+          (SELECT array_agg(a.name ORDER BY a.name) FROM agents a WHERE a.model_id = models.id),
+          '{}'
+        )`,
+        grantCount: sql<number>`(
+          SELECT count(*)::int FROM grants g
+          WHERE g.target_type = 'model' AND g.target_id = models.id
+        )`,
+      })
       .from(models)
       .where(eq(models.orgId, req.user!.orgId))
       .orderBy(models.createdAt);
-    return { models: rows.map(serializeModel) };
+
+    // A model is selectable when ungoverned (no grants) or reachable via a
+    // model grant; org admins can always select.
+    const isAdmin = req.user!.role === "owner" || req.user!.role === "admin";
+    let reachable = new Set<string>();
+    if (!isAdmin) {
+      const { grantSubjectsFor } = await import("../rights.js");
+      const { userIds, teamIds } = await grantSubjectsFor(
+        req.user!.id,
+        req.user!.orgId,
+      );
+      const { grants: grantsTable } = await import("../db/schema.js");
+      const { inArray, or } = await import("drizzle-orm");
+      const subjectFilter = [];
+      if (userIds.length) {
+        subjectFilter.push(
+          and(eq(grantsTable.subjectType, "user"), inArray(grantsTable.subjectId, userIds)),
+        );
+      }
+      if (teamIds.length) {
+        subjectFilter.push(
+          and(eq(grantsTable.subjectType, "team"), inArray(grantsTable.subjectId, teamIds)),
+        );
+      }
+      if (subjectFilter.length) {
+        const found = await db
+          .select({ targetId: grantsTable.targetId })
+          .from(grantsTable)
+          .where(
+            and(
+              eq(grantsTable.orgId, req.user!.orgId),
+              eq(grantsTable.targetType, "model"),
+              or(...subjectFilter),
+            ),
+          );
+        reachable = new Set(found.map((f) => f.targetId));
+      }
+    }
+
+    return {
+      models: rows.map((r) => ({
+        ...serializeModel(r.model),
+        usedBy: r.usedBy,
+        canUse: isAdmin || r.grantCount === 0 || reachable.has(r.model.id),
+      })),
+    };
   });
 
   app.get("/api/models/providers", async (req) => {

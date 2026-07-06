@@ -28,12 +28,13 @@ async function subjectNames(
 
 async function canManageTarget(
   req: { user: { id: string; orgId: string; role: string } | null },
-  targetType: "agent" | "domain",
+  targetType: "agent" | "domain" | "model",
   targetId: string,
 ): Promise<boolean> {
   const user = req.user!;
   if (user.role === "owner" || user.role === "admin") return true;
-  if (targetType === "domain") return false;
+  // Domain and model grants are org-admin territory
+  if (targetType !== "agent") return false;
   const right = await rightForAgent(user as never, targetId);
   return hasRight(right, "admin");
 }
@@ -67,7 +68,7 @@ export async function grantRoutes(app: FastifyInstance) {
    */
   app.get("/api/grants", async (req, reply) => {
     const { targetType, targetId } = req.query as {
-      targetType?: "agent" | "domain";
+      targetType?: "agent" | "domain" | "model";
       targetId?: string;
     };
     if (!targetType || !targetId) {
@@ -116,7 +117,7 @@ export async function grantRoutes(app: FastifyInstance) {
             );
         }
       }
-    } else {
+    } else if (targetType === "domain") {
       const [domain] = await db
         .select()
         .from(domains)
@@ -124,6 +125,15 @@ export async function grantRoutes(app: FastifyInstance) {
         .limit(1);
       if (!domain) return reply.code(404).send({ error: "Domain not found" });
       targetName = domain.name;
+    } else {
+      const { models } = await import("../db/schema.js");
+      const [model] = await db
+        .select()
+        .from(models)
+        .where(and(eq(models.id, targetId), eq(models.orgId, req.user!.orgId)))
+        .limit(1);
+      if (!model) return reply.code(404).send({ error: "Model not found" });
+      targetName = model.displayName;
     }
 
     const names = await subjectNames([...direct, ...domainGrants]);

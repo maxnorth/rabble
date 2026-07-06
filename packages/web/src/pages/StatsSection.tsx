@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { api } from "../api";
+import { api, type StatsResponse } from "../api";
 
 const RANGES = [
   { days: 7, label: "7d" },
@@ -8,168 +8,336 @@ const RANGES = [
   { days: 90, label: "90d" },
 ];
 
+const PAGES = ["Overview", "Eval performance", "Usage & spend", "Skill use"] as const;
+type Page = (typeof PAGES)[number];
+
+function Bars({
+  rows,
+  color = "var(--accent)",
+}: {
+  rows: Array<{ label: string; value: number; suffix?: string; color?: string }>;
+  color?: string;
+}) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return (
+    <div className="bar-chart">
+      {rows.map((r, i) => (
+        <div className="bar-row" key={i}>
+          <span className="bar-label" title={r.label}>
+            {r.label}
+          </span>
+          <div className="bar-track">
+            <div
+              className="bar-fill"
+              style={{ width: `${(100 * r.value) / max}%`, background: r.color ?? color }}
+            />
+          </div>
+          <span className="bar-value">
+            {r.value}
+            {r.suffix ?? ""}
+          </span>
+        </div>
+      ))}
+      {rows.length === 0 && (
+        <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No data in this range.</p>
+      )}
+    </div>
+  );
+}
+
+function Kpi({
+  value,
+  label,
+  delta,
+}: {
+  value: string | number;
+  label: string;
+  delta?: string;
+}) {
+  return (
+    <div className="kpi">
+      <div className="value">{value}</div>
+      <div className="label">
+        {label}
+        {delta && (
+          <span style={{ marginLeft: 6, color: "var(--text-muted)" }}>{delta}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function sessionsDelta(current: number, prior: number): string | undefined {
+  if (prior === 0) return undefined;
+  const pct = Math.round((100 * (current - prior)) / prior);
+  return pct === 0 ? "· flat vs prior" : `· ${pct > 0 ? "↑" : "↓"} ${Math.abs(pct)}% vs prior`;
+}
+
 export function StatsSection() {
   const [days, setDays] = useState(30);
+  const [agentId, setAgentId] = useState("");
+  const [page, setPage] = useState<Page>("Overview");
+  const agents = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
   const stats = useQuery({
-    queryKey: ["stats", days],
-    queryFn: () => api.stats(days),
+    queryKey: ["stats", days, agentId],
+    queryFn: () => api.stats(days, agentId || undefined),
   });
-
   const data = stats.data;
-  const maxAgent = Math.max(1, ...(data?.sessionsPerAgent.map((a) => a.count) ?? [1]));
-  const maxDay = Math.max(1, ...(data?.sessionsPerDay.map((d) => d.count) ?? [1]));
-  const totalToolCalls = (data?.toolAuthSplit ?? []).reduce((sum, s) => sum + s.count, 0);
 
   return (
     <>
       <aside className="sidebar">
         <div className="sidebar-title">Stats</div>
-        <div className="sidebar-item active">
-          <span className="label">Overview</span>
-        </div>
+        {PAGES.map((p) => (
+          <button
+            key={p}
+            className={`sidebar-item${page === p ? " active" : ""}`}
+            onClick={() => setPage(p)}
+          >
+            <span className="label">{p}</span>
+          </button>
+        ))}
       </aside>
       <main className="main-pane">
         <div className="content-col" style={{ maxWidth: 880 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <div>
-              <h1 className="page-title">Overview</h1>
-              <p className="page-subtitle">Usage, evals, and tool auth across the org.</p>
+              <h1 className="page-title">{page}</h1>
+              <p className="page-subtitle">
+                {page === "Overview" && "Usage, evals, and tool auth across the org."}
+                {page === "Eval performance" && "Pass rates per criterion — where agents earn trust."}
+                {page === "Usage & spend" && "Volume by agent and by model."}
+                {page === "Skill use" && "Which tools agents actually call, and where."}
+              </p>
             </div>
-            <div className="segmented">
-              {RANGES.map((r) => (
-                <button
-                  key={r.days}
-                  className={days === r.days ? "active" : ""}
-                  onClick={() => setDays(r.days)}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="kpi-grid">
-            <div className="kpi">
-              <div className="value">{data?.kpis.sessions ?? "—"}</div>
-              <div className="label">Sessions</div>
-            </div>
-            <div className="kpi">
-              <div className="value">{data?.kpis.messages ?? "—"}</div>
-              <div className="label">Messages</div>
-            </div>
-            <div className="kpi">
-              <div className="value">{data?.kpis.toolCalls ?? "—"}</div>
-              <div className="label">Tool calls</div>
-            </div>
-            <div className="kpi">
-              <div className="value">{data?.kpis.activeUsers ?? "—"}</div>
-              <div className="label">Active users</div>
-            </div>
-            <div className="kpi">
-              <div className="value">
-                {data?.kpis.activeAgents ?? "—"}
-                <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                  {" "}
-                  / {data?.kpis.totalAgents ?? "—"}
-                </span>
+            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <select
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+                title="Filter by agent"
+              >
+                <option value="">All agents</option>
+                {agents.data?.agents.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+              <div className="segmented">
+                {RANGES.map((r) => (
+                  <button
+                    key={r.days}
+                    className={days === r.days ? "active" : ""}
+                    onClick={() => setDays(r.days)}
+                  >
+                    {r.label}
+                  </button>
+                ))}
               </div>
-              <div className="label">Active agents</div>
-            </div>
-            <div className="kpi">
-              <div className="value">
-                {data?.kpis.evalPassRate !== null && data?.kpis.evalPassRate !== undefined
-                  ? `${data.kpis.evalPassRate}%`
-                  : "—"}
-              </div>
-              <div className="label">Eval pass rate</div>
-            </div>
-            <div className="kpi">
-              <div className="value">{data?.kpis.evaluatedSessions ?? "—"}</div>
-              <div className="label">Evaluated sessions</div>
-            </div>
-            <div className="kpi">
-              <div className="value">
-                {totalToolCalls > 0
-                  ? `${Math.round(
-                      (100 *
-                        (data?.toolAuthSplit.find((s) => s.authType === "service")?.count ?? 0)) /
-                        totalToolCalls,
-                    )}%`
-                  : "—"}
-              </div>
-              <div className="label">Tool calls on service auth</div>
             </div>
           </div>
 
-          <div className="chart-card">
-            <h3>Sessions per agent</h3>
-            <div className="bar-chart">
-              {data?.sessionsPerAgent.map((a) => (
-                <div className="bar-row" key={a.agentId}>
-                  <span className="bar-label">{a.agentName}</span>
-                  <div className="bar-track">
-                    <div
-                      className="bar-fill"
-                      style={{ width: `${(100 * a.count) / maxAgent}%` }}
-                    />
-                  </div>
-                  <span className="bar-value">{a.count}</span>
-                </div>
-              ))}
-              {data?.sessionsPerAgent.length === 0 && (
-                <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No sessions yet.</p>
-              )}
-            </div>
-          </div>
-
-          <div className="chart-card">
-            <h3>Sessions per day</h3>
-            <div className="bar-chart">
-              {data?.sessionsPerDay.map((d) => (
-                <div className="bar-row" key={d.day}>
-                  <span className="bar-label mono" style={{ fontSize: 11 }}>
-                    {d.day}
-                  </span>
-                  <div className="bar-track">
-                    <div
-                      className="bar-fill"
-                      style={{ width: `${(100 * d.count) / maxDay}%`, background: "var(--purple)" }}
-                    />
-                  </div>
-                  <span className="bar-value">{d.count}</span>
-                </div>
-              ))}
-              {data?.sessionsPerDay.length === 0 && (
-                <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No sessions yet.</p>
-              )}
-            </div>
-          </div>
-
-          <div className="chart-card">
-            <h3>Tool calls by auth type</h3>
-            <div className="bar-chart">
-              {data?.toolAuthSplit.map((s) => (
-                <div className="bar-row" key={s.authType ?? "unknown"}>
-                  <span className="bar-label">{s.authType ?? "unknown"}</span>
-                  <div className="bar-track">
-                    <div
-                      className="bar-fill"
-                      style={{
-                        width: `${(100 * s.count) / Math.max(1, totalToolCalls)}%`,
-                        background: s.authType === "user" ? "var(--amber)" : "var(--green)",
-                      }}
-                    />
-                  </div>
-                  <span className="bar-value">{s.count}</span>
-                </div>
-              ))}
-              {totalToolCalls === 0 && (
-                <p style={{ fontSize: 12, color: "var(--text-muted)" }}>No tool calls yet.</p>
-              )}
-            </div>
-          </div>
+          {page === "Overview" && data && <Overview data={data} />}
+          {page === "Eval performance" && data && <EvalPerformance data={data} />}
+          {page === "Usage & spend" && data && <UsageSpend data={data} />}
+          {page === "Skill use" && data && <SkillUse data={data} />}
         </div>
       </main>
+    </>
+  );
+}
+
+function Overview({ data }: { data: StatsResponse }) {
+  const totalToolCalls = data.toolAuthSplit.reduce((sum, s) => sum + s.count, 0);
+  return (
+    <>
+      <div className="kpi-grid">
+        <Kpi
+          value={data.kpis.sessions}
+          label="Sessions"
+          delta={sessionsDelta(data.kpis.sessions, data.kpis.priorSessions)}
+        />
+        <Kpi value={data.kpis.messages} label="Messages" />
+        <Kpi value={data.kpis.toolCalls} label="Tool calls" />
+        <Kpi value={data.kpis.avgTurns} label="Avg turns / session" />
+        <Kpi value={data.kpis.activeUsers} label="Active users" />
+        <Kpi
+          value={`${data.kpis.activeAgents} / ${data.kpis.totalAgents}`}
+          label="Active agents"
+        />
+        <Kpi
+          value={data.kpis.evalPassRate !== null ? `${data.kpis.evalPassRate}%` : "—"}
+          label="Eval pass rate"
+        />
+        <Kpi
+          value={
+            totalToolCalls > 0
+              ? `${Math.round(
+                  (100 *
+                    (data.toolAuthSplit.find((s) => s.authType === "service")?.count ?? 0)) /
+                    totalToolCalls,
+                )}%`
+              : "—"
+          }
+          label="Tool calls on service auth"
+        />
+      </div>
+      <div className="chart-card">
+        <h3>Sessions per agent</h3>
+        <Bars
+          rows={data.sessionsPerAgent.map((a) => ({ label: a.agentName, value: a.count }))}
+        />
+      </div>
+      <div className="chart-card">
+        <h3>Sessions per day</h3>
+        <Bars
+          rows={data.sessionsPerDay.map((d) => ({ label: d.day, value: d.count }))}
+          color="var(--purple)"
+        />
+      </div>
+    </>
+  );
+}
+
+function EvalPerformance({ data }: { data: StatsResponse }) {
+  return (
+    <>
+      <div className="kpi-grid">
+        <Kpi
+          value={data.kpis.evalPassRate !== null ? `${data.kpis.evalPassRate}%` : "—"}
+          label="Overall pass rate"
+        />
+        <Kpi value={data.kpis.evaluatedSessions} label="Evaluated sessions" />
+        <Kpi value={data.perCriterion.length} label="Criteria with data" />
+        <Kpi
+          value={data.perCriterion.filter((c) => c.passRate < 70).length}
+          label="Criteria below 70%"
+        />
+      </div>
+      <div className="chart-card">
+        <h3>Pass rate by agent</h3>
+        <Bars
+          rows={data.evalByAgent.map((a) => ({
+            label: `${a.agentName} (${a.results})`,
+            value: a.passRate,
+            suffix: "%",
+            color:
+              a.passRate >= 90
+                ? "var(--green)"
+                : a.passRate >= 70
+                  ? "var(--blue)"
+                  : "var(--amber)",
+          }))}
+        />
+      </div>
+      <div className="chart-card">
+        <h3>Pass rate by criterion (worst first)</h3>
+        <Bars
+          rows={data.perCriterion.map((c) => ({
+            label: `${c.agentName} — ${c.criterionName}`,
+            value: c.passRate,
+            suffix: "%",
+            color:
+              c.passRate >= 90
+                ? "var(--green)"
+                : c.passRate >= 70
+                  ? "var(--blue)"
+                  : "var(--amber)",
+          }))}
+        />
+      </div>
+    </>
+  );
+}
+
+function UsageSpend({ data }: { data: StatsResponse }) {
+  return (
+    <>
+      <div className="kpi-grid">
+        <Kpi
+          value={data.kpis.sessions}
+          label="Sessions"
+          delta={sessionsDelta(data.kpis.sessions, data.kpis.priorSessions)}
+        />
+        <Kpi value={data.kpis.messages} label="Messages" />
+        <Kpi value={fmtTokens(data.kpis.inputTokens)} label="Input tokens" />
+        <Kpi value={fmtTokens(data.kpis.outputTokens)} label="Output tokens" />
+        <Kpi value={data.kpis.avgTurns} label="Avg turns / session" />
+        <Kpi value={data.kpis.activeUsers} label="Active users" />
+      </div>
+      <div className="chart-card">
+        <h3>Messages by model</h3>
+        <Bars rows={data.perModel.map((m) => ({ label: m.modelName, value: m.count }))} />
+      </div>
+      <div className="chart-card">
+        <h3>Sessions per agent</h3>
+        <Bars
+          rows={data.sessionsPerAgent.map((a) => ({ label: a.agentName, value: a.count }))}
+          color="var(--purple)"
+        />
+      </div>
+      <div className="chart-card">
+        <h3>Turns per session</h3>
+        <Bars
+          rows={data.turnDistribution.map((t) => ({ label: t.label, value: t.count }))}
+          color="var(--blue)"
+        />
+      </div>
+    </>
+  );
+}
+
+function SkillUse({ data }: { data: StatsResponse }) {
+  const totalToolCalls = data.toolAuthSplit.reduce((sum, s) => sum + s.count, 0);
+  return (
+    <>
+      <div className="kpi-grid">
+        <Kpi value={data.kpis.toolCalls} label="Tool calls" />
+        <Kpi value={data.perTool.length} label="Distinct tools used" />
+        <Kpi
+          value={data.toolAuthSplit.find((s) => s.authType === "user")?.count ?? 0}
+          label="Ran as a user"
+        />
+        <Kpi
+          value={
+            totalToolCalls > 0
+              ? `${Math.round(
+                  (100 *
+                    (data.toolAuthSplit.find((s) => s.authType === "service")?.count ?? 0)) /
+                    totalToolCalls,
+                )}%`
+              : "—"
+          }
+          label="Service auth share"
+        />
+      </div>
+      <div className="chart-card">
+        <h3>Calls by tool</h3>
+        <Bars
+          rows={data.perTool.map((t) => ({
+            label: t.server ? `${t.tool} (${t.server})` : t.tool,
+            value: t.count,
+          }))}
+        />
+      </div>
+      <div className="chart-card">
+        <h3>Tool calls by auth type</h3>
+        <Bars
+          rows={data.toolAuthSplit
+            .filter((s) => s.authType)
+            .map((s) => ({
+              label: s.authType!,
+              value: s.count,
+              color: s.authType === "user" ? "var(--amber)" : "var(--green)",
+            }))}
+        />
+      </div>
     </>
   );
 }

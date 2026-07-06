@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { GrantEditor } from "./AgentsSection";
+import { AGENT_COLORS, AGENT_GLYPHS } from "../lib/time";
 
 const AGENT_TABS = [
   "identity",
@@ -26,21 +27,65 @@ export function AgentConfig({ agentId }: { agentId: string }) {
     queryFn: () => api.getAgent(agentId),
   });
 
+  const directory = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
+  const domains = useQuery({ queryKey: ["domains"], queryFn: api.listDomains });
+
   if (!agent.data) {
     return <div className="content-col">{agent.isError ? "Agent not found." : ""}</div>;
   }
   const canEdit = agent.data.myRight === "edit" || agent.data.myRight === "admin";
+  const row = directory.data?.agents.find((a) => a.id === agentId);
+  const domainName = domains.data?.domains.find(
+    (d) => d.id === agent.data!.agent.domainId,
+  )?.name;
 
   return (
     <div className="content-col">
       <button className="btn" style={{ marginBottom: 16 }} onClick={() => navigate("/agents")}>
         ‹ All agents
       </button>
-      <h1 className="page-title">{agent.data.agent.name}</h1>
-      <p className="page-subtitle mono">
-        {agent.data.agent.slug}
-        {!canEdit && "  ·  read-only (you need edit access to configure)"}
-      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div
+          className="avatar"
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: 10,
+            background: "var(--surface-tool)",
+            border: "1px solid var(--border-1)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 20,
+            color: AGENT_COLORS[agent.data.agent.color] ?? "var(--accent-text)",
+          }}
+        >
+          {agent.data.agent.icon || agent.data.agent.name[0]}
+        </div>
+        <div style={{ flex: 1 }}>
+          <h1 className="page-title" style={{ marginBottom: 2, display: "flex", gap: 8, alignItems: "center" }}>
+            {agent.data.agent.name}
+            <span
+              className={`chip ${agent.data.agent.status === "active" ? "green" : ""}`}
+            >
+              {agent.data.agent.status}
+            </span>
+            {row && (
+              <span
+                className={`chip ${row.scope === "personal" ? "blue" : row.scope === "org-wide" ? "amber" : ""}`}
+              >
+                {row.scope}
+              </span>
+            )}
+          </h1>
+          <p className="page-subtitle mono" style={{ marginBottom: 0 }}>
+            {agent.data.agent.slug}
+            {domainName ? `  ·  in ${domainName}` : "  ·  not in a domain"}
+            {!canEdit && "  ·  read-only (you need edit access to configure)"}
+          </p>
+        </div>
+      </div>
+      <div style={{ height: 14 }} />
 
       <div className="tabs">
         {AGENT_TABS.map((t) => (
@@ -57,7 +102,7 @@ export function AgentConfig({ agentId }: { agentId: string }) {
       {activeTab === "identity" && (
         <IdentityTab agentId={agentId} canEdit={canEdit} />
       )}
-      {activeTab === "surfaces" && <SurfacesTab />}
+      {activeTab === "surfaces" && <SurfacesTab agentId={agentId} canEdit={canEdit} />}
       {activeTab === "mcp" && <McpTab agentId={agentId} canEdit={canEdit} />}
       {activeTab === "agents" && <SubAgentsTab agentId={agentId} canEdit={canEdit} />}
       {activeTab === "automations" && (
@@ -90,6 +135,9 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
     name: string;
     description: string;
     instructions: string;
+    tone: string;
+    icon: string;
+    color: string;
     modelId: string;
     domainId: string;
     status: "active" | "draft";
@@ -103,6 +151,9 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
         name: a.name,
         description: a.description,
         instructions: a.instructions,
+        tone: a.tone,
+        icon: a.icon,
+        color: a.color,
         modelId: a.modelId ?? "",
         domainId: a.domainId ?? "",
         status: a.status,
@@ -116,6 +167,9 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
         name: form!.name,
         description: form!.description,
         instructions: form!.instructions,
+        tone: form!.tone,
+        icon: form!.icon,
+        color: form!.color,
         modelId: form!.modelId || null,
         domainId: form!.domainId || null,
         status: form!.status,
@@ -137,10 +191,52 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
   });
 
   if (!form) return null;
-  const enabledModels = (models.data?.models ?? []).filter((m) => m.enabled);
+  const enabledModels = (models.data?.models ?? []).filter(
+    (m) => m.enabled && (m.canUse || m.id === form.modelId),
+  );
 
   return (
     <fieldset disabled={!canEdit} style={{ border: "none" }}>
+      <div className="field">
+        <label>Logo</label>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {AGENT_GLYPHS.map((glyph) => (
+            <button
+              key={glyph}
+              type="button"
+              onClick={() => setForm({ ...form, icon: glyph })}
+              style={{
+                width: 34,
+                height: 34,
+                borderRadius: 8,
+                border: `1px solid ${form.icon === glyph ? "var(--accent)" : "var(--border-1)"}`,
+                background: form.icon === glyph ? "var(--hover-3)" : "var(--surface-group)",
+                fontSize: 16,
+                color: AGENT_COLORS[form.color] ?? "var(--accent-text)",
+              }}
+            >
+              {glyph}
+            </button>
+          ))}
+          <span style={{ width: 10 }} />
+          {Object.entries(AGENT_COLORS).map(([name, value]) => (
+            <button
+              key={name}
+              type="button"
+              title={name}
+              onClick={() => setForm({ ...form, color: name })}
+              style={{
+                width: 20,
+                height: 20,
+                borderRadius: "50%",
+                border: `2px solid ${form.color === name ? "var(--text-1)" : "transparent"}`,
+                background: value,
+              }}
+            />
+          ))}
+        </div>
+        <span className="hint">Shown in chat, the rail, and the directory.</span>
+      </div>
       <div className="field">
         <label>Name</label>
         <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
@@ -162,6 +258,14 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
           placeholder="System instructions that define how this agent behaves"
         />
       </div>
+      <div className="field">
+        <label>Tone &amp; style</label>
+        <input
+          value={form.tone}
+          onChange={(e) => setForm({ ...form, tone: e.target.value })}
+          placeholder="Be concise and direct. Surface options before any write action."
+        />
+      </div>
       <div style={{ display: "flex", gap: 16 }}>
         <div className="field" style={{ flex: 1 }}>
           <label>Model</label>
@@ -176,6 +280,9 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
               </option>
             ))}
           </select>
+          <span className="hint">
+            Limited to models you can use. Manage access in Admin › Models.
+          </span>
         </div>
         <div className="field" style={{ flex: 1 }}>
           <label>Domain</label>
@@ -238,11 +345,39 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
 // surfaces
 // ---------------------------------------------------------------------------
 
-function SurfacesTab() {
+function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
+  const queryClient = useQueryClient();
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
+  const surfaces = useQuery({
+    queryKey: ["surfaces", agentId],
+    queryFn: () => api.listSurfaces(agentId),
+  });
+  const [connectionId, setConnectionId] = useState("");
+  const [label, setLabel] = useState("");
+
+  const invalidate = () =>
+    queryClient.invalidateQueries({ queryKey: ["surfaces", agentId] });
+  const add = useMutation({
+    mutationFn: () => api.addSurface(agentId, { connectionId, label: label.trim() }),
+    onSuccess: () => {
+      setConnectionId("");
+      setLabel("");
+      void invalidate();
+    },
+  });
+  const remove = useMutation({
+    mutationFn: (surfaceId: string) => api.removeSurface(agentId, surfaceId),
+    onSuccess: () => void invalidate(),
+  });
+
   const interfaces = (connections.data?.connections ?? []).filter((c) =>
     c.roles.includes("Interface"),
   );
+  const attached = surfaces.data?.surfaces ?? [];
+  const labelPlaceholder = (vendor?: string) =>
+    vendor === "slack" ? "#eng-oncall" : vendor === "github" ? "acme/api" : "channel or path";
+  const selected = interfaces.find((c) => c.id === connectionId);
+
   return (
     <>
       <p className="page-subtitle">
@@ -251,7 +386,7 @@ function SurfacesTab() {
         connection-backed surfaces (Slack channels, GitHub repos…) attach here
         once their connection is set up in Admin › Connections.
       </p>
-      <div className="row-group">
+      <div className="row-group" style={{ marginBottom: 16 }}>
         <div className="row">
           <span className="status-dot" style={{ background: "var(--green)" }} />
           <div className="grow">
@@ -260,34 +395,76 @@ function SurfacesTab() {
           </div>
           <span className="chip green">on</span>
         </div>
-        {interfaces.map((c) => (
-          <div className="row" key={c.id}>
+        {attached.map((s) => (
+          <div className="row" key={s.id}>
             <span
               className="status-dot"
               style={{
-                background: c.status === "connected" ? "var(--green)" : "var(--amber)",
+                background: s.status === "connected" ? "var(--green)" : "var(--amber)",
               }}
             />
             <div className="grow">
-              <div className="title">{c.name}</div>
+              <div className="title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {s.connectionName}
+                {s.label && <span className="mono" style={{ fontSize: 12, color: "var(--text-dim)" }}>{s.label}</span>}
+              </div>
               <div className="sub">
-                {c.vendor} · channel/repo mapping lands with the surface router
+                {s.vendor} · sessions started here land in the same audited timeline
               </div>
             </div>
-            <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
-              {c.status}
+            <span className={`chip ${s.status === "connected" ? "green" : "amber"}`}>
+              {s.status}
             </span>
+            {canEdit && (
+              <button
+                className="btn danger"
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(s.id)}
+              >
+                Detach
+              </button>
+            )}
           </div>
         ))}
-        {interfaces.length === 0 && (
-          <div className="row">
-            <div className="sub">
-              No interface connections yet — add Slack (or similar) in Admin ›
-              Connections to reach this agent outside the web app.
-            </div>
-          </div>
-        )}
       </div>
+
+      {canEdit && interfaces.length > 0 && (
+        <div className="row-group">
+          <div className="row">
+            <select
+              value={connectionId}
+              onChange={(e) => setConnectionId(e.target.value)}
+              style={{ width: 220 }}
+            >
+              <option value="">Add a surface…</option>
+              {interfaces.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name} ({c.vendor})
+                </option>
+              ))}
+            </select>
+            <input
+              placeholder={labelPlaceholder(selected?.vendor)}
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              style={{ width: 200 }}
+            />
+            <button
+              className="btn primary"
+              disabled={!connectionId || add.isPending}
+              onClick={() => add.mutate()}
+            >
+              Attach surface
+            </button>
+          </div>
+        </div>
+      )}
+      {interfaces.length === 0 && (
+        <p className="page-subtitle">
+          No interface connections yet — add Slack (or similar) in Admin ›
+          Connections to reach this agent outside the web app.
+        </p>
+      )}
     </>
   );
 }

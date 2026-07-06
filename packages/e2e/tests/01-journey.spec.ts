@@ -151,7 +151,7 @@ test("sessions: targeted chat streams a reply and persists the transcript", asyn
 
   await page.locator(".target-pill").click();
   await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
-  await page.getByPlaceholder("Message an agent…").fill("What is the deploy status?");
+  await page.getByPlaceholder("Describe what you need help with…").fill("What is the deploy status?");
   await page.getByRole("button", { name: "Send" }).click();
 
   await expect(page.locator(".msg-user")).toHaveText("What is the deploy status?");
@@ -194,7 +194,7 @@ test("sessions: Auto target resolves to an active agent", async () => {
   await expect(page.locator(".session-greeting")).toBeVisible();
 
   // Leave the target pill on "Auto"
-  await page.getByPlaceholder("Message an agent…").fill("Auto-routed question");
+  await page.getByPlaceholder("Describe what you need help with…").fill("Auto-routed question");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".msg-agent .bubble")).toContainText(
     "Mock reply to: Auto-routed question",

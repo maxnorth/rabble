@@ -133,7 +133,7 @@ test("enforcement: the member can use the agent but not configure it", async ({
   await expect(memberPage.locator(".session-greeting")).toBeVisible();
 
   // Bea is in Platform ⊂ Engineering; the domain grant reaches her.
-  await memberPage.getByPlaceholder("Message an agent…").fill("Hello from Bea");
+  await memberPage.getByPlaceholder("Describe what you need help with…").fill("Hello from Bea");
   await memberPage.getByRole("button", { name: "Send" }).click();
   await expect(memberPage.locator(".msg-agent .bubble")).toContainText(
     "Mock reply to: Hello from Bea",

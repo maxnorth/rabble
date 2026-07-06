@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { AgentConfig } from "./AgentConfig";
+import { relativeTime } from "../lib/time";
 
 export function AgentsSection() {
   const { agentId, domainId } = useParams();
@@ -13,6 +14,10 @@ export function AgentsSection() {
   const domains = useQuery({ queryKey: ["domains"], queryFn: api.listDomains });
 
   const favorites = (agents.data?.agents ?? []).filter((a) => a.starred);
+  const recent = (agents.data?.agents ?? [])
+    .filter((a) => !a.starred && a.lastUsedAt)
+    .sort((a, b) => (b.lastUsedAt! < a.lastUsedAt! ? -1 : 1))
+    .slice(0, 3);
 
   return (
     <>
@@ -35,7 +40,39 @@ export function AgentsSection() {
                     background: a.status === "active" ? "var(--green)" : "var(--amber)",
                   }}
                 />
-                <span className="label">{a.name}</span>
+                <span className="label">
+                  {a.name}
+                  <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
+                    {a.scope} · {a.toolCount} tools
+                  </span>
+                </span>
+                <SidebarStar agent={a} />
+              </NavLink>
+            ))}
+          </>
+        )}
+        {recent.length > 0 && (
+          <>
+            <div className="sidebar-title">Recent</div>
+            {recent.map((a) => (
+              <NavLink
+                key={a.id}
+                to={`/agents/${a.id}`}
+                className={({ isActive }) => `sidebar-item${isActive ? " active" : ""}`}
+              >
+                <span
+                  className="status-dot"
+                  style={{
+                    background: a.status === "active" ? "var(--green)" : "var(--amber)",
+                  }}
+                />
+                <span className="label">
+                  {a.name}
+                  <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
+                    used {relativeTime(a.lastUsedAt)}
+                  </span>
+                </span>
+                <SidebarStar agent={a} />
               </NavLink>
             ))}
           </>
@@ -87,7 +124,29 @@ export function AgentsSection() {
   );
 }
 
-type SortKey = "name" | "domainName" | "evalScore" | "updatedAt" | "toolCount";
+function SidebarStar({ agent }: { agent: AgentDirectoryRow }) {
+  const queryClient = useQueryClient();
+  const toggle = useMutation({
+    mutationFn: async () =>
+      agent.starred ? api.unstarAgent(agent.id) : api.starAgent(agent.id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["agents"] }),
+  });
+  return (
+    <span
+      className={`star-btn${agent.starred ? " starred" : ""}`}
+      title={agent.starred ? "Unstar" : "Star to pin"}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggle.mutate();
+      }}
+    >
+      {agent.starred ? "★" : "☆"}
+    </span>
+  );
+}
+
+type SortKey = "name" | "domainName" | "evalScore" | "updatedAt" | "toolCount" | "scope";
 
 interface Filters {
   domain?: string | "none";
@@ -272,6 +331,7 @@ function AgentDirectory() {
             {header("evalScore", "Eval score")}
             {header("updatedAt", "Last updated")}
             {header("toolCount", "Tools")}
+            {header("scope", "Scope")}
           </tr>
         </thead>
         <tbody>
@@ -309,14 +369,29 @@ function AgentDirectory() {
                 )}
               </td>
               <td style={{ color: "var(--text-muted)" }}>
-                {new Date(a.updatedAt).toLocaleDateString()}
+                {relativeTime(a.updatedAt)}
+                {a.updatedByEmail && (
+                  <span
+                    className="mono"
+                    style={{ display: "block", fontSize: 10.5, color: "var(--text-label)" }}
+                  >
+                    {a.updatedByEmail}
+                  </span>
+                )}
               </td>
               <td>{a.toolCount}</td>
+              <td>
+                <span
+                  className={`chip ${a.scope === "personal" ? "blue" : a.scope === "org-wide" ? "amber" : ""}`}
+                >
+                  {a.scope}
+                </span>
+              </td>
             </tr>
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={6} style={{ color: "var(--text-muted)", cursor: "default" }}>
+              <td colSpan={7} style={{ color: "var(--text-muted)", cursor: "default" }}>
                 {agents.isLoading
                   ? "Loading…"
                   : "No agents match. Create one with + New agent."}
@@ -325,6 +400,10 @@ function AgentDirectory() {
           )}
         </tbody>
       </table>
+      <p style={{ fontSize: 11.5, color: "var(--text-label)", marginTop: 12 }}>
+        {rows.length} of {agents.data?.agents.length ?? 0} agents · click a row
+        to configure · ★ pins to the sidebar
+      </p>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import type {
   Agent,
   AgentDirectoryRow,
+  AgentSurface,
+  OrgSettings,
   AgentToolConfig,
   ApiKey,
   ApprovalDecisionRequest,
@@ -81,9 +83,13 @@ export interface StatsResponse {
   days: number;
   kpis: {
     sessions: number;
+    priorSessions: number;
     activeUsers: number;
     messages: number;
     toolCalls: number;
+    inputTokens: number;
+    outputTokens: number;
+    avgTurns: number;
     activeAgents: number;
     totalAgents: number;
     evalPassRate: number | null;
@@ -92,6 +98,17 @@ export interface StatsResponse {
   sessionsPerAgent: Array<{ agentId: string; agentName: string; count: number }>;
   sessionsPerDay: Array<{ day: string; count: number }>;
   toolAuthSplit: Array<{ authType: string | null; count: number }>;
+  perTool: Array<{ tool: string; server: string | null; count: number }>;
+  perModel: Array<{ modelName: string; count: number }>;
+  perCriterion: Array<{
+    criterionId: string;
+    criterionName: string;
+    agentName: string;
+    passRate: number;
+    results: number;
+  }>;
+  evalByAgent: Array<{ agentName: string; passRate: number; results: number }>;
+  turnDistribution: Array<{ label: string; count: number }>;
 }
 
 export const api = {
@@ -126,6 +143,12 @@ export const api = {
   detachMcpServer: (agentId: string, serverId: string) =>
     del<{ ok: true }>(`/api/agents/${agentId}/mcp-servers/${serverId}`),
   subAgents: (id: string) => get<{ subAgents: Agent[] }>(`/api/agents/${id}/sub-agents`),
+  listSurfaces: (agentId: string) =>
+    get<{ surfaces: AgentSurface[] }>(`/api/agents/${agentId}/surfaces`),
+  addSurface: (agentId: string, body: { connectionId: string; label: string }) =>
+    post<{ surface: { id: string } }>(`/api/agents/${agentId}/surfaces`, body),
+  removeSurface: (agentId: string, surfaceId: string) =>
+    del<{ ok: true }>(`/api/agents/${agentId}/surfaces/${surfaceId}`),
   linkSubAgent: (id: string, subId: string) =>
     put<{ ok: true }>(`/api/agents/${id}/sub-agents/${subId}`),
   unlinkSubAgent: (id: string, subId: string) =>
@@ -133,7 +156,8 @@ export const api = {
 
   // models
   modelCatalog: () => get<{ catalog: CatalogModel[] }>("/api/models/catalog"),
-  listModels: () => get<{ models: Model[] }>("/api/models"),
+  listModels: () =>
+    get<{ models: Array<Model & { usedBy: string[]; canUse: boolean }> }>("/api/models"),
   providerStatus: () => get<{ providers: ProviderKeyStatus[] }>("/api/models/providers"),
   setProviderKey: (body: { provider: string; apiKey: string }) =>
     put<{ ok: true }>("/api/models/providers", body),
@@ -185,13 +209,13 @@ export const api = {
   deleteDomain: (id: string) => del<{ ok: true }>(`/api/domains/${id}`),
 
   // grants
-  listGrants: (targetType: "agent" | "domain", targetId: string) =>
+  listGrants: (targetType: "agent" | "domain" | "model", targetId: string) =>
     get<{ grants: Grant[] }>(`/api/grants?targetType=${targetType}&targetId=${targetId}`),
   createGrant: (body: {
     subjectType: "user" | "team";
     subjectId: string;
     accessRight: "use" | "edit" | "admin";
-    targetType: "agent" | "domain";
+    targetType: "agent" | "domain" | "model";
     targetId: string;
   }) => post<{ grant: Grant }>("/api/grants", body),
   deleteGrant: (id: string) => del<{ ok: true }>(`/api/grants/${id}`),
@@ -241,13 +265,15 @@ export const api = {
   deleteAutomation: (id: string) => del<{ ok: true }>(`/api/automations/${id}`),
 
   // admin
-  listConnections: () => get<{ connections: Connection[] }>("/api/connections"),
+  listConnections: () =>
+    get<{ connections: Array<Connection & { tunnel: boolean }> }>("/api/connections"),
   createConnection: (body: {
     vendor: string;
     name: string;
     roles: ConnectionRole[];
     baseUrl?: string | null;
     token?: string;
+    tunnel?: boolean;
   }) => post<{ connection: Connection }>("/api/connections", body),
   deleteConnection: (id: string) => del<{ ok: true }>(`/api/connections/${id}`),
   listApiKeys: () => get<{ keys: ApiKey[] }>("/api/api-keys"),
@@ -259,8 +285,13 @@ export const api = {
   revokeApiKey: (id: string) => post<{ ok: true }>(`/api/api-keys/${id}/revoke`),
   listAudit: (action?: string) =>
     get<{ events: AuditEvent[] }>(`/api/audit${action ? `?action=${action}` : ""}`),
-  getOrg: () => get<{ org: { id: string; name: string; createdAt: string } }>("/api/org"),
+  getOrg: () =>
+    get<{
+      org: { id: string; name: string; settings: OrgSettings; createdAt: string };
+    }>("/api/org"),
   renameOrg: (name: string) => patch<{ ok: true }>("/api/org", { name }),
+  updateOrgSettings: (settings: OrgSettings) =>
+    patch<{ ok: true }>("/api/org", { settings }),
   inviteMember: (body: { name: string; email: string; role?: "admin" | "member" }) =>
     post<{ user: { id: string; name: string; email: string }; tempPassword: string }>(
       "/api/members",
@@ -278,7 +309,8 @@ export const api = {
     put<{ preferences: UserPreferences }>("/api/profile/preferences", body),
 
   // stats
-  stats: (days: number) => get<StatsResponse>(`/api/stats?days=${days}`),
+  stats: (days: number, agentId?: string) =>
+    get<StatsResponse>(`/api/stats?days=${days}${agentId ? `&agentId=${agentId}` : ""}`),
 };
 
 /**

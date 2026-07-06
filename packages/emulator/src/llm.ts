@@ -52,6 +52,7 @@ export function mountOpenAi(app: FastifyInstance): void {
       model?: string;
       messages: ChatMessage[];
       stream?: boolean;
+      stream_options?: { include_usage?: boolean };
     };
     logRequest("api.openai.com", "POST", "/v1/chat/completions", body);
     const scripted = nextLlmReply(lastUserText(body.messages), allText(body.messages));
@@ -136,6 +137,14 @@ export function mountOpenAi(app: FastifyInstance): void {
         ],
       });
       sse(reply, { ...base, choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
+    }
+    if (body.stream_options?.include_usage) {
+      // Real OpenAI sends one final chunk with empty choices carrying usage.
+      sse(reply, {
+        ...base,
+        choices: [],
+        usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+      });
     }
     reply.raw.write("data: [DONE]\n\n");
     reply.raw.end();

@@ -42,7 +42,7 @@ test("add a live criterion to the agent", async () => {
 
 test("a session gets judged and shows eval chips", async () => {
   await page.locator("nav a[title='Sessions']").click();
-  await page.getByPlaceholder("Message an agent…").fill("Is prod healthy?");
+  await page.getByPlaceholder("Describe what you need help with…").fill("Is prod healthy?");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".msg-agent .bubble")).toContainText(
     "Mock reply to: Is prod healthy?",
@@ -62,13 +62,14 @@ test("a session gets judged and shows eval chips", async () => {
     )
     .toBeGreaterThan(0);
 
-  // Reload the session — the eval strip appears
+  // Reload the session — the header shows the criteria verdict chip
   await page.reload();
-  await expect(page.locator(".eval-strip .chip", { hasText: "Stays on topic" })).toBeVisible();
-  await expect(page.locator(".eval-strip .chip").first()).toContainText("✓");
+  const criteriaChip = page.locator("button.chip", { hasText: "criteria" });
+  await expect(criteriaChip).toContainText("✓ 1/1 criteria");
 
-  // Chip opens the drawer with the judge's reasoning
-  await page.locator(".eval-strip .chip").first().click();
+  // Chip opens the eval drawer with the judge's verdict and reasoning
+  await criteriaChip.click();
+  await expect(page.locator(".drawer")).toContainText("Stays on topic");
   await expect(page.locator(".drawer")).toContainText("PASS");
 });
 
@@ -138,7 +139,7 @@ test("anthropic protocol: agent on the emulated Anthropic API works", async () =
   await page.getByRole("link", { name: "+ New session" }).click();
   await page.locator(".target-pill").click();
   await page.locator(".target-menu button", { hasText: "Claude Agent" }).click();
-  await page.getByPlaceholder("Message an agent…").fill("Hello Anthropic path");
+  await page.getByPlaceholder("Describe what you need help with…").fill("Hello Anthropic path");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".msg-agent .bubble")).toContainText(
     "Mock reply to: Hello Anthropic path",
@@ -168,7 +169,7 @@ test("auto routes by intent across usable agents", async () => {
   await expect(page.locator(".session-greeting")).toBeVisible();
   // Leave the target on "Auto"
   await page
-    .getByPlaceholder("Message an agent…")
+    .getByPlaceholder("Describe what you need help with…")
     .fill("The CI pipeline is failing on main, please triage");
   await page.getByRole("button", { name: "Send" }).click();
 

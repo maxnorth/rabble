@@ -1,6 +1,7 @@
 import {
   boolean,
   index,
+  integer,
   jsonb,
   pgTable,
   primaryKey,
@@ -14,6 +15,7 @@ import {
 export const orgs = pgTable("orgs", {
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
+  settings: jsonb("settings").notNull().default({}),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -110,7 +112,11 @@ export const agents = pgTable(
       onDelete: "set null",
     }),
     createdBy: uuid("created_by").references(() => users.id),
+    updatedBy: uuid("updated_by").references(() => users.id),
     capabilities: jsonb("capabilities").notNull().default({}),
+    icon: text("icon").notNull().default(""),
+    color: text("color").notNull().default("blue"),
+    tone: text("tone").notNull().default(""),
     status: text("status", { enum: ["active", "draft"] })
       .notNull()
       .default("draft"),
@@ -152,6 +158,8 @@ export const messages = pgTable("messages", {
   role: text("role", { enum: ["user", "agent"] }).notNull(),
   content: text("content").notNull(),
   toolCalls: jsonb("tool_calls").notNull().default([]),
+  inputTokens: integer("input_tokens").notNull().default(0),
+  outputTokens: integer("output_tokens").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -226,7 +234,9 @@ export const grants = pgTable(
     accessRight: text("access_right", {
       enum: ["use", "edit", "admin"],
     }).notNull(),
-    targetType: text("target_type", { enum: ["agent", "domain"] }).notNull(),
+    targetType: text("target_type", {
+      enum: ["agent", "domain", "model"],
+    }).notNull(),
     targetId: uuid("target_id").notNull(),
     createdBy: uuid("created_by").references(() => users.id),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -356,10 +366,29 @@ export const connections = pgTable("connections", {
   status: text("status", { enum: ["connected", "needs-auth", "error"] })
     .notNull()
     .default("connected"),
+  tunnel: boolean("tunnel").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
 });
+
+export const agentSurfaces = pgTable(
+  "agent_surfaces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    agentId: uuid("agent_id")
+      .notNull()
+      .references(() => agents.id, { onDelete: "cascade" }),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    label: text("label").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("agent_surfaces_agent_idx").on(t.agentId)],
+);
 
 export const apiKeys = pgTable(
   "api_keys",

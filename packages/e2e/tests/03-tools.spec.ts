@@ -83,7 +83,7 @@ test("service-auth tool runs inline with no approval", async () => {
   await enqueueToolCall("search_repos", { query: "deploy scripts" });
 
   await page.locator("nav a[title='Sessions']").click();
-  await page.getByPlaceholder("Message an agent…").fill("Find our deploy repos");
+  await page.getByPlaceholder("Describe what you need help with…").fill("Find our deploy repos");
   await page.getByRole("button", { name: "Send" }).click();
 
   const chip = page.locator(".tool-call", { hasText: "search_repos" }).first();
@@ -139,11 +139,37 @@ test("user-auth tool pauses on the approval card; approve runs it", async () => 
   });
 });
 
+test("once-per-session posture: the next user-auth call auto-approves", async () => {
+  // Alex's default posture is "Once per session" — the approval above
+  // covers the rest of this session, so this call runs without a card.
+  await enqueueToolCall("create_issue", { title: "Follow-up issue" });
+
+  await page.locator(".thread-composer textarea").fill("File a follow-up issue too");
+  await page.locator(".thread-composer button", { hasText: "Send" }).click();
+
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: File a follow-up issue too",
+    { timeout: 15_000 },
+  );
+  await expect(page.locator(".approval-card")).toHaveCount(0);
+
+  expect(await pollFirstToolCall("%File a follow-up issue too%")).toMatchObject({
+    name: "create_issue",
+    authType: "user",
+    approval: { status: "auto-approved", decidedByName: "Alex Lin" },
+  });
+});
+
 test("denying the approval blocks the tool and records the denial", async () => {
   await enqueueToolCall("create_issue", { title: "Should not exist" });
 
-  await page.locator(".thread-composer textarea").fill("File another issue");
-  await page.locator(".thread-composer button", { hasText: "Send" }).click();
+  // A fresh session: once-per-session approval doesn't carry over, so the
+  // approval card comes back.
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page.getByPlaceholder("Describe what you need help with…").fill("File another issue");
+  await page.getByRole("button", { name: "Send" }).click();
 
   const card = page.locator(".approval-card");
   await expect(card).toBeVisible({ timeout: 15_000 });

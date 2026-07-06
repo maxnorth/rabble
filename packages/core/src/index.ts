@@ -135,7 +135,13 @@ export const agentSchema = z.object({
   modelId: z.string().uuid().nullable(),
   domainId: z.string().uuid().nullable(),
   createdBy: z.string().uuid().nullable(),
+  updatedBy: z.string().uuid().nullable(),
   capabilities: z.record(z.unknown()),
+  /** Avatar glyph (e.g. "◈") and accent color name from the design palette. */
+  icon: z.string(),
+  color: z.string(),
+  /** Tone & style guidance, folded into the system prompt. */
+  tone: z.string(),
   status: agentStatusSchema,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -158,6 +164,9 @@ export const updateAgentSchema = z.object({
   modelId: z.string().uuid().nullable().optional(),
   domainId: z.string().uuid().nullable().optional(),
   capabilities: z.record(z.unknown()).optional(),
+  icon: z.string().max(8).optional(),
+  color: z.string().max(20).optional(),
+  tone: z.string().max(2000).optional(),
   status: agentStatusSchema.optional(),
 });
 export type UpdateAgentRequest = z.infer<typeof updateAgentSchema>;
@@ -193,6 +202,7 @@ export const toolCallSchema = z.object({
   /** "service" or "user" — which credential the call ran under. */
   authType: z.enum(["service", "user"]).nullable(),
   approval: approvalOutcomeSchema.nullable().optional(),
+  durationMs: z.number().int().nullable().optional(),
 });
 export type ToolCall = z.infer<typeof toolCallSchema>;
 
@@ -339,7 +349,7 @@ export const grantSchema = z.object({
   subjectId: z.string().uuid(),
   subjectName: z.string(),
   accessRight: accessRightSchema,
-  targetType: z.enum(["agent", "domain"]),
+  targetType: z.enum(["agent", "domain", "model"]),
   targetId: z.string().uuid(),
   targetName: z.string(),
   /** Present when the grant reaches an agent through its domain. */
@@ -352,7 +362,7 @@ export const createGrantSchema = z.object({
   subjectType: z.enum(["user", "team"]),
   subjectId: z.string().uuid(),
   accessRight: accessRightSchema,
-  targetType: z.enum(["agent", "domain"]),
+  targetType: z.enum(["agent", "domain", "model"]),
   targetId: z.string().uuid(),
 });
 export type CreateGrantRequest = z.infer<typeof createGrantSchema>;
@@ -574,11 +584,65 @@ export type CreateEvalCaseRequest = z.infer<typeof createEvalCaseSchema>;
 // ---------------------------------------------------------------------------
 
 export const userPreferencesSchema = z.object({
-  /** "ask" surfaces the approval card; "auto" approves user-auth tools. */
-  approvalPosture: z.enum(["ask", "auto"]).default("ask"),
-  responseStyle: z.enum(["concise", "balanced", "detailed"]).default("balanced"),
+  /**
+   * "ask" prompts every time an agent acts as you; "session" asks once per
+   * session then trusts subsequent calls in it; "trust" never prompts.
+   */
+  approvalPosture: z.preprocess(
+    (v) => (v === "auto" ? "trust" : v),
+    z.enum(["ask", "session", "trust"]).default("session"),
+  ),
+  responseStyle: z.preprocess(
+    (v) => (v === "balanced" ? "concise" : v),
+    z.enum(["concise", "detailed"]).default("concise"),
+  ),
+  /** Agents can propose follow-up actions without being asked. */
+  suggestNextSteps: z.boolean().default(true),
+  /** Expand each tool call & result in the thread. */
+  inlineToolCalls: z.boolean().default(true),
+  /** Ping when an async run completes (delivery lands with surfaces). */
+  notifyOnBackground: z.boolean().default(false),
 });
 export type UserPreferences = z.infer<typeof userPreferencesSchema>;
+
+// ---------------------------------------------------------------------------
+// Org settings
+// ---------------------------------------------------------------------------
+
+export const orgSettingsSchema = z.object({
+  /** Who may create agents: everyone, or only org admins/owners. */
+  whoCanCreateAgents: z.enum(["everyone", "designated"]).default("everyone"),
+  /**
+   * Org-wide floor for write actions: when true, user-auth tools always
+   * prompt, overriding personal "trust"/"session" postures.
+   */
+  requireApprovalForUserTools: z.boolean().default(false),
+  /** Session transcript retention window (days) — informational for now. */
+  retentionDays: z.number().int().min(7).max(3650).default(90),
+});
+export type OrgSettings = z.infer<typeof orgSettingsSchema>;
+
+// ---------------------------------------------------------------------------
+// Surfaces
+// ---------------------------------------------------------------------------
+
+export const agentSurfaceSchema = z.object({
+  id: z.string().uuid(),
+  agentId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+  connectionName: z.string(),
+  vendor: z.string(),
+  label: z.string(),
+  status: z.enum(["connected", "needs-auth", "error"]),
+  createdAt: z.string(),
+});
+export type AgentSurface = z.infer<typeof agentSurfaceSchema>;
+
+export const createAgentSurfaceSchema = z.object({
+  connectionId: z.string().uuid(),
+  label: z.string().max(120).default(""),
+});
+export type CreateAgentSurfaceRequest = z.infer<typeof createAgentSurfaceSchema>;
 
 export const connectedAccountSchema = z.object({
   id: z.string().uuid(),
@@ -600,6 +664,11 @@ export const agentDirectoryRowSchema = agentSchema.extend({
   starred: z.boolean(),
   /** The caller's effective right on this agent (null = none). */
   myRight: accessRightSchema.nullable(),
+  /** Sharing shape: personal (grants to people only), team, or org-wide. */
+  scope: z.enum(["personal", "team", "org-wide"]),
+  /** When the caller last talked to this agent (null = never). */
+  lastUsedAt: z.string().nullable(),
+  updatedByEmail: z.string().nullable(),
 });
 export type AgentDirectoryRow = z.infer<typeof agentDirectoryRowSchema>;
 

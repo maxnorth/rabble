@@ -32,11 +32,23 @@ describe("schema defaults", () => {
     });
   });
 
-  it("preferences default to ask + balanced", () => {
+  it("preferences default to session + concise", () => {
     expect(userPreferencesSchema.parse({})).toEqual({
-      approvalPosture: "ask",
+      approvalPosture: "session",
+      responseStyle: "concise",
+      suggestNextSteps: true,
+      inlineToolCalls: true,
+      notifyOnBackground: false,
+    });
+  });
+
+  it("preferences accept legacy stored values", () => {
+    const prefs = userPreferencesSchema.parse({
+      approvalPosture: "auto",
       responseStyle: "balanced",
     });
+    expect(prefs.approvalPosture).toBe("trust");
+    expect(prefs.responseStyle).toBe("concise");
   });
 });
 

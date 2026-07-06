@@ -110,17 +110,47 @@ test("stats dashboards reflect real usage", async () => {
   await expect(page.locator(".chart-card", { hasText: "Sessions per agent" })).toContainText(
     "Eng On-Call",
   );
+
+  // Skill use tab: auth-type split from the MCP calls in 03-tools
+  await page.locator(".sidebar-item", { hasText: "Skill use" }).click();
   await expect(
     page.locator(".chart-card", { hasText: "Tool calls by auth type" }),
   ).toContainText("service");
+  await expect(page.locator(".chart-card", { hasText: "Calls by tool" })).toContainText(
+    "search_repos",
+  );
+
+  // Eval performance tab: the judged session from 04-evals shows up per agent
+  await page.locator(".sidebar-item", { hasText: "Eval performance" }).click();
+  await expect(
+    page.locator(".chart-card", { hasText: "Pass rate by agent" }),
+  ).toContainText("Eng On-Call");
+
+  // Usage & spend tab: token usage recorded from the emulator's usage blocks
+  await page.locator(".sidebar-item", { hasText: "Usage & spend" }).click();
+  await expect(page.locator(".kpi", { hasText: "Output tokens" })).toBeVisible();
+  await expect(
+    page.locator(".chart-card", { hasText: "Turns per session" }).locator(".bar-row").first(),
+  ).toBeVisible();
+
+  // Filtering to one agent narrows the numbers without erroring
+  await page.locator("select[title='Filter by agent']").selectOption({ label: "Eng On-Call" });
+  const filteredSessions = page.locator(".kpi", { hasText: "Sessions" }).first();
+  await expect
+    .poll(async () => Number(await filteredSessions.locator(".value").innerText()))
+    .toBeGreaterThan(0);
+  await page.locator("select[title='Filter by agent']").selectOption("");
 });
 
 test("profile: connected account and approval posture persist", async () => {
   await page.locator("nav a[title*='profile']").click();
-  await page.locator("select").selectOption("github");
-  await page.getByPlaceholder("Token").fill("gho_personal");
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.locator(".row", { hasText: "github" })).toBeVisible();
+
+  // Connect a personal GitHub token inline on the vendor row
+  const githubRow = page.locator(".row", { hasText: "GitHub" });
+  await githubRow.getByRole("button", { name: "Connect" }).click();
+  await githubRow.getByPlaceholder("Token").fill("gho_personal");
+  await githubRow.getByRole("button", { name: "Save" }).click();
+  await expect(githubRow.locator(".chip", { hasText: "connected" })).toBeVisible();
 
   const accounts = await dbQuery<{ vendor: string; encrypted_token: string }>(
     "SELECT vendor, encrypted_token FROM user_connected_accounts",
@@ -129,17 +159,19 @@ test("profile: connected account and approval posture persist", async () => {
   expect(accounts[0]!.encrypted_token).toMatch(/^v1:/);
   expect(accounts[0]!.encrypted_token).not.toContain("gho_personal");
 
-  await page.getByRole("button", { name: "Auto-approve" }).click();
+  // Trust posture saves and persists (stored as "trust")
+  await page.locator(".sidebar-item", { hasText: "Agent preferences" }).click();
+  await page.getByRole("button", { name: "Trust me" }).click();
   await page.getByRole("button", { name: "Save preferences" }).click();
   await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
 
   const prefs = await dbQuery<{ preferences: { approvalPosture: string } }>(
     "SELECT preferences FROM users WHERE email = 'alex@acme.com'",
   );
-  expect(prefs[0]!.preferences.approvalPosture).toBe("auto");
+  expect(prefs[0]!.preferences.approvalPosture).toBe("trust");
 });
 
-test("with auto-approve posture, user-auth tools skip the card", async () => {
+test("with trust posture, user-auth tools skip the card", async () => {
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -155,7 +187,7 @@ test("with auto-approve posture, user-auth tools skip the card", async () => {
   await page.locator("nav a[title='Sessions']").click();
   await page.locator(".target-pill").click();
   await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
-  await page.getByPlaceholder("Message an agent…").fill("File the auto issue");
+  await page.getByPlaceholder("Describe what you need help with…").fill("File the auto issue");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
     "Mock reply to: File the auto issue",

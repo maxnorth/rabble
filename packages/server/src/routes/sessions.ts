@@ -200,6 +200,22 @@ export async function sessionRoutes(app: FastifyInstance) {
         .where(eq(messages.sessionId, id))
         .orderBy(messages.createdAt);
 
+      const { orgs } = await import("../db/schema.js");
+      const { orgSettingsSchema } = await import("@rabble/core");
+      const [org] = await db
+        .select({ settings: orgs.settings })
+        .from(orgs)
+        .where(eq(orgs.id, req.user!.orgId))
+        .limit(1);
+      const orgSettings = orgSettingsSchema.parse({ ...(org?.settings as object) });
+      const sessionApproved = history.some((m) =>
+        ((m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>).some(
+          (tc) =>
+            tc.approval?.status === "approved" ||
+            tc.approval?.status === "auto-approved",
+        ),
+      );
+
       const [userMessage] = await db
         .insert(messages)
         .values({ sessionId: id, role: "user", content: body.content })
@@ -216,6 +232,8 @@ export async function sessionRoutes(app: FastifyInstance) {
       }
 
       let fullText = "";
+      let inputTokens = 0;
+      let outputTokens = 0;
       const toolCalls: ToolCall[] = [];
       for await (const event of runAgentTurn({
         agent: row.agent,
@@ -224,8 +242,13 @@ export async function sessionRoutes(app: FastifyInstance) {
         sessionId: id,
         history,
         userContent: body.content,
+        requireApproval: orgSettings.requireApprovalForUserTools,
+        sessionApproved,
       })) {
-        if (event.type === "text") {
+        if (event.type === "usage") {
+          inputTokens += event.inputTokens;
+          outputTokens += event.outputTokens;
+        } else if (event.type === "text") {
           fullText += event.text;
           sendEvent(reply, { type: "delta", text: event.text });
         } else if (event.type === "tool-start") {
@@ -246,7 +269,14 @@ export async function sessionRoutes(app: FastifyInstance) {
 
       const [agentMessage] = await db
         .insert(messages)
-        .values({ sessionId: id, role: "agent", content: fullText, toolCalls })
+        .values({
+          sessionId: id,
+          role: "agent",
+          content: fullText,
+          toolCalls,
+          inputTokens,
+          outputTokens,
+        })
         .returning();
       await db
         .update(sessions)

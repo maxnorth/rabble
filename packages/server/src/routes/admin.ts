@@ -52,6 +52,7 @@ export async function adminRoutes(app: FastifyInstance) {
         baseUrl: c.baseUrl,
         hasToken: c.encryptedToken !== null,
         status: c.status,
+        tunnel: c.tunnel,
         createdAt: c.createdAt.toISOString(),
       })),
     };
@@ -87,6 +88,7 @@ export async function adminRoutes(app: FastifyInstance) {
         status = "needs-auth";
       }
 
+      const { tunnel } = req.body as { tunnel?: boolean };
       const [row] = await db
         .insert(connections)
         .values({
@@ -97,6 +99,7 @@ export async function adminRoutes(app: FastifyInstance) {
           baseUrl: body.baseUrl ?? null,
           encryptedToken: body.token ? encryptSecret(body.token) : null,
           status,
+          tunnel: tunnel ?? false,
         })
         .returning();
       await recordAudit({
@@ -217,8 +220,12 @@ export async function adminRoutes(app: FastifyInstance) {
 
   // --- Audit log ---
 
-  app.get("/api/audit", { preHandler: requireOrgAdmin }, async (req) => {
-    const { action, limit } = req.query as { action?: string; limit?: string };
+  app.get("/api/audit", { preHandler: requireOrgAdmin }, async (req, reply) => {
+    const { action, limit, format } = req.query as {
+      action?: string;
+      limit?: string;
+      format?: string;
+    };
     const conditions = [eq(auditEvents.orgId, req.user!.orgId)];
     if (action) conditions.push(sql`${auditEvents.action} LIKE ${action + "%"}`);
     const rows = await db
@@ -228,6 +235,27 @@ export async function adminRoutes(app: FastifyInstance) {
       .where(and(...conditions))
       .orderBy(desc(auditEvents.createdAt))
       .limit(Math.min(Number(limit ?? 200), 500));
+
+    if (format === "csv") {
+      const escape = (v: string) => `"${v.replaceAll('"', '""')}"`;
+      const csv = [
+        "timestamp,actor,action,target_type,target_id,summary",
+        ...rows.map((r) =>
+          [
+            r.event.createdAt.toISOString(),
+            escape(r.actorName ?? "system"),
+            r.event.action,
+            r.event.targetType,
+            r.event.targetId ?? "",
+            escape(r.event.summary),
+          ].join(","),
+        ),
+      ].join("\n");
+      return reply
+        .header("content-type", "text/csv")
+        .header("content-disposition", "attachment; filename=rabble-audit.csv")
+        .send(csv);
+    }
     return {
       events: rows.map((r) => ({
         id: r.event.id,
@@ -245,6 +273,7 @@ export async function adminRoutes(app: FastifyInstance) {
   // --- Settings: org + members ---
 
   app.get("/api/org", async (req) => {
+    const { orgSettingsSchema } = await import("@rabble/core");
     const [org] = await db
       .select()
       .from(orgs)
@@ -254,24 +283,33 @@ export async function adminRoutes(app: FastifyInstance) {
       org: {
         id: org!.id,
         name: org!.name,
+        settings: orgSettingsSchema.parse({ ...(org!.settings as object) }),
         createdAt: org!.createdAt.toISOString(),
       },
     };
   });
 
   app.patch("/api/org", { preHandler: requireOrgAdmin }, async (req) => {
-    const { name } = req.body as { name: string };
-    await db
-      .update(orgs)
-      .set({ name: name.trim() })
-      .where(eq(orgs.id, req.user!.orgId));
+    const { orgSettingsSchema } = await import("@rabble/core");
+    const { name, settings } = req.body as {
+      name?: string;
+      settings?: Record<string, unknown>;
+    };
+    const updates: Record<string, unknown> = {};
+    if (name?.trim()) updates.name = name.trim();
+    if (settings) updates.settings = orgSettingsSchema.parse(settings);
+    if (Object.keys(updates).length === 0) return { ok: true };
+    await db.update(orgs).set(updates).where(eq(orgs.id, req.user!.orgId));
     await recordAudit({
       orgId: req.user!.orgId,
       actorUserId: req.user!.id,
-      action: "org.rename",
+      action: "org.settings",
       targetType: "org",
       targetId: req.user!.orgId,
-      summary: `Renamed organization to "${name.trim()}"`,
+      summary: name?.trim()
+        ? `Renamed organization to "${name.trim()}"`
+        : "Changed org settings",
+      metadata: settings ? { settings } : {},
     });
     return { ok: true };
   });

@@ -18,6 +18,8 @@ services:
           property: connectionString
       - key: COOKIE_SECRET
         generateValue: true
+      - key: ENCRYPTION_SECRET
+        generateValue: true
       - key: COOKIE_SECURE
         value: "true"
       # Set in the dashboard to enable built-in Claude models org-wide:

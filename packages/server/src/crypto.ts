@@ -37,7 +37,7 @@ export function hashAuthToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-const encryptionKey = scryptSync(env.cookieSecret, "rabble-secrets-v1", 32);
+const encryptionKey = scryptSync(env.encryptionSecret, "rabble-secrets-v1", 32);
 
 export function encryptSecret(plaintext: string): string {
   const iv = randomBytes(12);

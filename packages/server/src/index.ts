@@ -101,6 +101,13 @@ if (isMain) {
   const app = await buildServer();
   app
     .listen({ port: env.port, host: "0.0.0.0" })
+    .then(async () => {
+      // Boot-time retention sweep (recurring sweeps land with Hatchet).
+      const { applyRetentionForAllOrgs } = await import("./retention.js");
+      applyRetentionForAllOrgs().catch((err) =>
+        app.log.warn({ err }, "retention sweep failed"),
+      );
+    })
     .catch((err) => {
       app.log.error(err);
       process.exit(1);

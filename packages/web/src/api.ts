@@ -340,8 +340,12 @@ export const api = {
       body,
     ),
   revokeApiKey: (id: string) => post<{ ok: true }>(`/api/api-keys/${id}/revoke`),
-  listAudit: (action?: string) =>
-    get<{ events: AuditEvent[] }>(`/api/audit${action ? `?action=${action}` : ""}`),
+  listAudit: (action?: string, offset = 0) =>
+    get<{ events: AuditEvent[] }>(
+      `/api/audit?offset=${offset}${action ? `&action=${action}` : ""}`,
+    ),
+  applyRetention: () =>
+    post<{ deletedSessions: number }>("/api/org/retention/apply"),
   getOrg: () =>
     get<{
       org: { id: string; name: string; settings: OrgSettings; createdAt: string };

@@ -1066,9 +1066,17 @@ function ApiKeysPage() {
 
 function AuditPage() {
   const [filter, setFilter] = useState("");
+  const [pages, setPages] = useState(1);
   const audit = useQuery({
-    queryKey: ["audit", filter],
-    queryFn: () => api.listAudit(filter || undefined),
+    queryKey: ["audit", filter, pages],
+    queryFn: async () => {
+      const batches = await Promise.all(
+        Array.from({ length: pages }, (_, i) =>
+          api.listAudit(filter || undefined, i * 100),
+        ),
+      );
+      return { events: batches.flatMap((b) => b.events) };
+    },
   });
 
   return (
@@ -1164,6 +1172,15 @@ function AuditPage() {
           </div>
         )}
       </div>
+      {(audit.data?.events.length ?? 0) >= pages * 100 && (
+        <button
+          className="btn"
+          style={{ marginTop: 10 }}
+          onClick={() => setPages((p) => p + 1)}
+        >
+          Load older events
+        </button>
+      )}
     </div>
   );
 }
@@ -1177,6 +1194,7 @@ function OrgPolicies({ settings }: { settings: OrgSettings }) {
   const [draft, setDraft] = useState<OrgSettings>(settings);
   const [saved, setSaved] = useState(false);
 
+  const retention = useMutation({ mutationFn: api.applyRetention });
   const save = useMutation({
     mutationFn: () => api.updateOrgSettings(draft),
     onSuccess: () => {
@@ -1250,6 +1268,18 @@ function OrgPolicies({ settings }: { settings: OrgSettings }) {
             }
             style={{ width: 90 }}
           />
+          <button
+            className="btn"
+            disabled={retention.isPending}
+            title="Delete sessions older than the saved retention window now (also runs at every server start)"
+            onClick={() => retention.mutate()}
+          >
+            {retention.isPending
+              ? "Applying…"
+              : retention.data
+                ? `Removed ${retention.data.deletedSessions}`
+                : "Apply now"}
+          </button>
         </div>
       </div>
       <button

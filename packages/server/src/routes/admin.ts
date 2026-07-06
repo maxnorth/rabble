@@ -247,20 +247,23 @@ export async function adminRoutes(app: FastifyInstance) {
   // --- Audit log ---
 
   app.get("/api/audit", { preHandler: requireOrgAdmin }, async (req, reply) => {
-    const { action, limit, format } = req.query as {
+    const { action, limit, offset, format } = req.query as {
       action?: string;
       limit?: string;
+      offset?: string;
       format?: string;
     };
     const conditions = [eq(auditEvents.orgId, req.user!.orgId)];
     if (action) conditions.push(sql`${auditEvents.action} LIKE ${action + "%"}`);
+    const pageSize = Math.min(Number(limit ?? 100), 500);
     const rows = await db
       .select({ event: auditEvents, actorName: users.name })
       .from(auditEvents)
       .leftJoin(users, eq(auditEvents.actorUserId, users.id))
       .where(and(...conditions))
       .orderBy(desc(auditEvents.createdAt))
-      .limit(Math.min(Number(limit ?? 200), 500));
+      .offset(format === "csv" ? 0 : Math.max(Number(offset ?? 0), 0))
+      .limit(format === "csv" ? 500 : pageSize);
 
     if (format === "csv") {
       const escape = (v: string) => `"${v.replaceAll('"', '""')}"`;
@@ -383,6 +386,24 @@ export async function adminRoutes(app: FastifyInstance) {
     });
     return { ok: true };
   });
+
+  app.post(
+    "/api/org/retention/apply",
+    { preHandler: requireOrgAdmin },
+    async (req) => {
+      const { applyRetention } = await import("../retention.js");
+      const deletedSessions = await applyRetention(req.user!.orgId);
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "org.retention",
+        targetType: "org",
+        targetId: req.user!.orgId,
+        summary: `Applied retention: removed ${deletedSessions} expired session${deletedSessions === 1 ? "" : "s"}`,
+      });
+      return { deletedSessions };
+    },
+  );
 
   app.post("/api/members", { preHandler: requireOrgAdmin }, async (req, reply) => {
     const { name, email, role } = req.body as {

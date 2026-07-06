@@ -619,10 +619,14 @@ test("model grants: restricting a model cascades through teams", async ({
   await page.getByRole("button", { name: "+ Add", exact: true }).click();
   await expect(page.locator(".row", { hasText: "Casey Kim" })).toBeVisible();
 
-  const after = (await (await caseyPage.request.get("/api/models")).json()) as {
-    models: Array<{ displayName: string; canUse: boolean }>;
-  };
-  expect(after.models.find((m) => m.displayName === "Mock Model")?.canUse).toBe(true);
+  await expect
+    .poll(async () => {
+      const after = (await (await caseyPage.request.get("/api/models")).json()) as {
+        models: Array<{ displayName: string; canUse: boolean }>;
+      };
+      return after.models.find((m) => m.displayName === "Mock Model")?.canUse;
+    })
+    .toBe(true);
   await caseyPage.close();
 
   // Clean up the restriction so later model use stays unaffected
@@ -696,6 +700,32 @@ test("member lifecycle: password change, deactivate, reactivate", async ({
     "Deactivated Casey Kim",
     "Reactivated Casey Kim",
   ]);
+});
+
+test("retention removes expired sessions on demand", async () => {
+  // Plant a session last touched a year ago
+  const [ids] = await dbQuery<{ org_id: string; user_id: string; agent_id: string }>(
+    "SELECT org_id, user_id, agent_id FROM sessions LIMIT 1",
+  );
+  await dbQuery(
+    `INSERT INTO sessions (org_id, user_id, agent_id, title, created_at, updated_at)
+     VALUES ($1, $2, $3, 'Ancient history', now() - interval '365 days', now() - interval '365 days')`,
+    [ids!.org_id, ids!.user_id, ids!.agent_id],
+  );
+
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Apply now" }).click();
+  await expect(page.getByRole("button", { name: "Removed 1" })).toBeVisible();
+
+  const remains = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE title = 'Ancient history'",
+  );
+  expect(remains).toHaveLength(0);
+  const audit = await dbQuery<{ summary: string }>(
+    "SELECT summary FROM audit_events WHERE action = 'org.retention'",
+  );
+  expect(audit[0]!.summary).toContain("removed 1 expired session");
 });
 
 test("audit log exports as CSV", async () => {

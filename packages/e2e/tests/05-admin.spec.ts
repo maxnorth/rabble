@@ -52,7 +52,32 @@ test("connections: add Slack, verified against the emulator", async () => {
   expect(rows).toEqual([{ vendor: "slack", status: "connected" }]);
 });
 
+test("surfaces: the Slack connection attaches to an agent as a delivery point", async () => {
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "surfaces" }).click();
+
+  // Web sessions is always on; the Slack interface connection is attachable
+  await expect(page.locator(".row", { hasText: "Web sessions" })).toBeVisible();
+  await page.locator("select").selectOption({ label: "Acme Slack (slack)" });
+  await page.getByPlaceholder("#eng-oncall").fill("#eng-oncall");
+  await page.getByRole("button", { name: "Attach surface" }).click();
+
+  const row = page.locator(".row", { hasText: "#eng-oncall" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("Acme Slack");
+
+  const surfaces = await dbQuery<{ label: string }>("SELECT label FROM agent_surfaces");
+  expect(surfaces).toEqual([{ label: "#eng-oncall" }]);
+
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'agent.surface.add'",
+  );
+  expect(audit).toHaveLength(1);
+});
+
 test("api keys: read scope is enforced over HTTP", async () => {
+  await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "API keys" }).click();
   await page.getByPlaceholder("Key name, e.g. CI pipeline").fill("CI pipeline");
   await page.getByRole("button", { name: "+ Create key" }).click();
@@ -199,6 +224,87 @@ test("with trust posture, user-auth tools skip the card", async () => {
     name: "create_issue",
     approval: { status: "auto-approved" },
   });
+});
+
+test("org policies: designated creators and the approval floor are enforced", async ({
+  browser,
+}) => {
+  // Flip both policies through the Settings UI
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Designated" }).click();
+  await page
+    .locator(".row", { hasText: "Always require approval" })
+    .locator(".toggle")
+    .click();
+  await page.getByRole("button", { name: "Save policies" }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+
+  const orgs = await dbQuery<{ settings: Record<string, unknown> }>(
+    "SELECT settings FROM orgs",
+  );
+  expect(orgs[0]!.settings).toMatchObject({
+    whoCanCreateAgents: "designated",
+    requireApprovalForUserTools: true,
+  });
+
+  // Invite a plain member and read the temp password off the card
+  await page.locator(".row input[placeholder='Name']").fill("Casey Kim");
+  await page.locator(".row input[placeholder='Email']").fill("casey@acme.com");
+  await page.getByRole("button", { name: "Invite" }).click();
+  const credentials = await page.locator("code.mono").innerText();
+  const [email, tempPassword] = credentials.split(" / ");
+
+  // The member cannot create agents while creation is designated-only
+  const memberPage = await browser.newPage();
+  await memberPage.goto("/");
+  await memberPage.locator("input[type=email]").fill(email!);
+  await memberPage.locator("input[type=password]").fill(tempPassword!);
+  await memberPage.getByRole("button", { name: "Sign in" }).click();
+  await expect(memberPage.locator(".session-greeting")).toBeVisible();
+  const res = await memberPage.request.post("/api/agents", {
+    data: { name: "Casey agent" },
+  });
+  expect(res.status()).toBe(403);
+  await memberPage.close();
+
+  // The approval floor overrides Alex's trust posture: the card comes back
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "create_issue",
+      toolArgs: { title: "Floor-gated issue" },
+    }),
+  });
+  await page.locator("nav a[title='Sessions']").click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("File the floor-gated issue");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const card = page.locator(".approval-card");
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await card.getByRole("button", { name: "Approve as me" }).click();
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: File the floor-gated issue",
+    { timeout: 15_000 },
+  );
+  expect(await pollFirstToolCall("%File the floor-gated issue%")).toMatchObject({
+    name: "create_issue",
+    approval: { status: "approved" },
+  });
+});
+
+test("audit log exports as CSV", async () => {
+  const res = await page.request.get("/api/audit?format=csv");
+  expect(res.ok()).toBe(true);
+  expect(res.headers()["content-type"]).toContain("text/csv");
+  const body = await res.text();
+  expect(body).toContain("agent.surface.add");
 });
 
 test("server log contains no errors across the whole suite", async () => {

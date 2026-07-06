@@ -508,7 +508,7 @@ export function GrantEditor({
   users,
   onChanged,
 }: {
-  targetType: "agent" | "domain";
+  targetType: "agent" | "domain" | "model";
   targetId: string;
   grants: Array<{
     id: string;

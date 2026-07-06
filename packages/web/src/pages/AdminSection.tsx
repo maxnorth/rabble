@@ -1,8 +1,9 @@
-import type { ConnectionRole, ModelProtocol } from "@rabblehq/core";
+import type { ConnectionRole, ModelProtocol, OrgSettings } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { NavLink, useParams } from "react-router-dom";
+import { Link, NavLink, useParams } from "react-router-dom";
 import { api } from "../api";
+import { GrantEditor } from "./AgentsSection";
 
 const ADMIN_PAGES = [
   { key: "connections", label: "Connections" },
@@ -73,51 +74,75 @@ function ConnectionsPage() {
           + Add connection
         </button>
       </div>
-      <div className="row-group">
-        {connections.data?.connections.map((c) => (
-          <div className="row" key={c.id}>
-            <span
-              className="status-dot"
-              style={{
-                background:
-                  c.status === "connected"
-                    ? "var(--green)"
-                    : c.status === "needs-auth"
-                      ? "var(--amber)"
-                      : "var(--red)",
-              }}
-            />
-            <div className="grow">
-              <div className="title">{c.name}</div>
-              <div className="sub mono">{c.vendor}</div>
+      {(() => {
+        const byVendor = new Map<string, NonNullable<typeof connections.data>["connections"]>();
+        for (const c of connections.data?.connections ?? []) {
+          const list = byVendor.get(c.vendor) ?? [];
+          list.push(c);
+          byVendor.set(c.vendor, list);
+        }
+        return [...byVendor.entries()].map(([vendor, list]) => (
+          <div key={vendor} style={{ marginBottom: 18 }}>
+            <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+              {vendor}
             </div>
-            {c.roles.map((r) => (
-              <span
-                key={r}
-                className={`chip ${r === "Interface" ? "blue" : r === "Automation" ? "purple" : "green"}`}
-              >
-                {r}
-              </span>
-            ))}
-            <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
-              {c.status}
-            </span>
-            <button
-              className="btn danger"
-              onClick={() => {
-                if (confirm(`Remove connection "${c.name}"?`)) remove.mutate(c.id);
-              }}
-            >
-              Remove
-            </button>
+            <div className="row-group">
+              {list.map((c) => (
+                <div className="row" key={c.id}>
+                  <span
+                    className="status-dot"
+                    style={{
+                      background:
+                        c.status === "connected"
+                          ? "var(--green)"
+                          : c.status === "needs-auth"
+                            ? "var(--amber)"
+                            : "var(--red)",
+                    }}
+                  />
+                  <div className="grow">
+                    <div className="title">{c.name}</div>
+                    <div className="sub mono">
+                      {c.baseUrl || `${vendor} default endpoint`}
+                    </div>
+                  </div>
+                  {c.roles.map((r) => (
+                    <span
+                      key={r}
+                      className={`chip ${r === "Interface" ? "blue" : r === "Automation" ? "purple" : "green"}`}
+                    >
+                      {r}
+                    </span>
+                  ))}
+                  {c.tunnel && (
+                    <span className="chip purple" title="Reached through a private tunnel">
+                      tunnel
+                    </span>
+                  )}
+                  <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
+                    {c.status}
+                  </span>
+                  <button
+                    className="btn danger"
+                    onClick={() => {
+                      if (confirm(`Remove connection "${c.name}"?`)) remove.mutate(c.id);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
-        ))}
-        {connections.data?.connections.length === 0 && (
+        ));
+      })()}
+      {connections.data?.connections.length === 0 && (
+        <div className="row-group">
           <div className="row">
             <div className="sub">No connections yet.</div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
       {showAdd && <AddConnectionModal onClose={() => setShowAdd(false)} />}
     </div>
   );
@@ -131,6 +156,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
     roles: ["Interface"] as ConnectionRole[],
     baseUrl: "",
     token: "",
+    tunnel: false,
   });
   const create = useMutation({
     mutationFn: () =>
@@ -140,6 +166,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
         roles: form.roles,
         baseUrl: form.baseUrl.trim() || null,
         token: form.token || undefined,
+        tunnel: form.tunnel,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["connections"] });
@@ -220,6 +247,20 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
               value={form.token}
               onChange={(e) => setForm({ ...form, token: e.target.value })}
             />
+          </div>
+          <div className="field">
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={form.tunnel}
+                onChange={(e) => setForm({ ...form, tunnel: e.target.checked })}
+              />
+              Reached through a private tunnel
+            </label>
+            <span className="hint">
+              For self-hosted vendors behind a VPN or bastion — shown as a chip
+              on the connection.
+            </span>
           </div>
           {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
@@ -430,6 +471,7 @@ function ModelsPage() {
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providerStatus });
   const [showCustom, setShowCustom] = useState(false);
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
+  const [openModel, setOpenModel] = useState<string | null>(null);
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ["models"] });
@@ -543,24 +585,38 @@ function ModelsPage() {
       </div>
       <div className="row-group">
         {registered.map((m) => (
-          <div className="row" key={m.id}>
-            <div className="grow">
-              <div className="title">{m.displayName}</div>
-              <div className="sub mono">
-                {m.modelId}
-                {m.baseUrl ? ` · ${m.baseUrl}` : ""}
-              </div>
-            </div>
-            <span className={`chip ${m.kind === "built-in" ? "blue" : "purple"}`}>{m.kind}</span>
-            <button
-              className="btn danger"
-              disabled={removeModel.isPending}
-              onClick={() => {
-                if (confirm(`Remove model "${m.displayName}"?`)) removeModel.mutate(m.id);
-              }}
+          <div key={m.id}>
+            <div
+              className="row"
+              style={{ cursor: "pointer" }}
+              onClick={() => setOpenModel(openModel === m.id ? null : m.id)}
             >
-              Remove
-            </button>
+              <div className="grow">
+                <div className="title">{m.displayName}</div>
+                <div className="sub mono">
+                  {m.modelId}
+                  {m.baseUrl ? ` · ${m.baseUrl}` : ""}
+                </div>
+              </div>
+              {m.usedBy.length > 0 && (
+                <span className="chip">
+                  {m.usedBy.length} agent{m.usedBy.length === 1 ? "" : "s"}
+                </span>
+              )}
+              {!m.canUse && <span className="chip amber">restricted</span>}
+              <span className={`chip ${m.kind === "built-in" ? "blue" : "purple"}`}>{m.kind}</span>
+              <button
+                className="btn danger"
+                disabled={removeModel.isPending}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (confirm(`Remove model "${m.displayName}"?`)) removeModel.mutate(m.id);
+                }}
+              >
+                Remove
+              </button>
+            </div>
+            {openModel === m.id && <ModelDetail model={m} />}
           </div>
         ))}
         {registered.length === 0 && (
@@ -575,6 +631,71 @@ function ModelsPage() {
       {showCustom && (
         <CustomModelModal onClose={() => setShowCustom(false)} onDone={refresh} />
       )}
+    </div>
+  );
+}
+
+function ModelDetail({
+  model,
+}: {
+  model: { id: string; displayName: string; usedBy: string[] };
+}) {
+  const queryClient = useQueryClient();
+  const grants = useQuery({
+    queryKey: ["grants", "model", model.id],
+    queryFn: () => api.listGrants("model", model.id),
+  });
+  const teams = useQuery({ queryKey: ["teams"], queryFn: api.listTeams });
+  const users = useQuery({ queryKey: ["users"], queryFn: api.listUsers });
+  const agents = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
+  const agentIdByName = new Map(
+    (agents.data?.agents ?? []).map((a) => [a.name, a.id]),
+  );
+
+  return (
+    <div
+      className="card"
+      style={{ padding: 16, margin: "6px 0 10px", background: "var(--surface-group)" }}
+    >
+      <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+        Used by
+      </div>
+      {model.usedBy.length > 0 ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+          {model.usedBy.map((name) => {
+            const agentId = agentIdByName.get(name);
+            return (
+              <span key={name} className="chip" style={{ gap: 6 }}>
+                {name}
+                {agentId && (
+                  <Link to={`/agents/${agentId}`} style={{ color: "var(--accent-text)" }}>
+                    configure →
+                  </Link>
+                )}
+              </span>
+            );
+          })}
+        </div>
+      ) : (
+        <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 16 }}>
+          No agents run on this model yet.
+        </p>
+      )}
+      <p className="page-subtitle" style={{ marginBottom: 8 }}>
+        With no grants, every member can put agents on this model. Add a grant
+        to restrict it — then only the grantees (and org admins) can.
+      </p>
+      <GrantEditor
+        targetType="model"
+        targetId={model.id}
+        grants={grants.data?.grants ?? []}
+        teams={teams.data?.teams ?? []}
+        users={users.data?.users ?? []}
+        onChanged={() => {
+          void queryClient.invalidateQueries({ queryKey: ["grants", "model", model.id] });
+          void queryClient.invalidateQueries({ queryKey: ["models"] });
+        }}
+      />
     </div>
   );
 }
@@ -744,6 +865,11 @@ function ApiKeysPage() {
             >
               {k.scope}
             </span>
+            {!k.lastUsedAt && !k.revokedAt && (
+              <span className="chip" title="This key has never authenticated a request">
+                unused
+              </span>
+            )}
             {k.revokedAt ? (
               <span className="chip amber">revoked</span>
             ) : (
@@ -809,7 +935,7 @@ function AuditPage() {
       <p className="page-subtitle">
         Control-plane state changes only — session transcripts live on sessions.
       </p>
-      <div className="filter-bar">
+      <div className="filter-bar" style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
           <option value="">All actions</option>
           {[
@@ -830,6 +956,14 @@ function AuditPage() {
             </option>
           ))}
         </select>
+        <span style={{ flex: 1 }} />
+        <a
+          className="btn"
+          href={`/api/audit?format=csv${filter ? `&action=${encodeURIComponent(filter)}` : ""}`}
+          download
+        >
+          Export CSV
+        </a>
       </div>
       <div className="row-group">
         {audit.data?.events.map((e) => (
@@ -858,6 +992,102 @@ function AuditPage() {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+
+function OrgPolicies({ settings }: { settings: OrgSettings }) {
+  const queryClient = useQueryClient();
+  const [draft, setDraft] = useState<OrgSettings>(settings);
+  const [saved, setSaved] = useState(false);
+
+  const save = useMutation({
+    mutationFn: () => api.updateOrgSettings(draft),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["org"] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1600);
+    },
+  });
+
+  return (
+    <>
+      <div className="sidebar-title" style={{ padding: "14px 0 8px" }}>
+        Policies
+      </div>
+      <div className="row-group" style={{ marginBottom: 12 }}>
+        <div className="row">
+          <div className="grow">
+            <div className="title">Who can create agents</div>
+            <div className="sub">
+              "Designated" restricts creation to org admins and the owner.
+            </div>
+          </div>
+          <div className="segmented">
+            {(
+              [
+                ["everyone", "Everyone"],
+                ["designated", "Designated"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                className={draft.whoCanCreateAgents === value ? "active" : ""}
+                onClick={() => setDraft({ ...draft, whoCanCreateAgents: value })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="row">
+          <span
+            className={`toggle${draft.requireApprovalForUserTools ? " on" : ""}`}
+            style={{ cursor: "pointer" }}
+            onClick={() =>
+              setDraft({
+                ...draft,
+                requireApprovalForUserTools: !draft.requireApprovalForUserTools,
+              })
+            }
+          />
+          <div className="grow">
+            <div className="title">Always require approval for user-auth tools</div>
+            <div className="sub">
+              An org-wide floor: overrides personal "trust" and "once per
+              session" postures.
+            </div>
+          </div>
+        </div>
+        <div className="row">
+          <div className="grow">
+            <div className="title">Session retention</div>
+            <div className="sub">How long transcripts are kept (days).</div>
+          </div>
+          <input
+            type="number"
+            min={7}
+            max={3650}
+            value={draft.retentionDays}
+            onChange={(e) =>
+              setDraft({ ...draft, retentionDays: Number(e.target.value) || 7 })
+            }
+            style={{ width: 90 }}
+          />
+        </div>
+      </div>
+      <button
+        className="btn primary"
+        disabled={save.isPending}
+        onClick={() => save.mutate()}
+      >
+        {saved ? "Saved ✓" : "Save policies"}
+      </button>
+      {save.isError && (
+        <p className="error-text" style={{ marginTop: 8 }}>
+          {(save.error as Error).message}
+        </p>
+      )}
+    </>
+  );
+}
 
 function SettingsPage() {
   const queryClient = useQueryClient();
@@ -903,6 +1133,8 @@ function SettingsPage() {
           </button>
         </div>
       </div>
+
+      {org.data && <OrgPolicies settings={org.data.org.settings} />}
 
       <div className="sidebar-title" style={{ padding: "14px 0 8px" }}>
         Members

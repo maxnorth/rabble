@@ -66,17 +66,136 @@ export function TeamsSection() {
         {teamId ? (
           <TeamDetail key={teamId} teamId={teamId} />
         ) : (
-          <div className="content-col">
-            <h1 className="page-title">Teams</h1>
-            <p className="page-subtitle">
-              The RBAC backbone. Grants to a team cascade to its sub-teams and
-              members. Pick a team from the sidebar or create one.
-            </p>
-          </div>
+          <TeamsOverview onNewTeam={() => setShowNew(true)} />
         )}
       </main>
       {showNew && <NewTeamModal onClose={() => setShowNew(false)} />}
     </>
+  );
+}
+
+function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
+  const navigate = useNavigate();
+  const teams = useQuery({ queryKey: ["teams"], queryFn: api.listTeams });
+  const users = useQuery({ queryKey: ["users"], queryFn: api.listUsers });
+
+  const all = teams.data?.teams ?? [];
+  const byId = new Map(all.map((t) => [t.id, t]));
+  const regular = all.filter((t) => !t.isEveryone);
+  // Roots first, each followed by its sub-teams (one level of nesting).
+  const ordered = regular
+    .filter((t) => !t.parentTeamId)
+    .flatMap((t) => [t, ...regular.filter((c) => c.parentTeamId === t.id)]);
+
+  return (
+    <div className="content-col">
+      <h1 className="page-title">Teams &amp; people</h1>
+      <p className="page-subtitle">
+        The RBAC backbone. Grants to a team cascade to its sub-teams and
+        members; the pinned Everyone team reaches the whole org.
+      </p>
+      <div
+        className="card"
+        style={{
+          padding: 12,
+          marginBottom: 18,
+          borderColor: "rgba(107, 159, 212, 0.35)",
+          fontSize: 12.5,
+          color: "var(--text-dim)",
+        }}
+      >
+        Access flows through teams, not individuals: grant an agent to{" "}
+        <strong>Engineering</strong> and every sub-team inherits it. There are
+        no owners anywhere — only grants.
+      </div>
+
+      <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+        Teams
+      </div>
+      <div className="row-group" style={{ marginBottom: 22 }}>
+        {ordered.map((t) => (
+          <div
+            className="row"
+            key={t.id}
+            style={{ cursor: "pointer", paddingLeft: t.parentTeamId ? 34 : undefined }}
+            onClick={() => navigate(`/teams/${t.id}`)}
+          >
+            <div className="grow">
+              <div className="title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {t.parentTeamId ? "› " : ""}
+                {t.name}
+                {t.parentTeamId && (
+                  <span className="chip">
+                    sub-team of {byId.get(t.parentTeamId)?.name ?? "?"}
+                  </span>
+                )}
+              </div>
+              <div className="sub">{t.memberCount} members</div>
+            </div>
+            <span style={{ fontSize: 12, color: "var(--text-muted)" }}>configure →</span>
+          </div>
+        ))}
+        {ordered.length === 0 && (
+          <div className="row">
+            <div className="sub">No teams yet.</div>
+            <button className="btn" onClick={onNewTeam}>
+              + New team
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+        People
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {(users.data?.users ?? []).map((u) => (
+          <div
+            className="card"
+            key={u.id}
+            style={{ padding: 12, display: "flex", gap: 10, alignItems: "center" }}
+          >
+            <div
+              className="rail-logo"
+              style={{
+                width: 34,
+                height: 34,
+                fontSize: 13,
+                marginBottom: 0,
+                background: u.role === "member" ? "var(--surface-tool)" : "var(--purple)",
+              }}
+            >
+              {u.name
+                .split(/\s+/)
+                .map((p) => p[0])
+                .slice(0, 2)
+                .join("")
+                .toUpperCase()}
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <div className="title" style={{ fontSize: 13 }}>
+                {u.name}
+              </div>
+              <div
+                className="sub mono"
+                style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+              >
+                {u.email}
+              </div>
+            </div>
+            <span className={`chip${u.role === "member" ? "" : " blue"}`} style={{ marginLeft: "auto" }}>
+              {u.role}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

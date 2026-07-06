@@ -175,6 +175,33 @@ export async function evalRoutes(app: FastifyInstance) {
     return { suite: row };
   });
 
+  app.patch("/api/suites/:suiteId", async (req, reply) => {
+    const { suiteId } = req.params as { suiteId: string };
+    const [suite] = await db
+      .select()
+      .from(evalSuites)
+      .where(eq(evalSuites.id, suiteId))
+      .limit(1);
+    if (!suite) return reply.code(404).send({ error: "Suite not found" });
+    if (!(await requireEdit(req, suite.agentId))) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    const { gating } = req.body as { gating?: boolean };
+    if (typeof gating !== "boolean") {
+      return reply.code(400).send({ error: "gating (boolean) is required" });
+    }
+    await db.update(evalSuites).set({ gating }).where(eq(evalSuites.id, suiteId));
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "eval.suite.update",
+      targetType: "agent",
+      targetId: suite.agentId,
+      summary: `${gating ? "Marked" : "Unmarked"} eval suite "${suite.name}" as gating`,
+    });
+    return { ok: true };
+  });
+
   app.get("/api/suites/:suiteId/cases", async (req) => {
     const { suiteId } = req.params as { suiteId: string };
     const rows = await db

@@ -236,6 +236,8 @@ export const api = {
   deleteCriterion: (id: string) => del<{ ok: true }>(`/api/criteria/${id}`),
   listSuites: (agentId: string) =>
     get<{ suites: EvalSuite[] }>(`/api/agents/${agentId}/suites`),
+  updateSuite: (suiteId: string, body: { gating: boolean }) =>
+    patch<{ ok: true }>(`/api/suites/${suiteId}`, body),
   createSuite: (agentId: string, body: { name: string; gating?: boolean }) =>
     post<{ suite: unknown }>(`/api/agents/${agentId}/suites`, body),
   listCases: (suiteId: string) => get<{ cases: EvalCase[] }>(`/api/suites/${suiteId}/cases`),

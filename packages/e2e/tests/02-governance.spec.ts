@@ -48,13 +48,13 @@ test("settings: invite a member (Everyone membership is automatic)", async () =>
 
 test("teams: create hierarchy and add the member", async () => {
   await page.locator("nav a[title='Teams']").click();
-  await page.getByRole("button", { name: "+ New team" }).click();
+  await page.locator("aside").getByRole("button", { name: "+ New team" }).click();
   await page.getByPlaceholder("Platform").fill("Engineering");
   await page.getByRole("button", { name: "Create team" }).click();
   await expect(page.locator(".sidebar-item", { hasText: "Engineering" })).toBeVisible();
 
   // Sub-team under Engineering
-  await page.getByRole("button", { name: "+ New team" }).click();
+  await page.locator("aside").getByRole("button", { name: "+ New team" }).click();
   await page.getByPlaceholder("Platform").fill("Platform");
   await page.locator(".modal select").selectOption({ label: "Engineering" });
   await page.getByRole("button", { name: "Create team" }).click();

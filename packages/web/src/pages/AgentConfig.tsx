@@ -1,7 +1,7 @@
 import { agentCapabilitiesSchema, type AgentCapabilities } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { GrantEditor } from "./AgentsSection";
 import { AGENT_COLORS, AGENT_GLYPHS } from "../lib/time";
@@ -520,17 +520,30 @@ function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
         <span className="chip amber">user</span> — as the person in the
         session, with an in-thread approval.
       </p>
-      {[...byServer.entries()].map(([serverId, serverTools]) => (
+      {[...byServer.entries()].map(([serverId, serverTools]) => {
+        const enabledTools = serverTools.filter((t) => t.enabled);
+        const serviceCount = enabledTools.filter((t) => t.authType !== "user").length;
+        const userCount = enabledTools.length - serviceCount;
+        return (
         <div key={serverId} style={{ marginBottom: 20 }}>
           <div
             className="sidebar-title"
             style={{
               padding: "0 0 8px",
               display: "flex",
-              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 8,
             }}
           >
             {serverTools[0]?.serverName}
+            <span style={{ textTransform: "none", letterSpacing: 0 }}>
+              {enabledTools.length} of {serverTools.length} enabled
+            </span>
+            {serviceCount > 0 && (
+              <span className="chip green">{serviceCount} service</span>
+            )}
+            {userCount > 0 && <span className="chip amber">{userCount} user</span>}
+            <span style={{ flex: 1 }} />
             {canEdit && (
               <button
                 style={{ color: "var(--danger)", fontSize: 11 }}
@@ -583,7 +596,8 @@ function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
             ))}
           </div>
         </div>
-      ))}
+        );
+      })}
       {byServer.size === 0 && (
         <div className="row-group" style={{ marginBottom: 20 }}>
           <div className="row">
@@ -847,6 +861,22 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
     },
     onError: (err) => setRunError(err instanceof Error ? err.message : "Run failed"),
   });
+  const setGating = useMutation({
+    mutationFn: ({ id, gating }: { id: string; gating: boolean }) =>
+      api.updateSuite(id, { gating }),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["suites", agentId] }),
+  });
+
+  const measured = (criteria.data?.criteria ?? []).filter((c) => c.passRate !== null);
+  const evaluatedSessions = (criteria.data?.criteria ?? []).reduce(
+    (sum, c) => Math.max(sum, c.sessionCount),
+    0,
+  );
+  const overall =
+    measured.length > 0
+      ? Math.round(measured.reduce((sum, c) => sum + (c.passRate ?? 0), 0) / measured.length)
+      : null;
 
   return (
     <>
@@ -854,6 +884,51 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
         Criteria are evaluated live against real sessions; suites are offline
         test cases. Track record is evidence in access decisions.
       </p>
+
+      <div
+        className="card"
+        style={{
+          padding: 14,
+          marginBottom: 16,
+          display: "flex",
+          alignItems: "center",
+          gap: 22,
+        }}
+      >
+        <div>
+          <div
+            style={{
+              fontSize: 22,
+              fontWeight: 600,
+              color:
+                overall === null
+                  ? "var(--text-muted)"
+                  : overall >= 90
+                    ? "var(--green)"
+                    : overall >= 70
+                      ? "var(--blue)"
+                      : "var(--amber)",
+            }}
+          >
+            {overall !== null ? `${overall}%` : "—"}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>overall pass rate</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 600 }}>{evaluatedSessions}</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>sessions judged</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 600 }}>
+            {suites.data?.suites.length ?? 0}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)" }}>suites</div>
+        </div>
+        <span style={{ flex: 1 }} />
+        <Link to="/stats" style={{ fontSize: 12, color: "var(--accent-text)" }}>
+          View in Stats →
+        </Link>
+      </div>
 
       <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
         Live criteria
@@ -933,6 +1008,26 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
               </div>
             </div>
             {canEdit && (
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  fontSize: 12,
+                  color: "var(--text-dim)",
+                  cursor: "pointer",
+                }}
+                title="Gating suites must pass before changes to this agent ship"
+              >
+                <input
+                  type="checkbox"
+                  checked={s.gating}
+                  onChange={(e) => setGating.mutate({ id: s.id, gating: e.target.checked })}
+                />
+                gating
+              </label>
+            )}
+            {canEdit && (
               <button
                 className="btn"
                 disabled={runSuite.isPending}
@@ -989,6 +1084,14 @@ function AccessTab({ agentId }: { agentId: string }) {
   });
   const teams = useQuery({ queryKey: ["teams"], queryFn: api.listTeams });
   const users = useQuery({ queryKey: ["users"], queryFn: api.listUsers });
+  const agent = useQuery({
+    queryKey: ["agent", agentId],
+    queryFn: () => api.getAgent(agentId),
+  });
+  const domains = useQuery({ queryKey: ["domains"], queryFn: api.listDomains });
+  const domain = domains.data?.domains.find(
+    (d) => d.id === agent.data?.agent.domainId,
+  );
 
   return (
     <>
@@ -997,6 +1100,29 @@ function AccessTab({ agentId }: { agentId: string }) {
         grants inherited from its domain. There is no owner — rights come only
         from grants.
       </p>
+      {domain && (
+        <div
+          className="card"
+          style={{
+            padding: 12,
+            marginBottom: 14,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            fontSize: 12.5,
+            color: "var(--text-dim)",
+          }}
+        >
+          <span className="chip purple">domain</span>
+          <span className="grow">
+            This agent is in <strong>{domain.name}</strong> — grants on the
+            domain reach it too.
+          </span>
+          <Link to={`/domains/${domain.id}`} style={{ color: "var(--accent-text)" }}>
+            Edit domain grants →
+          </Link>
+        </div>
+      )}
       <GrantEditor
         targetType="agent"
         targetId={agentId}

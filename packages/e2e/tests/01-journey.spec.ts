@@ -179,6 +179,16 @@ test("sessions: targeted chat streams a reply and persists the transcript", asyn
   expect(sessions).toHaveLength(1);
   expect(sessions[0]!.title).toBe("What is the deploy status?");
 
+  // The agent row is inserted just after the last delta renders — poll.
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ role: string }>(
+        "SELECT role FROM messages WHERE session_id = $1",
+        [sessions[0]!.id],
+      );
+      return rows.length;
+    })
+    .toBe(4);
   const messages = await dbQuery<{ role: string; content: string }>(
     "SELECT role, content FROM messages WHERE session_id = $1 ORDER BY created_at",
     [sessions[0]!.id],

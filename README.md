@@ -38,6 +38,11 @@ What works today:
 
 All built on the design prototype's dark, dense visual system.
 
+| | |
+|---|---|
+| ![Agent directory](docs/screenshots/directory.png) | ![Stats](docs/screenshots/stats.png) |
+| ![A Slack-surface session](docs/screenshots/slack-thread.png) | ![Sessions](docs/screenshots/sessions.png) |
+
 ## Architecture
 
 TypeScript monorepo (pnpm workspaces + Turborepo):

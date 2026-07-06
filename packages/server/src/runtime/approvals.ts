@@ -17,7 +17,8 @@ interface Pending {
 
 const pending = new Map<string, Pending>();
 
-const APPROVAL_TIMEOUT_MS = 120_000;
+// Overridable so tests (and impatient orgs) can tighten the window.
+const APPROVAL_TIMEOUT_MS = Number(process.env.APPROVAL_TIMEOUT_MS ?? 120_000);
 
 export function requestApproval(input: {
   sessionId: string;

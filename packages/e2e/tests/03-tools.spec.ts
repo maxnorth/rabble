@@ -237,6 +237,30 @@ test("run-as-service keeps the action off the user's identity", async () => {
   });
 });
 
+test("an unanswered approval times out and the tool is not run", async () => {
+  await enqueueToolCall("create_issue", { title: "Never approved" });
+
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("File the ignored issue");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // Nobody clicks. The broker times out (4s in e2e) and the turn completes.
+  await expect(page.locator(".approval-card")).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: File the ignored issue",
+    { timeout: 20_000 },
+  );
+  expect(await pollFirstToolCall("%File the ignored issue%")).toMatchObject({
+    name: "create_issue",
+    approval: { status: "timed-out", decidedByName: null },
+    output: "The user declined this action.",
+  });
+});
+
 test("an out-of-scope tool attempt is recorded as a violation", async () => {
   // The model goes rogue: it calls a tool the agent was never given.
   await enqueueToolCall("drop_database", { reason: "cleanup" });

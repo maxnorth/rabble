@@ -537,7 +537,6 @@ test("org policies: designated creators and the approval floor are enforced", as
   await page.getByRole("button", { name: "Invite" }).click();
   const credentials = await page.locator("code.mono").innerText();
   const [email, tempPassword] = credentials.split(" / ");
-  caseyPassword = tempPassword!;
 
   // The member cannot create agents while creation is designated-only
   const memberPage = await browser.newPage();
@@ -545,6 +544,13 @@ test("org policies: designated creators and the approval floor are enforced", as
   await memberPage.locator("input[type=email]").fill(email!);
   await memberPage.locator("input[type=password]").fill(tempPassword!);
   await memberPage.getByRole("button", { name: "Sign in" }).click();
+
+  // Temp passwords force rotation before anything else works
+  await expect(memberPage.getByText("Set your password")).toBeVisible();
+  await memberPage.getByPlaceholder("Temporary password").fill(tempPassword!);
+  await memberPage.getByPlaceholder("At least 8 characters").fill("casey-first-pass-1");
+  await memberPage.getByRole("button", { name: "Save and continue" }).click();
+  caseyPassword = "casey-first-pass-1";
   await expect(memberPage.locator(".session-greeting")).toBeVisible();
   const res = await memberPage.request.post("/api/agents", {
     data: { name: "Casey agent" },

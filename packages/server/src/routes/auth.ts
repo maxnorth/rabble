@@ -124,7 +124,7 @@ export async function authRoutes(app: FastifyInstance) {
       }
       await db
         .update(users)
-        .set({ passwordHash: hashPassword(newPassword) })
+        .set({ passwordHash: hashPassword(newPassword), mustChangePassword: false })
         .where(eq(users.id, req.user!.id));
       return { ok: true };
     },

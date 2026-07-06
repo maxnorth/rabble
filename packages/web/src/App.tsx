@@ -1,4 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { api, ApiError } from "./api";
 import { Shell } from "./components/Shell";
@@ -53,6 +54,11 @@ export function App() {
     );
   }
 
+  // Invited with a temp password: set a real one before anything else.
+  if (user.mustChangePassword) {
+    return <ForcePasswordChange />;
+  }
+
   return (
     <Routes>
       <Route element={<Shell user={user} />}>
@@ -72,5 +78,61 @@ export function App() {
         <Route path="*" element={<Navigate to="/sessions" replace />} />
       </Route>
     </Routes>
+  );
+}
+
+function ForcePasswordChange() {
+  const queryClient = useQueryClient();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const change = useMutation({
+    mutationFn: () =>
+      api.changePassword({ currentPassword: current, newPassword: next }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["me"] }),
+  });
+  return (
+    <div className="auth-screen">
+      <div className="auth-card">
+        <h1>Set your password</h1>
+        <p className="page-subtitle">
+          You signed in with a temporary password. Pick your own to continue.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (current && next.length >= 8) change.mutate();
+          }}
+        >
+          <div className="field">
+            <label>Temporary password</label>
+            <input
+              type="password"
+              autoFocus
+              required
+              placeholder="Temporary password"
+              value={current}
+              onChange={(e) => setCurrent(e.target.value)}
+            />
+          </div>
+          <div className="field">
+            <label>New password</label>
+            <input
+              type="password"
+              required
+              minLength={8}
+              placeholder="At least 8 characters"
+              value={next}
+              onChange={(e) => setNext(e.target.value)}
+            />
+          </div>
+          {change.isError && (
+            <p className="error-text">{(change.error as Error).message}</p>
+          )}
+          <button className="btn primary" disabled={change.isPending} style={{ width: "100%" }}>
+            Save and continue
+          </button>
+        </form>
+      </div>
+    </div>
   );
 }

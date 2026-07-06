@@ -33,6 +33,7 @@ export const users = pgTable(
     name: text("name").notNull(),
     role: text("role", { enum: ["owner", "admin", "member"] }).notNull(),
     active: boolean("active").notNull().default(true),
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
     passwordHash: text("password_hash").notNull(),
     preferences: jsonb("preferences").notNull().default({}),
     createdAt: timestamp("created_at", { withTimezone: true })

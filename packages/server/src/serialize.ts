@@ -14,6 +14,7 @@ export function serializeUser(row: typeof users.$inferSelect): User {
     email: row.email,
     name: row.name,
     role: row.role,
+    mustChangePassword: row.mustChangePassword,
     createdAt: row.createdAt.toISOString(),
   };
 }

@@ -425,6 +425,7 @@ export async function adminRoutes(app: FastifyInstance) {
           name: name.trim(),
           role: role ?? "member",
           passwordHash: hashPassword(tempPassword),
+          mustChangePassword: true,
         })
         .returning();
     } catch (err) {

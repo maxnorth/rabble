@@ -13,6 +13,8 @@ export const userSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1),
   role: userRoleSchema,
+  /** Invited with a temp password — must set their own before continuing. */
+  mustChangePassword: z.boolean().default(false),
   createdAt: z.string(),
 });
 export type User = z.infer<typeof userSchema>;

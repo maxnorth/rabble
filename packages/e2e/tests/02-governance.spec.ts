@@ -150,6 +150,13 @@ test("enforcement: the member can use the agent but not configure it", async ({
   await memberPage.locator("input[type=email]").fill(memberEmail);
   await memberPage.locator("input[type=password]").fill(memberPassword);
   await memberPage.getByRole("button", { name: "Sign in" }).click();
+
+  // First sign-in with a temp password forces setting a real one
+  await expect(memberPage.getByText("Set your password")).toBeVisible();
+  await memberPage.getByPlaceholder("Temporary password").fill(memberPassword);
+  await memberPage.getByPlaceholder("At least 8 characters").fill("bea-real-password-1");
+  await memberPage.getByRole("button", { name: "Save and continue" }).click();
+  memberPassword = "bea-real-password-1";
   await expect(memberPage.locator(".session-greeting")).toBeVisible();
 
   // Bea is in Platform ⊂ Engineering; the domain grant reaches her.

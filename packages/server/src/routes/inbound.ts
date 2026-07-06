@@ -298,6 +298,112 @@ export async function inboundRoutes(app: FastifyInstance) {
       return { ok: true, sessionId: session!.id };
     });
 
+    scope.addContentTypeParser(
+      "application/x-www-form-urlencoded",
+      { parseAs: "string" },
+      (_req, body, done) => done(null, body),
+    );
+
+    /**
+     * Slack interactivity: Approve/Deny button clicks from the approval DM.
+     * Signed like events; the broker only accepts the decision from the
+     * platform user the approval belongs to.
+     */
+    scope.post("/api/inbound/slack-interactive", async (req, reply) => {
+      const rawBody = req.body as string;
+      const timestamp = String(req.headers["x-slack-request-timestamp"] ?? "");
+      const signature = String(req.headers["x-slack-signature"] ?? "");
+      const age = Math.abs(Date.now() / 1000 - Number(timestamp));
+      if (!timestamp || Number.isNaN(age) || age > 300) {
+        return reply.code(401).send({ error: "Stale or missing timestamp" });
+      }
+      const candidates = await db
+        .select()
+        .from(connections)
+        .where(
+          and(
+            eq(connections.vendor, "slack"),
+            isNotNull(connections.encryptedSigningSecret),
+          ),
+        );
+      const connection = candidates.find((c) => {
+        try {
+          return verifySlackSignature(
+            decryptSecret(c.encryptedSigningSecret!),
+            timestamp,
+            rawBody,
+            signature,
+          );
+        } catch {
+          return false;
+        }
+      });
+      if (!connection) {
+        return reply.code(401).send({ error: "Signature verification failed" });
+      }
+
+      let payload: {
+        type?: string;
+        user?: { id?: string };
+        actions?: Array<{ action_id?: string; value?: string }>;
+      };
+      try {
+        payload = JSON.parse(
+          new URLSearchParams(rawBody).get("payload") ?? "{}",
+        ) as typeof payload;
+      } catch {
+        return reply.code(400).send({ error: "Invalid payload" });
+      }
+      const action = payload.actions?.[0];
+      if (payload.type !== "block_actions" || !action?.value || !payload.user?.id) {
+        return { ok: true, ignored: "unsupported interaction" };
+      }
+
+      const baseUrl = connection.baseUrl ?? "https://slack.com";
+      const token = connection.encryptedToken
+        ? decryptSecret(connection.encryptedToken)
+        : "";
+      const info = await slackApi(baseUrl, token, "users.info", {
+        user: payload.user.id,
+      });
+      const email = (info.user as { profile?: { email?: string } } | undefined)
+        ?.profile?.email;
+      const [decider] = email
+        ? await db
+            .select()
+            .from(users)
+            .where(and(eq(users.orgId, connection.orgId), eq(users.email, email)))
+            .limit(1)
+        : [];
+      if (!decider) return { ok: true, ignored: "unknown user" };
+
+      let ref: { approvalId?: string; sessionId?: string };
+      try {
+        ref = JSON.parse(action.value) as typeof ref;
+      } catch {
+        return reply.code(400).send({ error: "Invalid action value" });
+      }
+      const { decideApproval } = await import("../runtime/approvals.js");
+      const ok =
+        ref.approvalId && ref.sessionId
+          ? decideApproval(
+              ref.approvalId,
+              ref.sessionId,
+              decider.id,
+              action.action_id === "rabble_approve" ? "approve" : "deny",
+            )
+          : false;
+      return {
+        ok: true,
+        resolved: ok,
+        text: ok
+          ? action.action_id === "rabble_approve"
+            ? "Approved — the agent is continuing."
+            : "Denied — the agent was told no."
+          : "This approval already resolved or isn't yours to decide.",
+      };
+    });
+
     scope.post("/api/inbound/slack", async (req, reply) => {
       const rawBody = req.body as string;
       const timestamp = String(req.headers["x-slack-request-timestamp"] ?? "");
@@ -477,6 +583,57 @@ export async function inboundRoutes(app: FastifyInstance) {
           requireApproval: orgSettings.requireApprovalForUserTools,
           sessionApproved,
           interactive: false,
+          // Deliver approval asks as DM buttons instead of auto-denying —
+          // the broker still owns the decision and the timeout.
+          approvalPrompt: async (ask) => {
+            const lookup = await slackApi(baseUrl, token, "users.lookupByEmail", {
+              email: platformUser.email,
+            });
+            const dmUser = (lookup.user as { id?: string } | undefined)?.id;
+            if (!dmUser) return;
+            const value = JSON.stringify({
+              approvalId: ask.approvalId,
+              sessionId: session!.id,
+            });
+            await slackApi(baseUrl, token, "chat.postMessage", {
+              channel: dmUser,
+              text:
+                `${matched.agent.name} wants to run ${ask.toolName}` +
+                `${ask.serverName ? ` via ${ask.serverName}` : ""} acting as you ` +
+                `(from ${session!.surface}).`,
+              blocks: [
+                {
+                  type: "section",
+                  text: {
+                    type: "mrkdwn",
+                    text:
+                      `*Approval needed — acting as you*\n` +
+                      `${matched.agent.name} wants to run \`${ask.toolName}\`` +
+                      `${ask.serverName ? ` via ${ask.serverName}` : ""} on ${session!.surface}.`,
+                  },
+                },
+                {
+                  type: "actions",
+                  elements: [
+                    {
+                      type: "button",
+                      style: "primary",
+                      action_id: "rabble_approve",
+                      text: { type: "plain_text", text: "Approve as me" },
+                      value,
+                    },
+                    {
+                      type: "button",
+                      style: "danger",
+                      action_id: "rabble_deny",
+                      text: { type: "plain_text", text: "Deny" },
+                      value,
+                    },
+                  ],
+                },
+              ],
+            });
+          },
         });
         fullText = result.fullText;
       } catch (err) {

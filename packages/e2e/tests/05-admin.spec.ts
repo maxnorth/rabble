@@ -325,6 +325,96 @@ test("participants can view and continue a shared thread — not manage it", asy
   await beaPage.close();
 });
 
+test("approvals resolve from Slack: DM buttons drive the pending decision", async () => {
+  // The next model call asks for the user-auth tool
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "create_issue",
+      toolArgs: { title: "From Slack with approval" },
+    }),
+  });
+
+  // Fire the delivery WITHOUT awaiting — it blocks on the approval
+  const deliveryPromise = signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C777",
+      user: "U777",
+      text: "File the issue we discussed",
+      ts: "1712.010",
+      thread_ts: "1712.001",
+    },
+  });
+
+  // The approval ask lands as DM buttons; grab the broker reference
+  let value = "";
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{
+          path: string;
+          body: {
+            channel?: string;
+            blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }>;
+          };
+        }>;
+      };
+      const dm = log.requests.find(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.channel === "U777" &&
+          r.body.blocks?.some((b) =>
+            b.elements?.some((el) => el.action_id === "rabble_approve"),
+          ),
+      );
+      if (dm) {
+        value =
+          dm.body.blocks!
+            .flatMap((b) => b.elements ?? [])
+            .find((el) => el.action_id === "rabble_approve")!.value ?? "";
+      }
+      return Boolean(dm);
+    })
+    .toBe(true);
+
+  // Click "Approve as me": Slack posts a signed, form-encoded interaction
+  const payload = JSON.stringify({
+    type: "block_actions",
+    user: { id: "U777" },
+    actions: [{ action_id: "rabble_approve", value }],
+  });
+  const rawForm = `payload=${encodeURIComponent(payload)}`;
+  const ts = String(Math.floor(Date.now() / 1000));
+  const sig = `v0=${createHmac("sha256", "emu-signing-secret")
+    .update(`v0:${ts}:${rawForm}`)
+    .digest("hex")}`;
+  const interaction = await fetch(`${SERVER}/api/inbound/slack-interactive`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/x-www-form-urlencoded",
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sig,
+    },
+    body: rawForm,
+  });
+  expect(((await interaction.json()) as { resolved: boolean }).resolved).toBe(true);
+
+  // The blocked delivery completes: tool ran as Alex, approved from Slack
+  const delivery = await deliveryPromise;
+  expect(delivery.status).toBe(200);
+  expect(await pollFirstToolCall("%File the issue we discussed%")).toMatchObject({
+    name: "create_issue",
+    authType: "user",
+    approval: { status: "approved", decidedByName: "Alex Lin" },
+  });
+});
+
 function signedGithubPost(body: unknown, deliveryId: string, event = "issue_comment") {
   const raw = JSON.stringify(body);
   const sig = `sha256=${createHmac("sha256", "gh-webhook-secret").update(raw).digest("hex")}`;

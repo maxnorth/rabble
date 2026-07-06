@@ -26,6 +26,7 @@ export interface ExecuteTurnInput {
   requireApproval: boolean;
   sessionApproved: boolean;
   interactive: boolean;
+  approvalPrompt?: Parameters<typeof runAgentTurn>[0]["approvalPrompt"];
 }
 
 export interface ExecuteTurnResult {
@@ -64,6 +65,7 @@ export async function executeTurnAndPersist(
     requireApproval: input.requireApproval,
     sessionApproved: input.sessionApproved,
     interactive: input.interactive,
+    approvalPrompt: input.approvalPrompt,
   })) {
     if (event.type === "text") fullText += event.text;
     else if (event.type === "usage") {

@@ -49,9 +49,17 @@ interface AgentTurnInput {
   sessionApproved: boolean;
   /**
    * Whether the surface can host an approval prompt. Non-interactive
-   * surfaces (Slack v1) auto-deny user-auth tools that would need one.
+   * surfaces auto-deny user-auth tools that would need one — unless the
+   * caller supplies approvalPrompt, which delivers the ask out-of-band
+   * (e.g. Slack DM buttons) and the broker still arbitrates the decision.
    */
   interactive: boolean;
+  approvalPrompt?: (request: {
+    approvalId: string;
+    toolName: string;
+    serverName: string | null;
+    input: unknown;
+  }) => Promise<void>;
 }
 
 export type AgentTurnEvent =
@@ -168,7 +176,7 @@ async function buildGovernedTools(
                   (preferences.approvalPosture === "session" && input.sessionApproved));
               if (autoApprove) {
                 approval = { status: "auto-approved", decidedByName: input.user.name };
-              } else if (!input.interactive) {
+              } else if (!input.interactive && !input.approvalPrompt) {
                 // No way to prompt on this surface — refuse the action.
                 approval = { status: "denied", decidedByName: null };
                 const denied: ToolCall = {
@@ -188,6 +196,17 @@ async function buildGovernedTools(
                   sessionId: input.sessionId,
                   userId: input.user.id,
                 });
+                if (!input.interactive && input.approvalPrompt) {
+                  // Deliver the ask where the user actually is.
+                  void input
+                    .approvalPrompt({
+                      approvalId,
+                      toolName: call.name,
+                      serverName: call.serverName ?? null,
+                      input: call.input,
+                    })
+                    .catch(() => {});
+                }
                 emit({
                   type: "approval-request",
                   approvalId,

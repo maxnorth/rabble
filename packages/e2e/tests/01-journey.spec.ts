@@ -207,6 +207,13 @@ test("sessions: targeted chat streams a reply and persists the transcript", asyn
   expect(messages[0]!.content).toBe("What is the deploy status?");
   expect(messages[1]!.content).toBe("Mock reply to: What is the deploy status?");
   expect(messages[3]!.content).toBe("Mock reply to: And staging?");
+
+  // Agent messages snapshot the model that produced them (spend accuracy)
+  const modeled = await dbQuery<{ role: string; model_id: string | null }>(
+    "SELECT role, model_id FROM messages WHERE session_id = $1 ORDER BY created_at",
+    [sessions[0]!.id],
+  );
+  expect(modeled.filter((m) => m.role === "agent").every((m) => m.model_id)).toBe(true);
 });
 
 test("sessions: Auto target resolves to an active agent", async () => {

@@ -236,7 +236,7 @@ export async function statsRoutes(app: FastifyInstance) {
       FROM messages m
       JOIN sessions s ON s.id = m.session_id
       JOIN agents a ON a.id = s.agent_id
-      LEFT JOIN models mo ON mo.id = a.model_id
+      LEFT JOIN models mo ON mo.id = coalesce(m.model_id, a.model_id)
       WHERE s.org_id = ${orgId} AND m.created_at >= ${since}
         ${agentId ? sql`AND s.agent_id = ${agentId}` : sql``}
         ${userId ? sql`AND s.user_id = ${userId}` : sql``}
@@ -265,7 +265,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .from(messages)
       .innerJoin(sessions, eq(messages.sessionId, sessions.id))
       .innerJoin(agents, eq(sessions.agentId, agents.id))
-      .leftJoin(sql`models mo`, sql`mo.id = agents.model_id`)
+      .leftJoin(sql`models mo`, sql`mo.id = coalesce(messages.model_id, agents.model_id)`)
       .where(and(eq(sessions.orgId, orgId), gte(messages.createdAt, since)))
       .groupBy(sql`coalesce(mo.display_name, '(no model)')`)
       .orderBy(sql`count(*) DESC`);

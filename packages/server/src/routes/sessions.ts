@@ -334,6 +334,7 @@ export async function sessionRoutes(app: FastifyInstance) {
           toolCalls,
           inputTokens,
           outputTokens,
+          modelId: model?.id ?? null,
         })
         .returning();
       await db

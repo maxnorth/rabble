@@ -169,6 +169,8 @@ export const messages = pgTable("messages", {
   toolCalls: jsonb("tool_calls").notNull().default([]),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
+  // Which model produced this agent message (spend is priced at use time)
+  modelId: uuid("model_id").references(() => models.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

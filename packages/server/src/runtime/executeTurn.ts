@@ -78,6 +78,7 @@ export async function executeTurnAndPersist(
     toolCalls,
     inputTokens,
     outputTokens,
+    modelId: input.model?.id ?? null,
   });
   await db
     .update(sessions)

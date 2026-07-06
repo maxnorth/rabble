@@ -56,3 +56,41 @@ Playwright against a fresh database, the production server build, and a mock
 OpenAI-compatible streaming endpoint (no external API keys needed). Tests
 assert three layers: what the UI shows, what rows landed in the database, and
 that the server log is error-free. CI runs the suite on every push/PR.
+
+## Gating semantics
+
+Gating suites run at write time: a behavior-affecting change to an agent
+(name, description, instructions, tone, model) executes every gating
+suite's cases against the *candidate* configuration before anything
+persists. Any failing case blocks the save with the failure details and an
+`eval.gate.block` audit row; a pass is audited too. If gating suites with
+cases exist but the agent has no runnable model, the save is refused
+rather than silently ungated. Gate runs execute inline in the PATCH for
+now — moving them to Hatchet jobs (with re-check-then-commit) is the
+planned follow-up when the scheduler lands.
+
+## Surfaces (Slack v1)
+
+Inbound delivery uses Slack's Events API with the standard v0 HMAC signing
+scheme; the signing secret lives encrypted on the connection. One Slack
+thread maps to one session (`sessions.surface_key`); the platform user is
+resolved by the Slack profile email, and strangers get a refusal instead
+of a session. Unattended surfaces cannot host approval prompts, so
+user-auth tools auto-deny with a pointer to the web app (the org approval
+floor is honored). Redeliveries are deduped by event id and retry header.
+
+## Cost accounting
+
+Models carry optional USD prices per million tokens (catalog defaults for
+built-ins, user-entered for custom). Agent messages snapshot the model
+that produced them, so spend is priced at the model used at the time, not
+the agent's current model; unpriced models contribute $0 and the UI says
+so. Spend is derived at query time — no materialized ledger yet.
+
+## Retention
+
+`retentionDays` is enforced by deleting sessions whose last activity is
+older than the window: once at server boot and on demand from Settings
+(audited with the removed count). The recurring sweep becomes a Hatchet
+job when the scheduler lands — per the scheduling decision, no interim
+cron.

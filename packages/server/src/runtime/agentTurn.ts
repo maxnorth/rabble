@@ -67,7 +67,7 @@ export type AgentTurnEvent =
       input: unknown;
     };
 
-function buildSystemPrompt(
+export function buildSystemPrompt(
   agent: typeof agents.$inferSelect,
   preferences: { responseStyle: string; suggestNextSteps: boolean },
 ): string {

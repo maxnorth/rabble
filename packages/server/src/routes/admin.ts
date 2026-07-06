@@ -334,6 +334,49 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   // Invite = create a member with a temporary password (no email in OSS yet)
+  // Role changes and deactivation. The owner is untouchable; nobody edits
+  // themselves (no self-demotion / self-lockout).
+  app.patch("/api/members/:id", { preHandler: requireOrgAdmin }, async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { role, active } = req.body as {
+      role?: "admin" | "member";
+      active?: boolean;
+    };
+    if (id === req.user!.id) {
+      return reply.code(400).send({ error: "You can't change your own account here" });
+    }
+    const [target] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, id), eq(users.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!target) return reply.code(404).send({ error: "Member not found" });
+    if (target.role === "owner") {
+      return reply.code(403).send({ error: "The owner account can't be modified" });
+    }
+    const updates: Partial<typeof users.$inferInsert> = {};
+    if (role === "admin" || role === "member") updates.role = role;
+    if (typeof active === "boolean") updates.active = active;
+    if (Object.keys(updates).length === 0) {
+      return reply.code(400).send({ error: "Nothing to update" });
+    }
+    await db.update(users).set(updates).where(eq(users.id, id));
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "member.update",
+      targetType: "user",
+      targetId: id,
+      summary:
+        typeof active === "boolean" && !active
+          ? `Deactivated ${target.name}`
+          : typeof active === "boolean"
+            ? `Reactivated ${target.name}`
+            : `Set ${target.name}'s role to ${role}`,
+    });
+    return { ok: true };
+  });
+
   app.post("/api/members", { preHandler: requireOrgAdmin }, async (req, reply) => {
     const { name, email, role } = req.body as {
       name: string;

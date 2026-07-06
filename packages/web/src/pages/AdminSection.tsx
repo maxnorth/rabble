@@ -1246,6 +1246,11 @@ function SettingsPage() {
     mutationFn: () => api.renameOrg(orgName!),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["org"] }),
   });
+  const updateMember = useMutation({
+    mutationFn: ({ id, ...body }: { id: string; role?: "admin" | "member"; active?: boolean }) =>
+      api.updateMember(id, body),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["users"] }),
+  });
   const doInvite = useMutation({
     mutationFn: () => api.inviteMember(invite),
     onSuccess: (result) => {
@@ -1301,14 +1306,46 @@ function SettingsPage() {
       )}
       <div className="row-group">
         {users.data?.users.map((u) => (
-          <div className="row" key={u.id}>
+          <div className="row" key={u.id} style={{ opacity: u.active ? 1 : 0.55 }}>
             <div className="grow">
               <div className="title">{u.name}</div>
               <div className="sub mono">{u.email}</div>
             </div>
-            <span className={`chip ${u.role === "owner" ? "purple" : u.role === "admin" ? "blue" : ""}`}>
-              {u.role}
-            </span>
+            {!u.active && <span className="chip amber">deactivated</span>}
+            {u.role === "owner" ? (
+              <span className="chip purple">owner</span>
+            ) : (
+              <>
+                <div className="segmented">
+                  {(["member", "admin"] as const).map((r) => (
+                    <button
+                      key={r}
+                      className={u.role === r ? "active" : ""}
+                      disabled={updateMember.isPending}
+                      onClick={() =>
+                        u.role !== r && updateMember.mutate({ id: u.id, role: r })
+                      }
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  className={u.active ? "btn danger" : "btn"}
+                  disabled={updateMember.isPending}
+                  onClick={() => {
+                    if (
+                      !u.active ||
+                      confirm(`Deactivate ${u.name}? They can't sign in until reactivated.`)
+                    ) {
+                      updateMember.mutate({ id: u.id, active: !u.active });
+                    }
+                  }}
+                >
+                  {u.active ? "Deactivate" : "Reactivate"}
+                </button>
+              </>
+            )}
           </div>
         ))}
         <div className="row">

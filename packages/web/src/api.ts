@@ -210,9 +210,19 @@ export const api = {
     del<{ ok: true }>(`/api/teams/${teamId}/members/${userId}`),
   deleteTeam: (id: string) => del<{ ok: true }>(`/api/teams/${id}`),
   listUsers: () =>
-    get<{ users: Array<{ id: string; name: string; email: string; role: string }> }>(
-      "/api/users",
-    ),
+    get<{
+      users: Array<{
+        id: string;
+        name: string;
+        email: string;
+        role: string;
+        active: boolean;
+      }>;
+    }>("/api/users"),
+  changePassword: (body: { currentPassword: string; newPassword: string }) =>
+    post<{ ok: true }>("/api/auth/change-password", body),
+  updateMember: (id: string, body: { role?: "admin" | "member"; active?: boolean }) =>
+    patch<{ ok: true }>(`/api/members/${id}`, body),
 
   // domains
   listDomains: () => get<{ domains: Domain[] }>("/api/domains"),

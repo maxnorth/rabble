@@ -60,7 +60,14 @@ export function ProfileSection() {
               {me.data?.user.role}
             </span>
           </div>
-          {page === "Connected accounts" ? <ConnectedAccounts /> : <AgentPreferences />}
+          {page === "Connected accounts" ? (
+            <>
+              <ConnectedAccounts />
+              <ChangePassword />
+            </>
+          ) : (
+            <AgentPreferences />
+          )}
         </div>
       </main>
     </>
@@ -274,6 +281,62 @@ function AgentPreferences() {
       <button className="btn primary" disabled={save.isPending} onClick={() => save.mutate()}>
         {saved ? "Saved ✓" : "Save preferences"}
       </button>
+    </>
+  );
+}
+
+function ChangePassword() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [done, setDone] = useState(false);
+  const change = useMutation({
+    mutationFn: () => api.changePassword({ currentPassword: current, newPassword: next }),
+    onSuccess: () => {
+      setCurrent("");
+      setNext("");
+      setDone(true);
+      setTimeout(() => setDone(false), 2000);
+    },
+  });
+  return (
+    <>
+      <div className="sidebar-title" style={{ padding: "18px 0 8px" }}>
+        Security
+      </div>
+      <div className="row-group">
+        <div className="row">
+          <div className="grow">
+            <div className="title">Password</div>
+            <div className="sub">At least 8 characters.</div>
+          </div>
+          <input
+            type="password"
+            placeholder="Current password"
+            value={current}
+            onChange={(e) => setCurrent(e.target.value)}
+            style={{ width: 170 }}
+          />
+          <input
+            type="password"
+            placeholder="New password"
+            value={next}
+            onChange={(e) => setNext(e.target.value)}
+            style={{ width: 170 }}
+          />
+          <button
+            className="btn"
+            disabled={!current || next.length < 8 || change.isPending}
+            onClick={() => change.mutate()}
+          >
+            {done ? "Changed ✓" : "Change"}
+          </button>
+        </div>
+      </div>
+      {change.isError && (
+        <p className="error-text" style={{ marginTop: 8 }}>
+          {(change.error as Error).message}
+        </p>
+      )}
     </>
   );
 }

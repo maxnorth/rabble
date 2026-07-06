@@ -78,9 +78,36 @@ export async function authRoutes(app: FastifyInstance) {
     if (!user || !verifyPassword(body.password, user.passwordHash)) {
       return reply.code(401).send({ error: "Invalid email or password" });
     }
+    if (!user.active) {
+      return reply.code(403).send({ error: "This account has been deactivated" });
+    }
     await createAuthSession(reply, user.id);
     return { user: serializeUser(user) };
   });
+
+  app.post(
+    "/api/auth/change-password",
+    { preHandler: requireUser },
+    async (req, reply) => {
+      const { currentPassword, newPassword } = req.body as {
+        currentPassword?: string;
+        newPassword?: string;
+      };
+      if (!currentPassword || !newPassword || newPassword.length < 8) {
+        return reply
+          .code(400)
+          .send({ error: "New password must be at least 8 characters" });
+      }
+      if (!verifyPassword(currentPassword, req.user!.passwordHash)) {
+        return reply.code(403).send({ error: "Current password is incorrect" });
+      }
+      await db
+        .update(users)
+        .set({ passwordHash: hashPassword(newPassword) })
+        .where(eq(users.id, req.user!.id));
+      return { ok: true };
+    },
+  );
 
   app.post("/api/auth/logout", async (req, reply) => {
     await destroyAuthSession(req, reply);

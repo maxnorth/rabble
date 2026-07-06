@@ -601,6 +601,68 @@ test("model grants: restricting a model cascades through teams", async ({
     .click();
 });
 
+test("member lifecycle: password change, deactivate, reactivate", async ({
+  browser,
+}) => {
+  // Casey changes their temp password from the profile page
+  const caseyPage = await browser.newPage();
+  await caseyPage.goto("/");
+  await caseyPage.locator("input[type=email]").fill("casey@acme.com");
+  await caseyPage.locator("input[type=password]").fill(caseyPassword);
+  await caseyPage.getByRole("button", { name: "Sign in" }).click();
+  await expect(caseyPage.locator(".session-greeting")).toBeVisible();
+
+  await caseyPage.locator("nav a[title*='profile']").click();
+  await caseyPage.getByPlaceholder("Current password").fill(caseyPassword);
+  await caseyPage.getByPlaceholder("New password").fill("casey-new-pass-1");
+  await caseyPage.getByRole("button", { name: "Change", exact: true }).click();
+  await expect(caseyPage.getByRole("button", { name: "Changed ✓" })).toBeVisible();
+  const oldPassword = caseyPassword;
+  caseyPassword = "casey-new-pass-1";
+
+  // The old password no longer signs in; the new one does
+  const probe = await browser.newPage();
+  await probe.goto("/");
+  await probe.locator("input[type=email]").fill("casey@acme.com");
+  await probe.locator("input[type=password]").fill(oldPassword);
+  await probe.getByRole("button", { name: "Sign in" }).click();
+  await expect(probe.getByText("Invalid email or password")).toBeVisible();
+  await probe.locator("input[type=password]").fill(caseyPassword);
+  await probe.getByRole("button", { name: "Sign in" }).click();
+  await expect(probe.locator(".session-greeting")).toBeVisible();
+  await probe.close();
+
+  // Alex deactivates Casey: sign-in blocked AND live cookies die
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Settings" }).click();
+  const caseyRow = page.locator(".row", { hasText: "Casey Kim" });
+  page.once("dialog", (dialog) => void dialog.accept());
+  await caseyRow.getByRole("button", { name: "Deactivate" }).click();
+  await expect(caseyRow.locator(".chip", { hasText: "deactivated" })).toBeVisible();
+
+  const dead = await caseyPage.request.get("/api/auth/me");
+  expect(dead.status()).toBe(401);
+  const blocked = await browser.newPage();
+  await blocked.goto("/");
+  await blocked.locator("input[type=email]").fill("casey@acme.com");
+  await blocked.locator("input[type=password]").fill(caseyPassword);
+  await blocked.getByRole("button", { name: "Sign in" }).click();
+  await expect(blocked.getByText("This account has been deactivated")).toBeVisible();
+  await blocked.close();
+  await caseyPage.close();
+
+  // Reactivation restores access; the lifecycle is on the audit trail
+  await caseyRow.getByRole("button", { name: "Reactivate" }).click();
+  await expect(caseyRow.locator(".chip", { hasText: "deactivated" })).toHaveCount(0);
+  const audit = await dbQuery<{ summary: string }>(
+    "SELECT summary FROM audit_events WHERE action = 'member.update' ORDER BY created_at",
+  );
+  expect(audit.map((a) => a.summary)).toEqual([
+    "Deactivated Casey Kim",
+    "Reactivated Casey Kim",
+  ]);
+});
+
 test("audit log exports as CSV", async () => {
   const res = await page.request.get("/api/audit?format=csv");
   expect(res.ok()).toBe(true);

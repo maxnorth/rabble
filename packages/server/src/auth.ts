@@ -57,7 +57,7 @@ export async function resolveUser(req: FastifyRequest): Promise<AuthedUser | nul
       .innerJoin(users, eq(apiKeys.createdBy, users.id))
       .where(eq(apiKeys.keyHash, hashAuthToken(token)))
       .limit(1);
-    if (!row || row.key.revokedAt) return null;
+    if (!row || row.key.revokedAt || !row.user.active) return null;
     void db
       .update(apiKeys)
       .set({ lastUsedAt: new Date() })
@@ -81,7 +81,8 @@ export async function resolveUser(req: FastifyRequest): Promise<AuthedUser | nul
       ),
     )
     .limit(1);
-  return rows[0]?.user ?? null;
+  const user = rows[0]?.user ?? null;
+  return user?.active ? user : null;
 }
 
 export async function createAuthSession(

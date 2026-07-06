@@ -259,7 +259,13 @@ export async function teamRoutes(app: FastifyInstance) {
   // Org members (for pickers and Settings)
   app.get("/api/users", async (req) => {
     const rows = await db
-      .select({ id: users.id, name: users.name, email: users.email, role: users.role })
+      .select({
+        id: users.id,
+        name: users.name,
+        email: users.email,
+        role: users.role,
+        active: users.active,
+      })
       .from(users)
       .where(eq(users.orgId, req.user!.orgId))
       .orderBy(users.name);

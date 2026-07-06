@@ -1,5 +1,7 @@
 # Rabble
 
+[![CI](https://github.com/maxnorth/rabble/actions/workflows/ci.yml/badge.svg)](https://github.com/maxnorth/rabble/actions/workflows/ci.yml)
+
 An open-source platform where a whole organization uses AI agents — and a
 flexible subset of people create, configure, and govern them. Think "GitHub
 for agents": agents as governed org citizens with identities, scoped access,
@@ -137,4 +139,5 @@ whole journey in a real browser — owner setup, login, model registration,
 agent creation, streamed chat — asserting UI state, database rows, and clean
 server logs at every step. CI runs it on every push.
 
-Product context and design decisions live in [`docs/`](docs/).
+Product context and design decisions live in [`docs/`](docs/) — including
+[connecting a real Slack workspace](docs/SURFACES.md) as an agent surface.

@@ -77,6 +77,26 @@ test("teams: create hierarchy and add the member", async () => {
   ]);
 });
 
+test("teams overview: hierarchy cards and the people grid", async () => {
+  // No team selected -> the overview: cascade explainer, cards, people
+  await page.goto("/teams");
+  await expect(page.getByRole("heading", { name: "Teams & people" })).toBeVisible();
+  await expect(page.getByText("Access flows through teams")).toBeVisible();
+
+  const subTeamRow = page.locator(".row", { hasText: "Platform" });
+  await expect(
+    subTeamRow.locator(".chip", { hasText: "sub-team of Engineering" }),
+  ).toBeVisible();
+
+  // People grid lists both org members
+  await expect(page.locator(".card", { hasText: "alex@acme.com" })).toBeVisible();
+  await expect(page.locator(".card", { hasText: "bea@acme.com" })).toBeVisible();
+
+  // A team card navigates to its detail page
+  await page.locator(".row", { hasText: "Engineering" }).first().click();
+  await expect(page.getByRole("heading", { name: "Engineering" })).toBeVisible();
+});
+
 test("domains: create Engineering domain and assign the agent", async () => {
   await page.locator("nav a[title='Agents']").click();
   await page.getByTitle("Add domain").click();

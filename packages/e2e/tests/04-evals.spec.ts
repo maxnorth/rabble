@@ -109,6 +109,29 @@ test("suites: create, add a case, run it", async () => {
   expect(results[0]!.output).toContain("Mock reply to:");
 });
 
+test("suites: marking a suite as gating persists and shows the chip", async () => {
+  // Still on the agent's evals tab from the previous test
+  const suiteRow = page.locator(".row", { hasText: "Smoke" });
+  // Controlled checkbox: state flips after the PATCH + refetch, so click()
+  // (check() insists on an immediate state change).
+  await suiteRow.locator("input[type=checkbox]").click();
+  await expect(suiteRow.locator(".chip", { hasText: "gating" })).toBeVisible();
+
+  await expect
+    .poll(async () => {
+      const suites = await dbQuery<{ gating: boolean }>(
+        "SELECT gating FROM eval_suites WHERE name = 'Smoke'",
+      );
+      return suites[0]?.gating;
+    })
+    .toBe(true);
+
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'eval.suite.update'",
+  );
+  expect(audit).toHaveLength(1);
+});
+
 test("freeze: a judged session becomes a suite case from the eval drawer", async () => {
   // Back to the judged session; the criteria chip opens the eval drawer
   await page.locator("nav a[title='Sessions']").click();

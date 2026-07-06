@@ -13,6 +13,7 @@ import { dbQuery, pollFirstToolCall } from "./db";
 test.describe.configure({ mode: "serial" });
 
 let page: Page;
+let caseyPassword = "";
 
 test.beforeAll(async ({ browser }) => {
   page = await browser.newPage();
@@ -254,6 +255,7 @@ test("org policies: designated creators and the approval floor are enforced", as
   await page.getByRole("button", { name: "Invite" }).click();
   const credentials = await page.locator("code.mono").innerText();
   const [email, tempPassword] = credentials.split(" / ");
+  caseyPassword = tempPassword!;
 
   // The member cannot create agents while creation is designated-only
   const memberPage = await browser.newPage();
@@ -297,6 +299,67 @@ test("org policies: designated creators and the approval floor are enforced", as
     name: "create_issue",
     approval: { status: "approved" },
   });
+});
+
+test("model grants: restricting a model cascades through teams", async ({
+  browser,
+}) => {
+  // Alex restricts "Mock Model" to the Engineering team via the model detail
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Models" }).click();
+  await page.locator(".row", { hasText: "Mock Model" }).click();
+  const detail = page.locator(".card", { hasText: "Used by" });
+  await expect(detail).toBeVisible();
+  await detail.locator("select").selectOption({ label: "Engineering" });
+  await detail.getByRole("button", { name: "+ Add", exact: true }).click();
+  await expect(
+    detail.locator(".row", { hasText: "can talk to it" }),
+  ).toContainText("Engineering");
+
+  await expect
+    .poll(async () => {
+      const grants = await dbQuery<{ target_type: string }>(
+        "SELECT target_type FROM grants WHERE target_type = 'model'",
+      );
+      return grants.length;
+    })
+    .toBe(1);
+
+  // Casey is in no team — the restricted model is off limits
+  const caseyPage = await browser.newPage();
+  await caseyPage.goto("/");
+  await caseyPage.locator("input[type=email]").fill("casey@acme.com");
+  await caseyPage.locator("input[type=password]").fill(caseyPassword);
+  await caseyPage.getByRole("button", { name: "Sign in" }).click();
+  await expect(caseyPage.locator(".session-greeting")).toBeVisible();
+  const before = (await (await caseyPage.request.get("/api/models")).json()) as {
+    models: Array<{ displayName: string; canUse: boolean }>;
+  };
+  expect(before.models.find((m) => m.displayName === "Mock Model")?.canUse).toBe(false);
+
+  // Alex adds Casey to Platform (a sub-team of Engineering) — the team
+  // grant cascades down and the model opens up for Casey.
+  await page.locator("nav a[title='Teams']").click();
+  await page.locator(".sidebar-item", { hasText: "› Platform" }).click();
+  await page.locator("select").selectOption({ label: "Casey Kim (casey@acme.com)" });
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+  await expect(page.locator(".row", { hasText: "Casey Kim" })).toBeVisible();
+
+  const after = (await (await caseyPage.request.get("/api/models")).json()) as {
+    models: Array<{ displayName: string; canUse: boolean }>;
+  };
+  expect(after.models.find((m) => m.displayName === "Mock Model")?.canUse).toBe(true);
+  await caseyPage.close();
+
+  // Clean up the restriction so later model use stays unaffected
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Models" }).click();
+  await page.locator(".row", { hasText: "Mock Model" }).click();
+  await page
+    .locator(".card", { hasText: "Used by" })
+    .locator(".row", { hasText: "Engineering" })
+    .getByRole("button", { name: "Revoke" })
+    .click();
 });
 
 test("audit log exports as CSV", async () => {

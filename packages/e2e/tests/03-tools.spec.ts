@@ -77,6 +77,11 @@ test("agent config: attach server, set create_issue to user auth", async () => {
       return configs.find((c) => c.tool_name === "create_issue")?.auth_type;
     })
     .toBe("user");
+
+  // The server header summarizes enablement and the auth split
+  await expect(page.getByText("2 of 2 enabled")).toBeVisible();
+  await expect(page.locator(".chip", { hasText: "1 service" })).toBeVisible();
+  await expect(page.locator(".chip", { hasText: "1 user" })).toBeVisible();
 });
 
 test("service-auth tool runs inline with no approval", async () => {

@@ -28,6 +28,10 @@ run = "pnpm dev"
 description = "Build all packages"
 run = "pnpm build"
 
+[tasks.seed-demo]
+description = "Fill the database with a lived-in demo org (agents, history, evals, spend)"
+run = "pnpm --filter @rabblehq/server seed:demo"
+
 [tasks.migrate]
 description = "Apply pending database migrations"
 run = "pnpm --filter @rabblehq/server db:migrate"

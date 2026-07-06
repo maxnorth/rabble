@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "tsx src/db/migrate.ts",
+    "seed:demo": "tsx src/db/seedDemo.ts",
     "test": "vitest run"
   },
   "dependencies": {

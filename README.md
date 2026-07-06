@@ -83,6 +83,12 @@ pnpm dev
 The web app runs at http://localhost:5173 (dev, hot reload) and proxies API
 calls to the server at http://localhost:3080.
 
+Want it to look lived-in? `mise run seed-demo` (or
+`pnpm --filter @rabblehq/server seed:demo`) fills the database with a demo
+org — five agents with history, teams/domains/grants, eval trends, and
+spend — no API keys needed. On a fresh database it also creates
+`demo@acme.dev` / `demo-password-1`.
+
 ## Models
 
 Rabble's model registry distinguishes two kinds of models:

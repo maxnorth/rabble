@@ -591,8 +591,31 @@ export async function seedDemo(): Promise<void> {
     })),
   );
 
+  // An open access request (filed via the Builder) so Admin › Access
+  // requests demos with real track-record evidence behind the decision.
+  const { accessRequests } = await import("./schema.js");
+  await db.insert(accessRequests).values({
+    orgId,
+    requesterUserId: teammates[1]!.id, // Marco (member)
+    targetType: "agent",
+    targetId: byName.get("Deploy Gate")!.id,
+    accessRight: "edit",
+    reason: "Deploy Gate keeps missing our staging freeze window — I want to tune its checklist.",
+    via: "builder",
+    createdAt: daysAgo(0, 4),
+  });
+  await db.insert(auditEvents).values({
+    orgId,
+    actorUserId: teammates[1]!.id,
+    action: "access.request",
+    targetType: "agent",
+    targetId: byName.get("Deploy Gate")!.id,
+    summary: 'Requested edit on agent "Deploy Gate" via Builder',
+    createdAt: daysAgo(0, 4),
+  });
+
   console.log(
-    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, audit trail`,
+    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, an open access request, audit trail`,
   );
 }
 

@@ -172,6 +172,10 @@ export const messages = pgTable("messages", {
   outputTokens: integer("output_tokens").notNull().default(0),
   // Which model produced this agent message (spend is priced at use time)
   modelId: uuid("model_id").references(() => models.id, { onDelete: "set null" }),
+  // Who wrote this user message (multi-participant surface threads)
+  authorUserId: uuid("author_user_id").references(() => users.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

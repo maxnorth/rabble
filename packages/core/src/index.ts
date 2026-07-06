@@ -220,6 +220,8 @@ export const messageSchema = z.object({
   id: z.string().uuid(),
   sessionId: z.string().uuid(),
   role: messageRoleSchema,
+  /** Display name of the human who wrote a user message (null = unknown/agent). */
+  authorName: z.string().nullable().default(null),
   content: z.string(),
   toolCalls: z.array(toolCallSchema),
   createdAt: z.string(),

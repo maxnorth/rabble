@@ -43,9 +43,12 @@ export async function executeTurnAndPersist(
     .from(messages)
     .where(eq(messages.sessionId, input.sessionId))
     .orderBy(messages.createdAt);
-  await db
-    .insert(messages)
-    .values({ sessionId: input.sessionId, role: "user", content: input.content });
+  await db.insert(messages).values({
+    sessionId: input.sessionId,
+    role: "user",
+    content: input.content,
+    authorUserId: input.user.id,
+  });
 
   let fullText = "";
   let inputTokens = 0;

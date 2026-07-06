@@ -8,7 +8,7 @@ import {
 } from "@rabblehq/core";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { agents, messages, models, sessions } from "../db/schema.js";
+import { agents, messages, models, sessions, users } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
@@ -121,8 +121,9 @@ export async function sessionRoutes(app: FastifyInstance) {
     if (!row) return reply.code(404).send({ error: "Session not found" });
 
     const history = await db
-      .select()
+      .select({ message: messages, authorName: users.name })
       .from(messages)
+      .leftJoin(users, eq(messages.authorUserId, users.id))
       .where(eq(messages.sessionId, id))
       .orderBy(messages.createdAt);
 
@@ -149,7 +150,10 @@ export async function sessionRoutes(app: FastifyInstance) {
         agentIcon: row.agentIcon ?? "",
         agentColor: row.agentColor ?? "",
       },
-      messages: history.map(serializeMessage),
+      messages: history.map((h) => ({
+        ...serializeMessage(h.message),
+        authorName: h.authorName,
+      })),
       evalResults: evals,
     };
   });
@@ -275,11 +279,16 @@ export async function sessionRoutes(app: FastifyInstance) {
 
       const [userMessage] = await db
         .insert(messages)
-        .values({ sessionId: id, role: "user", content: body.content })
+        .values({
+          sessionId: id,
+          role: "user",
+          content: body.content,
+          authorUserId: req.user!.id,
+        })
         .returning();
       sendEvent(reply, {
         type: "user-message",
-        message: serializeMessage(userMessage!),
+        message: { ...serializeMessage(userMessage!), authorName: req.user!.name },
       });
 
       if (history.length === 0) {
@@ -343,7 +352,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         .where(eq(sessions.id, id));
       sendEvent(reply, {
         type: "done",
-        message: serializeMessage(agentMessage!),
+        message: { ...serializeMessage(agentMessage!), authorName: null },
       });
 
       // Live evals: judge this session against the agent's criteria in the

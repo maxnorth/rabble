@@ -205,6 +205,40 @@ test("slack surface delivery: a channel message becomes a governed session", asy
   );
   expect(followUp.map((m) => m.role)).toEqual(["user", "agent", "user", "agent"]);
 
+  // Bea joins the same thread: same session, message attributed to her
+  await fetch(`${EMULATOR}/admin/slack`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ users: { U999: "bea@acme.com" } }),
+  });
+  await signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C777",
+      user: "U999",
+      text: "Adding context: it started after the cache migration",
+      ts: "1712.003",
+      thread_ts: "1712.001",
+    },
+  });
+  const authored = await dbQuery<{ content: string; author: string | null }>(
+    `SELECT m.content, u.name AS author FROM messages m
+     LEFT JOIN users u ON u.id = m.author_user_id
+     WHERE m.session_id = $1 AND m.role = 'user' ORDER BY m.created_at`,
+    [session!.id],
+  );
+  expect(authored.map((m) => m.author)).toEqual(["Alex Lin", "Alex Lin", "Bea Ortiz"]);
+
+  // Alex opens the shared thread: Bea's message carries her name
+  await page.locator("nav a[title='Sessions']").click();
+  await page
+    .locator(".sidebar-item", { hasText: "Deploy status from Slack?" })
+    .click();
+  await expect(
+    page.locator(".msg-user", { hasText: "Adding context" }),
+  ).toContainText("Bea Ortiz");
+
   // Someone without a Rabble account gets a polite refusal, not a session
   await signedSlackPost({
     type: "event_callback",
@@ -236,7 +270,7 @@ test("slack surface delivery: a channel message becomes a governed session", asy
     .click();
   await expect(page.locator(".chip", { hasText: "Slack #eng-oncall" })).toBeVisible();
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to: And staging?",
+    "Mock reply to: Adding context: it started after the cache migration",
   );
 });
 

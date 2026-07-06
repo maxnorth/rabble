@@ -73,7 +73,9 @@ export function serializeSession(row: typeof sessions.$inferSelect): Session {
   };
 }
 
-export function serializeMessage(row: typeof messages.$inferSelect): Message {
+export function serializeMessage(
+  row: typeof messages.$inferSelect,
+): Omit<Message, "authorName"> {
   return {
     id: row.id,
     sessionId: row.sessionId,

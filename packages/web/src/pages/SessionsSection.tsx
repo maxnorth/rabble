@@ -509,6 +509,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     (a) => a.id === session.data?.session.agentId,
   );
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.getPreferences });
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me });
   const inlineToolCalls = prefs.data?.preferences.inlineToolCalls ?? true;
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const navigate = useNavigate();
@@ -794,6 +795,18 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             {messages.map((m) =>
               m.role === "user" ? (
                 <div key={m.id} className="msg-user">
+                  {m.authorName && m.authorName !== me.data?.user.name && (
+                    <div
+                      style={{
+                        fontSize: 10.5,
+                        color: "var(--text-muted)",
+                        marginBottom: 3,
+                        textAlign: "right",
+                      }}
+                    >
+                      {m.authorName}
+                    </div>
+                  )}
                   {m.content}
                 </div>
               ) : (

@@ -24,7 +24,7 @@ export async function domainRoutes(app: FastifyInstance) {
     const rows = await db
       .select({
         domain: domains,
-        agentCount: sql<number>`(SELECT count(*)::int FROM agents WHERE agents.domain_id = ${domains.id})`,
+        agentCount: sql<number>`(SELECT count(*)::int FROM agents a WHERE a.domain_id = domains.id)`,
       })
       .from(domains)
       .where(eq(domains.orgId, req.user!.orgId))

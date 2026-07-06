@@ -12,10 +12,13 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "db:migrate": "pnpm --filter @rabble/server db:migrate",
-    "test:e2e": "turbo run build && pnpm --filter @rabble/e2e test"
+    "test:e2e": "turbo run build && pnpm --filter @rabble/e2e e2e",
+    "test": "turbo run test"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild"]
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
   },
   "devDependencies": {
     "turbo": "^2.5.0",

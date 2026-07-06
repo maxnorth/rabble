@@ -41,11 +41,11 @@ export async function evalRoutes(app: FastifyInstance) {
         criterion: evalCriteria,
         passRate: sql<number | null>`(
           SELECT round(avg(CASE WHEN r.passed THEN 100.0 ELSE 0.0 END))::int
-          FROM eval_results r WHERE r.criterion_id = ${evalCriteria.id}
+          FROM eval_results r WHERE r.criterion_id = eval_criteria.id
         )`,
         sessionCount: sql<number>`(
           SELECT count(DISTINCT r.session_id)::int
-          FROM eval_results r WHERE r.criterion_id = ${evalCriteria.id}
+          FROM eval_results r WHERE r.criterion_id = eval_criteria.id
         )`,
       })
       .from(evalCriteria)

@@ -5,9 +5,13 @@ flexible subset of people create, configure, and govern them. Think "GitHub
 for agents": agents as governed org citizens with identities, scoped access,
 measured track records, and full auditability.
 
-> Early development. The current milestone is a vertical slice: set up an
-> owner account, register a model, create an agent, and chat with it in a
-> streaming session UI.
+What works today: streaming agent sessions with inline tool calls and
+in-thread approval cards (service vs. user auth on every tool), an MCP
+server library with per-agent tool configuration, teams / domains / grants
+with real enforcement, live eval criteria (LLM-judged against real
+sessions) and offline eval suites, connections, scoped API keys, a
+control-plane audit log, org stats, and per-user profiles — all built on
+the design prototype's dark, dense visual system.
 
 ## Architecture
 
@@ -18,6 +22,8 @@ TypeScript monorepo (pnpm workspaces + Turborepo):
 | `packages/core` | Shared domain types and Zod schemas (the API contract between server and web) |
 | `packages/server` | Fastify API + agent runtime: auth, agents, model registry, sessions with SSE streaming, Drizzle ORM on Postgres |
 | `packages/web` | React (Vite) app: session experience + management surface |
+| `packages/emulator` | Scriptable fakes of external services (Anthropic, OpenAI, MCP, Slack) for dev & e2e — the app only ever sees different base URLs |
+| `packages/e2e` | Playwright journeys asserting UI, database state, emulator traffic, and clean server logs |
 
 Everything is keyed by `org_id` from day one. The open-source version runs a
 single default org; the same schema supports multi-tenant hosting later.

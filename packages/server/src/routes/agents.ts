@@ -58,7 +58,7 @@ export async function agentRoutes(app: FastifyInstance) {
       .select({
         agent: agents,
         domainName: domains.name,
-        toolCount: sql<number>`(SELECT count(*)::int FROM agent_tool_configs c WHERE c.agent_id = ${agents.id} AND c.enabled)`,
+        toolCount: sql<number>`(SELECT count(*)::int FROM agent_tool_configs c WHERE c.agent_id = agents.id AND c.enabled)`,
       })
       .from(agents)
       .leftJoin(domains, eq(agents.domainId, domains.id))

@@ -44,7 +44,7 @@ export async function mcpRoutes(app: FastifyInstance) {
     const rows = await db
       .select({
         server: mcpServers,
-        usedByCount: sql<number>`(SELECT count(*)::int FROM agent_mcp_servers a WHERE a.server_id = ${mcpServers.id})`,
+        usedByCount: sql<number>`(SELECT count(*)::int FROM agent_mcp_servers a WHERE a.server_id = mcp_servers.id)`,
       })
       .from(mcpServers)
       .where(eq(mcpServers.orgId, req.user!.orgId))

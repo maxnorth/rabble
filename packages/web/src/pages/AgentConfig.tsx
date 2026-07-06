@@ -22,6 +22,7 @@ export function AgentConfig({ agentId }: { agentId: string }) {
   const navigate = useNavigate();
   const { tab } = useParams();
   const [shareOpen, setShareOpen] = useState(false);
+  const [requestOpen, setRequestOpen] = useState(false);
   const activeTab: Tab = AGENT_TABS.includes(tab as Tab) ? (tab as Tab) : "identity";
   const agent = useQuery({
     queryKey: ["agent", agentId],
@@ -90,7 +91,21 @@ export function AgentConfig({ agentId }: { agentId: string }) {
             Share
           </button>
         )}
+        {(agent.data.myRight === null || agent.data.myRight === "use") &&
+          !agent.data.agent.builtin && (
+            <button className="btn" onClick={() => setRequestOpen(true)}>
+              Request access
+            </button>
+          )}
       </div>
+      {requestOpen && (
+        <RequestAccessModal
+          agentId={agentId}
+          agentName={agent.data.agent.name}
+          myRight={agent.data.myRight}
+          onClose={() => setRequestOpen(false)}
+        />
+      )}
       {shareOpen && (
         <ShareModal
           agentId={agentId}
@@ -128,6 +143,115 @@ export function AgentConfig({ agentId }: { agentId: string }) {
       {activeTab === "advanced" && (
         <AdvancedTab agentId={agentId} canEdit={canEdit} />
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Request access — the web-native half of the request → notify → approve
+// loop (the Builder files the same rows conversationally).
+// ---------------------------------------------------------------------------
+
+function RequestAccessModal({
+  agentId,
+  agentName,
+  myRight,
+  onClose,
+}: {
+  agentId: string;
+  agentName: string;
+  myRight: string | null;
+  onClose: () => void;
+}) {
+  const [right, setRight] = useState<"use" | "edit">(myRight === "use" ? "edit" : "use");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState(false);
+
+  const submit = useMutation({
+    mutationFn: () =>
+      api.createAccessRequest({
+        targetType: "agent",
+        targetId: agentId,
+        accessRight: right,
+        reason: reason.trim() || undefined,
+      }),
+    onSuccess: () => {
+      setError(null);
+      setSent(true);
+    },
+    onError: (err) =>
+      setError(err instanceof Error ? err.message : "Couldn't send the request"),
+  });
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460 }}>
+        <h2>Request access to {agentName}</h2>
+        {sent ? (
+          <>
+            <p className="page-subtitle">
+              Request sent — an org admin has been notified and can approve it
+              under Admin › Access requests.
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button className="btn primary" onClick={onClose}>
+                Done
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="field">
+              <label>What you need</label>
+              <div style={{ display: "flex", gap: 6 }}>
+                {(["use", "edit"] as const).map((r) => (
+                  <button
+                    type="button"
+                    key={r}
+                    className={`chip ${right === r ? "blue" : ""}`}
+                    style={{
+                      cursor: myRight === "use" && r === "use" ? "not-allowed" : "pointer",
+                      opacity: myRight === "use" && r === "use" ? 0.5 : 1,
+                    }}
+                    disabled={myRight === "use" && r === "use"}
+                    onClick={() => setRight(r)}
+                  >
+                    {r}
+                  </button>
+                ))}
+              </div>
+              <span className="hint">
+                {right === "use"
+                  ? "Talk to this agent in sessions."
+                  : "Change how this agent behaves."}
+              </span>
+            </div>
+            <div className="field">
+              <label>Why (shown to the approver)</label>
+              <textarea
+                rows={3}
+                placeholder="What are you trying to do?"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
+            </div>
+            {error && <p className="error-text">{error}</p>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <button className="btn" onClick={onClose}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={submit.isPending}
+                onClick={() => submit.mutate()}
+              >
+                Send request
+              </button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }

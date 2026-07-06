@@ -1112,7 +1112,65 @@ test("share is one verb: audience, plain-language right, pause/unshare", async (
       return rows.length;
     })
     .toBe(0);
+  // Leave it active (and unshared) — the next test requests access to it.
+  await modal.getByRole("button", { name: "Activate" }).click();
+  await expect(modal.getByRole("button", { name: "Pause sharing" })).toBeVisible();
   await modal.getByRole("button", { name: "Done" }).click();
+});
+
+test("request access from the agent page (web-native loop)", async ({
+  browser,
+}) => {
+  const beaPage = await browser.newPage();
+  await beaPage.goto("/");
+  await beaPage.locator("input[type=email]").fill("bea@acme.com");
+  await beaPage.locator("input[type=password]").fill("bea-real-password-1");
+  await beaPage.getByRole("button", { name: "Sign in" }).click();
+  await expect(beaPage.locator(".session-greeting")).toBeVisible();
+
+  // Bea can see the active agent (the directory is a trust surface) but
+  // holds no right on it — the header offers Request access instead.
+  const [bot] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Release Notes Bot'",
+  );
+  await beaPage.goto(`/agents/${bot!.id}`);
+  await beaPage.getByRole("button", { name: "Request access" }).click();
+  const modal = beaPage.locator(".modal");
+  await expect(modal).toContainText("Talk to this agent in sessions.");
+  await modal
+    .getByPlaceholder("What are you trying to do?")
+    .fill("Need release notes for my launches");
+  await modal.getByRole("button", { name: "Send request" }).click();
+  await expect(modal).toContainText("Request sent");
+
+  // A second open request for the same target is refused politely.
+  const dup = await beaPage.request.post("/api/access-requests", {
+    data: { targetType: "agent", targetId: bot!.id, accessRight: "use" },
+  });
+  expect(dup.status()).toBe(409);
+
+  const requestRows = await dbQuery<{ via: string; status: string }>(
+    `SELECT via, status FROM access_requests
+     WHERE target_id = $1 AND access_right = 'use'`,
+    [bot!.id],
+  );
+  expect(requestRows).toEqual([{ via: "web", status: "open" }]);
+
+  // Admin approves from the same screen; evidence shows the no-data case.
+  await page.goto("/admin/access-requests");
+  const row = page.locator(".row", { hasText: "Release Notes Bot" }).first();
+  await expect(row).toContainText("Bea Ortiz");
+  await expect(row.locator(".chip", { hasText: "no track record yet" })).toBeVisible();
+  await expect(row.locator(".chip", { hasText: "via Builder" })).toHaveCount(0);
+  await row.getByRole("button", { name: "Approve", exact: true }).click();
+
+  await expect
+    .poll(async () => {
+      const res = await beaPage.request.get(`/api/agents/${bot!.id}`);
+      return ((await res.json()) as { myRight: string | null }).myRight;
+    })
+    .toBe("use");
+  await beaPage.close();
 });
 
 test("hitting an access limit becomes a request an admin approves", async ({
@@ -1214,7 +1272,8 @@ test("hitting an access limit becomes a request an admin approves", async ({
 
   const grantAudit = await dbQuery<{ summary: string }>(
     `SELECT summary FROM audit_events
-     WHERE action = 'grant.add' AND summary LIKE '%approved access request%'`,
+     WHERE action = 'grant.add'
+       AND summary LIKE '%edit on agent "Eng On-Call"%approved access request%'`,
   );
   expect(grantAudit).toHaveLength(1);
   await beaPage.close();

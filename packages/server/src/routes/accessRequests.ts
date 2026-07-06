@@ -156,6 +156,69 @@ export async function accessRequestRoutes(app: FastifyInstance) {
     },
   );
 
+  /** Any member can ask; the Builder uses its own tool for the same row. */
+  app.post("/api/access-requests", async (req, reply) => {
+    const { createAccessRequestSchema } = await import("@rabblehq/core");
+    const body = createAccessRequestSchema.parse(req.body);
+
+    // The target must exist in the caller's org.
+    const targetName = await targetNameFor(body.targetType, body.targetId);
+    if (targetName === "(deleted)") {
+      return reply.code(404).send({ error: "Target not found" });
+    }
+
+    const [duplicate] = await db
+      .select({ id: accessRequests.id })
+      .from(accessRequests)
+      .where(
+        and(
+          eq(accessRequests.orgId, req.user!.orgId),
+          eq(accessRequests.requesterUserId, req.user!.id),
+          eq(accessRequests.targetType, body.targetType),
+          eq(accessRequests.targetId, body.targetId),
+          eq(accessRequests.status, "open"),
+        ),
+      )
+      .limit(1);
+    if (duplicate) {
+      return reply
+        .code(409)
+        .send({ error: "You already have an open request for this — an admin will review it." });
+    }
+
+    const [row] = await db
+      .insert(accessRequests)
+      .values({
+        orgId: req.user!.orgId,
+        requesterUserId: req.user!.id,
+        targetType: body.targetType,
+        targetId: body.targetId,
+        accessRight: body.accessRight,
+        reason: body.reason ?? "",
+        via: "web",
+      })
+      .returning();
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "access.request",
+      targetType: body.targetType,
+      targetId: body.targetId,
+      summary: `Requested ${body.accessRight} on ${body.targetType} "${targetName}"`,
+    });
+    const { notifyAdminsOfAccessRequest } = await import(
+      "../notifications/accessRequests.js"
+    );
+    void notifyAdminsOfAccessRequest({
+      orgId: req.user!.orgId,
+      requesterName: req.user!.name,
+      accessRight: body.accessRight,
+      targetLabel: `${body.targetType} "${targetName}"`,
+      reason: body.reason ?? "",
+    });
+    return { request: { id: row!.id, status: row!.status } };
+  });
+
   app.post(
     "/api/access-requests/:id/approve",
     { preHandler: requireOrgAdmin },

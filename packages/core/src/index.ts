@@ -189,6 +189,14 @@ export const accessRequestSchema = z.object({
 });
 export type AccessRequest = z.infer<typeof accessRequestSchema>;
 
+export const createAccessRequestSchema = z.object({
+  targetType: z.enum(["agent", "domain", "model"]),
+  targetId: z.string().uuid(),
+  accessRight: z.enum(["use", "edit", "admin"]),
+  reason: z.string().max(1000).optional(),
+});
+export type CreateAccessRequestRequest = z.infer<typeof createAccessRequestSchema>;
+
 export const createAgentSchema = z.object({
   name: z.string().min(1).max(120),
   description: z.string().max(500).default(""),

@@ -357,6 +357,12 @@ export const api = {
   revokeApiKey: (id: string) => post<{ ok: true }>(`/api/api-keys/${id}/revoke`),
   listAccessRequests: () =>
     get<{ requests: AccessRequest[] }>("/api/access-requests"),
+  createAccessRequest: (body: {
+    targetType: "agent" | "domain" | "model";
+    targetId: string;
+    accessRight: "use" | "edit" | "admin";
+    reason?: string;
+  }) => post<{ request: { id: string; status: string } }>("/api/access-requests", body),
   accessRequestCount: () => get<{ open: number }>("/api/access-requests/count"),
   approveAccessRequest: (id: string) =>
     post<{ ok: true }>(`/api/access-requests/${id}/approve`),

@@ -61,7 +61,17 @@ export async function buildServer() {
     enforceApiKeyScope(req, reply);
   });
 
-  app.get("/api/health", async () => ({ ok: true }));
+  app.get("/api/health", async (_req, reply) => {
+    // A healthy app is one that can reach its database.
+    try {
+      const { sql } = await import("drizzle-orm");
+      const { db } = await import("./db/client.js");
+      await db.execute(sql`SELECT 1`);
+      return { ok: true };
+    } catch {
+      return reply.code(503).send({ ok: false, error: "database unreachable" });
+    }
+  });
 
   await app.register(inboundRoutes);
   await app.register(authRoutes);

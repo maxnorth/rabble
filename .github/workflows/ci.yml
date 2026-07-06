@@ -35,3 +35,13 @@ jobs:
       - run: pnpm build
       - run: pnpm --filter @rabblehq/e2e exec playwright install --with-deps chromium
       - run: pnpm --filter @rabblehq/e2e e2e
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results
+          path: |
+            packages/e2e/test-results/
+            packages/e2e/artifacts/
+          retention-days: 7
+          if-no-files-found: ignore

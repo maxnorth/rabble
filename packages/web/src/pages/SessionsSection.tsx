@@ -718,6 +718,24 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             </span>
           )}
           <span className="chip">{session.data?.session.surface ?? "Web"}</span>
+          {(() => {
+            const others = [
+              ...new Set(
+                messages
+                  .filter((m) => m.role === "user" && m.authorName)
+                  .map((m) => m.authorName!)
+                  .filter((n) => n !== me.data?.user.name),
+              ),
+            ];
+            return others.length > 0 ? (
+              <span
+                className="chip purple"
+                title={`Shared thread — also here: ${others.join(", ")}`}
+              >
+                +{others.length} teammate{others.length === 1 ? "" : "s"}
+              </span>
+            ) : null;
+          })()}
           <button
             title="Export transcript (Markdown)"
             style={{ color: "var(--text-muted)", fontSize: 12, padding: "2px 4px" }}

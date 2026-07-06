@@ -238,6 +238,7 @@ test("slack surface delivery: a channel message becomes a governed session", asy
   await expect(
     page.locator(".msg-user", { hasText: "Adding context" }),
   ).toContainText("Bea Ortiz");
+  await expect(page.locator(".chip", { hasText: "+1 teammate" })).toBeVisible();
 
   // Someone without a Rabble account gets a polite refusal, not a session
   await signedSlackPost({

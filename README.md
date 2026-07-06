@@ -17,9 +17,12 @@ What works today:
   track record as evidence), file artifacts, and per-user approval
   postures (always ask / once per session / trust) under an org-wide
   approval floor.
-- **Surfaces** — a Slack channel mapped to an agent turns channel messages
-  into governed sessions (signed Slack Events webhooks, thread = session,
-  replies threaded back); every session shows its origin surface.
+- **Surfaces** — Slack channels and GitHub repos map onto agents: signed
+  webhooks turn channel messages and issue comments into governed sessions
+  (thread/issue = session, replies delivered back). Every message is
+  attributed to its human author, participants see and can continue shared
+  threads from the web, and opted-in users get a Slack DM when an agent
+  replies somewhere they aren't watching.
 - **Governance** — teams / domains / grants with real enforcement and
   cascade (no owners, only grants), model-access grants, org policies
   (who can create agents, approval floor, retention), and a full

@@ -375,7 +375,9 @@ export async function sessionRoutes(app: FastifyInstance) {
         model,
       }).catch((err) => req.log.warn({ err }, "live eval failed"));
     } catch (err) {
-      req.log.error(err);
+      // Operational, not a server bug: the failure is surfaced to the user
+      // in the thread. warn keeps the log-cleanliness gate meaningful.
+      req.log.warn({ err }, "agent turn failed");
       sendEvent(reply, {
         type: "error",
         error: err instanceof Error ? err.message : "Agent turn failed",

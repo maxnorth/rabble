@@ -5,11 +5,16 @@
  */
 
 export interface ScriptedReply {
-  /** "text" answers with content; "tool_call" asks the caller to run a tool. */
-  type: "text" | "tool_call";
+  /**
+   * "text" answers with content; "tool_call" asks the caller to run a
+   * tool; "error" fails the API call (status + message) to script outages.
+   */
+  type: "text" | "tool_call" | "error";
   text?: string;
   toolName?: string;
   toolArgs?: Record<string, unknown>;
+  status?: number;
+  message?: string;
 }
 
 export interface McpToolDef {

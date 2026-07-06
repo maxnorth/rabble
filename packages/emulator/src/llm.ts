@@ -56,6 +56,15 @@ export function mountOpenAi(app: FastifyInstance): void {
     };
     logRequest("api.openai.com", "POST", "/v1/chat/completions", body);
     const scripted = nextLlmReply(lastUserText(body.messages), allText(body.messages));
+    if (scripted.type === "error") {
+      return reply.code(scripted.status ?? 500).send({
+        error: {
+          message: scripted.message ?? "scripted upstream failure",
+          type: "server_error",
+          code: null,
+        },
+      });
+    }
     const id = `chatcmpl-emu-${++counter}`;
     const base = {
       id,
@@ -168,6 +177,15 @@ export function mountAnthropic(app: FastifyInstance): void {
       lastUserText(body.messages),
       allText(body.messages, body.system),
     );
+    if (scripted.type === "error") {
+      return reply.code(scripted.status ?? 500).send({
+        type: "error",
+        error: {
+          type: "api_error",
+          message: scripted.message ?? "scripted upstream failure",
+        },
+      });
+    }
     const id = `msg_emu_${++counter}`;
 
     const contentBlocks =

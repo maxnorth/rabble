@@ -13,7 +13,7 @@ import {
   type Browser,
   type Page,
 } from "@playwright/test";
-import { serverLogPath } from "../global-setup";
+import { EMULATOR, serverLogPath } from "../global-setup";
 import { dbQuery } from "./db";
 
 test.describe.configure({ mode: "serial" });
@@ -242,6 +242,28 @@ test("transcripts survive a full page reload", async () => {
     .click();
   await expect(page.locator(".msg-user")).toHaveCount(2);
   await expect(page.locator(".msg-agent")).toHaveCount(2);
+});
+
+test("a model outage surfaces in the thread and the session recovers", async () => {
+  // Script a non-retryable provider failure (the SDK transparently retries
+  // 5xx — which the emulator proved before this used a 400)
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "error", status: 400, message: "upstream rejected the request" }),
+  });
+
+  await page.locator(".thread-composer textarea").fill("Will this survive an outage?");
+  await page.locator(".thread-composer button", { hasText: "Send" }).click();
+  await expect(page.locator(".error-text")).toBeVisible({ timeout: 20_000 });
+
+  // The next turn works — the thread recovers cleanly
+  await page.locator(".thread-composer textarea").fill("Trying again after the outage");
+  await page.locator(".thread-composer button", { hasText: "Send" }).click();
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: Trying again after the outage",
+    { timeout: 15_000 },
+  );
 });
 
 test("a transcript exports as Markdown", async () => {

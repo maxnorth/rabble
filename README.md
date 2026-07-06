@@ -55,6 +55,7 @@ All built on the design prototype's dark, dense visual system.
 
 | | |
 |---|---|
+| ![The Builder creating an agent through governed tool calls](docs/screenshots/builder.png) | ![Access requests with track-record evidence](docs/screenshots/access-requests.png) |
 | ![Agent directory](docs/screenshots/directory.png) | ![Stats](docs/screenshots/stats.png) |
 | ![A Slack-surface session](docs/screenshots/slack-thread.png) | ![Sessions](docs/screenshots/sessions.png) |
 

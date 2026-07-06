@@ -337,6 +337,8 @@ export const agentLinks = pgTable(
     subAgentId: uuid("sub_agent_id")
       .notNull()
       .references(() => agents.id, { onDelete: "cascade" }),
+    // When/why the parent calls this sub-agent, e.g. "Called before any deploy"
+    note: text("note").notNull().default(""),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

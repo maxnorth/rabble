@@ -340,3 +340,33 @@ test("criteria trends: pass rate vs the prior 30-day window", async () => {
     }),
   ).toContainText("+50% vs prior");
 });
+
+test("sub-agents: link an agent and annotate the edge", async () => {
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "agents", exact: true }).click();
+
+  const linkable = page.locator(".row", { hasText: "Claude Agent" });
+  await linkable.getByRole("button", { name: "Attach" }).click();
+  const linked = page.locator(".row", { hasText: "claude-agent" });
+  await expect(linked.locator(".chip", { hasText: "agent" })).toBeVisible();
+
+  await linked
+    .getByPlaceholder("When is it called? e.g. Before any deploy action")
+    .fill("Called for anything requiring long-form writing");
+  await page.locator("h1").click(); // blur commits the note
+
+  await expect
+    .poll(async () => {
+      const links = await dbQuery<{ note: string }>("SELECT note FROM agent_links");
+      return links[0]?.note;
+    })
+    .toBe("Called for anything requiring long-form writing");
+
+  // Survives a reload
+  await page.reload();
+  await page.getByRole("button", { name: "agents", exact: true }).click();
+  await expect(
+    page.getByPlaceholder("When is it called? e.g. Before any deploy action"),
+  ).toHaveValue("Called for anything requiring long-form writing");
+});

@@ -375,14 +375,40 @@ export async function agentRoutes(app: FastifyInstance) {
     const { id } = req.params as { id: string };
     const { agentLinks } = await import("../db/schema.js");
     const links = await db
-      .select({ subAgentId: agentLinks.subAgentId })
+      .select({ subAgentId: agentLinks.subAgentId, note: agentLinks.note })
       .from(agentLinks)
       .where(eq(agentLinks.agentId, id));
+    const notes = new Map(links.map((l) => [l.subAgentId, l.note]));
     const ids = links.map((l) => l.subAgentId);
     const rows = ids.length
       ? await db.select().from(agents).where(inArray(agents.id, ids))
       : [];
-    return { subAgents: rows.map(serializeAgent) };
+    return {
+      subAgents: rows.map((r) => ({
+        ...serializeAgent(r),
+        note: notes.get(r.id) ?? "",
+      })),
+    };
+  });
+
+  // Annotate the edge: when/why the parent calls this sub-agent.
+  app.patch("/api/agents/:id/sub-agents/:subId", async (req, reply) => {
+    const { id, subId } = req.params as { id: string; subId: string };
+    const { note } = req.body as { note?: string };
+    const rights = await rightsForAllAgents(req.user!);
+    if (!hasRight(rights.get(id) ?? null, "edit")) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    const { agentLinks } = await import("../db/schema.js");
+    const updated = await db
+      .update(agentLinks)
+      .set({ note: (note ?? "").slice(0, 300) })
+      .where(and(eq(agentLinks.agentId, id), eq(agentLinks.subAgentId, subId)))
+      .returning();
+    if (updated.length === 0) {
+      return reply.code(404).send({ error: "These agents aren't linked" });
+    }
+    return { ok: true };
   });
 
   app.put("/api/agents/:id/sub-agents/:subId", async (req, reply) => {

@@ -653,6 +653,11 @@ function SubAgentsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean 
     mutationFn: (subId: string) => api.unlinkSubAgent(agentId, subId),
     onSuccess: refresh,
   });
+  const setNote = useMutation({
+    mutationFn: ({ subId, note }: { subId: string; note: string }) =>
+      api.setSubAgentNote(agentId, subId, note),
+    onSuccess: refresh,
+  });
 
   const linkedIds = new Set((subAgents.data?.subAgents ?? []).map((a) => a.id));
   const linkable = (agents.data?.agents ?? []).filter(
@@ -674,6 +679,17 @@ function SubAgentsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean 
               <div className="title">{a.name}</div>
               <div className="sub mono">{a.slug}</div>
             </div>
+            <input
+              placeholder="When is it called? e.g. Before any deploy action"
+              defaultValue={a.note}
+              disabled={!canEdit}
+              onBlur={(e) => {
+                if (canEdit && e.target.value !== a.note) {
+                  setNote.mutate({ subId: a.id, note: e.target.value });
+                }
+              }}
+              style={{ width: 280, fontSize: 12 }}
+            />
             {canEdit && (
               <button className="btn danger" onClick={() => unlink.mutate(a.id)}>
                 Remove

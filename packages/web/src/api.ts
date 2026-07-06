@@ -145,8 +145,8 @@ export const api = {
 
   // sessions
   listSessions: () => get<{ sessions: SessionWithAgent[] }>("/api/sessions"),
-  createSession: (agentId: string | null) =>
-    post<{ session: SessionWithAgent }>("/api/sessions", { agentId }),
+  createSession: (agentId: string | null, intent?: string) =>
+    post<{ session: SessionWithAgent }>("/api/sessions", { agentId, intent }),
   getSession: (id: string) =>
     get<{
       session: SessionWithAgent;

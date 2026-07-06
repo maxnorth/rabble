@@ -226,6 +226,11 @@ export type SessionWithAgent = z.infer<typeof sessionWithAgentSchema>;
 export const createSessionSchema = z.object({
   /** Omit (or null) for "Auto" — the server resolves to an active agent. */
   agentId: z.string().uuid().nullable().optional(),
+  /**
+   * The user's first message, used to route "Auto" sessions by intent
+   * across the agents the caller can use.
+   */
+  intent: z.string().max(100000).optional(),
 });
 export type CreateSessionRequest = z.infer<typeof createSessionSchema>;
 

@@ -151,3 +151,37 @@ test("anthropic protocol: agent on the emulated Anthropic API works", async () =
   ).json()) as { requests: unknown[] };
   expect(log.requests.length).toBeGreaterThan(0);
 });
+
+test("auto routes by intent across usable agents", async () => {
+  // Two active agents exist now (Eng On-Call, Claude Agent). Script the
+  // router verdict, then the routed agent's actual reply.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([
+      { type: "text", text: "eng-on-call" },
+      { type: "text", text: "Routed correctly: checking the failing pipeline now." },
+    ]),
+  });
+
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await expect(page.locator(".session-greeting")).toBeVisible();
+  // Leave the target on "Auto"
+  await page
+    .getByPlaceholder("Message an agent…")
+    .fill("The CI pipeline is failing on main, please triage");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.locator(".msg-agent .bubble")).toContainText(
+    "Routed correctly",
+    { timeout: 15_000 },
+  );
+  // The thread is pinned to the routed agent
+  await expect(page.locator(".thread-composer .chip")).toHaveText("Eng On-Call");
+
+  const routed = await dbQuery<{ slug: string }>(
+    `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+     WHERE s.title LIKE 'The CI pipeline is failing%'`,
+  );
+  expect(routed).toEqual([{ slug: "eng-on-call" }]);
+});

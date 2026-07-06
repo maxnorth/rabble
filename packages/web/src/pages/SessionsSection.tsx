@@ -135,7 +135,10 @@ function SessionLanding() {
     setBusy(true);
     setError(null);
     try {
-      const { session } = await api.createSession(target?.id ?? null);
+      const { session } = await api.createSession(
+        target?.id ?? null,
+        target ? undefined : content,
+      );
       await queryClient.invalidateQueries({ queryKey: ["sessions"] });
       navigate(`/sessions/${session.id}`, { state: { initialMessage: content } });
     } catch (err) {

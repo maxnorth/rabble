@@ -12,6 +12,7 @@ import { agents, messages, models, sessions } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
+import { routeByIntent } from "../runtime/router.js";
 import { decideApproval } from "../runtime/approvals.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
 import { judgeSession } from "../evals/judge.js";
@@ -63,23 +64,23 @@ export async function sessionRoutes(app: FastifyInstance) {
           .send({ error: "You don't have use access to this agent" });
       }
     } else {
-      // "Auto": pick an active agent the user can actually use.
+      // "Auto": route by intent across the agents the user can actually use.
       const candidates = await db
-        .select({ id: agents.id })
+        .select()
         .from(agents)
         .where(
           and(eq(agents.orgId, req.user!.orgId), eq(agents.status, "active")),
         )
         .orderBy(agents.name);
-      const usable = candidates.find((c) =>
+      const usable = candidates.filter((c) =>
         hasRight(rights.get(c.id) ?? null, "use"),
       );
-      if (!usable) {
+      if (usable.length === 0) {
         return reply
           .code(409)
           .send({ error: "No agents available to you. Ask for access or create one." });
       }
-      agentId = usable.id;
+      agentId = await routeByIntent(req.user!.orgId, body.intent, usable);
     }
 
     const [row] = await db

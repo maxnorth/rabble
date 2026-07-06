@@ -153,6 +153,69 @@ export function buildPlatformTools(
       },
     },
     {
+      name: "update_agent_draft",
+      description:
+        "Correct a draft agent's identity after the user fixes what you " +
+        "inferred — name, description, instructions, or tone. Drafts only: " +
+        "active agents are edited on their config tabs, where gating suites " +
+        "protect against regressions.",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string", description: "The draft agent's id" },
+          name: { type: "string" },
+          description: { type: "string" },
+          instructions: { type: "string" },
+          tone: { type: "string" },
+        },
+        required: ["agentId"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const [existing] = await db
+          .select()
+          .from(agents)
+          .where(and(eq(agents.id, agentId), eq(agents.orgId, user.orgId)))
+          .limit(1);
+        if (!existing) return "Error: agent not found.";
+        if (existing.status !== "draft") {
+          return (
+            "That agent is active — changes to it run through its gating " +
+            "suites on the config tabs. Point the user at /agents/" +
+            agentId +
+            " instead."
+          );
+        }
+        const updates: Record<string, string> = {};
+        for (const key of ["name", "description", "instructions", "tone"] as const) {
+          if (typeof args[key] === "string" && args[key] !== "") {
+            updates[key] = String(args[key]);
+          }
+        }
+        if (Object.keys(updates).length === 0) {
+          return "Nothing to update — pass at least one of name/description/instructions/tone.";
+        }
+        await db
+          .update(agents)
+          .set({ ...updates, updatedBy: user.id, updatedAt: new Date() })
+          .where(eq(agents.id, agentId));
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.update",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Updated ${Object.keys(updates).join(", ")} on "${
+            updates.name ?? existing.name
+          }" via Builder`,
+        });
+        return JSON.stringify({ updated: Object.keys(updates) });
+      },
+    },
+    {
       name: "add_eval_criterion",
       description:
         "Add a live eval criterion to an agent (evaluated against its real " +

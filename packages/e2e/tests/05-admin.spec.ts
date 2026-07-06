@@ -1078,6 +1078,38 @@ test("the Builder creates a measured draft agent conversationally", async () => 
      WHERE action = 'eval.case.add' AND summary LIKE '%via Builder%'`,
   );
   expect(caseAudit).toHaveLength(1);
+
+  // Fourth turn: correctability — the user fixes what the Builder inferred.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "update_agent_draft",
+      toolArgs: {
+        agentId: draft!.id,
+        description: "Drafts release notes from merged PRs, grouped by area",
+      },
+    }),
+  });
+  await page
+    .getByPlaceholder("Message Builder…")
+    .fill("Actually, group the notes by product area");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ description: string }>(
+        "SELECT description FROM agents WHERE id = $1",
+        [draft!.id],
+      );
+      return rows[0]?.description;
+    })
+    .toBe("Drafts release notes from merged PRs, grouped by area");
+  const updateAudit = await dbQuery<{ summary: string }>(
+    `SELECT summary FROM audit_events
+     WHERE action = 'agent.update' AND summary LIKE '%via Builder%'`,
+  );
+  expect(updateAudit).toHaveLength(1);
 });
 
 test("'agent from this session' hands the transcript to the Builder", async () => {

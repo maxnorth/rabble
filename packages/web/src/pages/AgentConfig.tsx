@@ -189,6 +189,13 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
       navigate("/agents");
     },
   });
+  const duplicate = useMutation({
+    mutationFn: () => api.duplicateAgent(agentId),
+    onSuccess: async ({ agent: copy }) => {
+      await queryClient.invalidateQueries({ queryKey: ["agents"] });
+      navigate(`/agents/${copy.id}`);
+    },
+  });
 
   if (!form) return null;
   const enabledModels = (models.data?.models ?? []).filter(
@@ -325,6 +332,14 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <button className="btn primary" disabled={save.isPending} onClick={() => save.mutate()}>
           {saved ? "Saved ✓" : "Save changes"}
+        </button>
+        <button
+          className="btn"
+          disabled={duplicate.isPending}
+          title="Copy this configuration (MCP wiring and sub-agents included) into a new draft"
+          onClick={() => duplicate.mutate()}
+        >
+          {duplicate.isPending ? "Duplicating…" : "Duplicate"}
         </button>
         <div style={{ flex: 1 }} />
         <button

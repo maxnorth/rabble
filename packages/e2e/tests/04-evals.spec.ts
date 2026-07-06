@@ -370,3 +370,48 @@ test("sub-agents: link an agent and annotate the edge", async () => {
     page.getByPlaceholder("When is it called? e.g. Before any deploy action"),
   ).toHaveValue("Called for anything requiring long-form writing");
 });
+
+test("duplicate: the copy carries config and wiring, never history", async () => {
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).first().click();
+  await page.getByRole("button", { name: "Duplicate" }).click();
+
+  // Lands on the new draft's config
+  await expect(
+    page.getByRole("heading", { name: "Eng On-Call (copy)" }),
+  ).toBeVisible();
+  await expect(page.locator("h1 .chip", { hasText: "draft" })).toBeVisible();
+
+  const rows = await dbQuery<{
+    status: string;
+    instructions: string;
+    icon: string;
+  }>("SELECT status, instructions, icon FROM agents WHERE name = 'Eng On-Call (copy)'");
+  expect(rows).toHaveLength(1);
+  expect(rows[0]!.status).toBe("draft");
+  expect(rows[0]!.instructions).toContain("Always reply in French.");
+
+  // MCP wiring came along (attachment + the user-auth flip on create_issue)
+  const wiring = await dbQuery<{ tool_name: string; auth_type: string }>(
+    `SELECT c.tool_name, c.auth_type FROM agent_tool_configs c
+     JOIN agents a ON a.id = c.agent_id
+     WHERE a.name = 'Eng On-Call (copy)' AND c.tool_name = 'create_issue'`,
+  );
+  expect(wiring).toEqual([{ tool_name: "create_issue", auth_type: "user" }]);
+
+  // No sessions or eval history followed the copy
+  const history = await dbQuery<{ count: string }>(
+    `SELECT count(*) FROM sessions s JOIN agents a ON a.id = s.agent_id
+     WHERE a.name = 'Eng On-Call (copy)'`,
+  );
+  expect(Number(history[0]!.count)).toBe(0);
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'agent.duplicate'",
+  );
+  expect(audit).toHaveLength(1);
+
+  // Tidy up so the directory stays predictable for later specs
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.getByRole("button", { name: "Delete agent" }).click();
+  await expect(page.getByRole("heading", { name: "All agents" })).toBeVisible();
+});

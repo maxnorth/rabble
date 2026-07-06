@@ -144,6 +144,8 @@ export const api = {
     post<{ agent: Agent }>("/api/agents", body),
   updateAgent: (id: string, body: UpdateAgentRequest) =>
     patch<{ agent: Agent }>(`/api/agents/${id}`, body),
+  duplicateAgent: (id: string) =>
+    post<{ agent: Agent }>(`/api/agents/${id}/duplicate`),
   deleteAgent: (id: string) => del<{ ok: true }>(`/api/agents/${id}`),
   starAgent: (id: string) => put<{ ok: true }>(`/api/agents/${id}/star`),
   unstarAgent: (id: string) => del<{ ok: true }>(`/api/agents/${id}/star`),

@@ -173,6 +173,98 @@ export async function agentRoutes(app: FastifyInstance) {
     return { agent: serializeAgent(row!) };
   });
 
+  // Duplicate: copy the configuration (identity, MCP wiring, sub-agents)
+  // into a new draft. History, evals, and grants stay behind.
+  app.post("/api/agents/:id/duplicate", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const rights = await rightsForAllAgents(req.user!);
+    if (!hasRight(rights.get(id) ?? null, "use")) {
+      return reply.code(404).send({ error: "Agent not found" });
+    }
+    // The org's creation policy applies to copies too.
+    const { orgs, agentMcpServers, agentToolConfigs, agentLinks } = await import(
+      "../db/schema.js"
+    );
+    const { orgSettingsSchema } = await import("@rabblehq/core");
+    const [org] = await db
+      .select({ settings: orgs.settings })
+      .from(orgs)
+      .where(eq(orgs.id, req.user!.orgId))
+      .limit(1);
+    const settings = orgSettingsSchema.parse({ ...(org?.settings as object) });
+    if (settings.whoCanCreateAgents === "designated" && req.user!.role === "member") {
+      return reply
+        .code(403)
+        .send({ error: "Agent creation is limited to org admins" });
+    }
+    const [source] = await db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, id), eq(agents.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!source) return reply.code(404).send({ error: "Agent not found" });
+
+    const name = `${source.name} (copy)`.slice(0, 120);
+    const [copy] = await db
+      .insert(agents)
+      .values({
+        orgId: req.user!.orgId,
+        slug: await uniqueSlug(req.user!.orgId, name),
+        name,
+        description: source.description,
+        instructions: source.instructions,
+        tone: source.tone,
+        icon: source.icon,
+        color: source.color,
+        modelId: source.modelId,
+        domainId: source.domainId,
+        capabilities: source.capabilities,
+        status: "draft",
+        createdBy: req.user!.id,
+        updatedBy: req.user!.id,
+      })
+      .returning();
+
+    const attachments = await db
+      .select()
+      .from(agentMcpServers)
+      .where(eq(agentMcpServers.agentId, id));
+    for (const a of attachments) {
+      await db
+        .insert(agentMcpServers)
+        .values({ agentId: copy!.id, serverId: a.serverId });
+    }
+    const toolConfigs = await db
+      .select()
+      .from(agentToolConfigs)
+      .where(eq(agentToolConfigs.agentId, id));
+    for (const t of toolConfigs) {
+      await db.insert(agentToolConfigs).values({
+        agentId: copy!.id,
+        serverId: t.serverId,
+        toolName: t.toolName,
+        enabled: t.enabled,
+        authType: t.authType,
+      });
+    }
+    const links = await db.select().from(agentLinks).where(eq(agentLinks.agentId, id));
+    for (const l of links) {
+      await db
+        .insert(agentLinks)
+        .values({ agentId: copy!.id, subAgentId: l.subAgentId, note: l.note });
+    }
+
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "agent.duplicate",
+      targetType: "agent",
+      targetId: copy!.id,
+      summary: `Duplicated "${source.name}" as "${name}"`,
+    });
+    return { agent: serializeAgent(copy!) };
+  });
+
   app.patch("/api/agents/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = updateAgentSchema.parse(req.body);

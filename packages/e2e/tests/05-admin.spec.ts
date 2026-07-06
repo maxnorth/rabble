@@ -839,6 +839,109 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
   expect(Number(finalCount[0]!.n)).toBe(4);
 });
 
+test("socket mode interactivity: DM buttons resolve approvals over the WebSocket", async () => {
+  // A user-auth tool raised from the socket channel pends on a DM ask…
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "tool_call",
+      toolName: "create_issue",
+      toolArgs: { title: "Filed over the socket" },
+    }),
+  });
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "C888",
+        user: "U777",
+        text: "File an issue about socket approvals",
+        ts: "1799.100",
+      },
+    }),
+  });
+
+  // …grab the ask's approvalId from the DM the emulator received…
+  let value = "";
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{
+          path: string;
+          body: {
+            channel?: string;
+            blocks?: Array<{ elements?: Array<{ action_id?: string; value?: string }> }>;
+          };
+        }>;
+      };
+      const dm = [...log.requests]
+        .reverse()
+        .find(
+          (r) =>
+            r.path === "/api/chat.postMessage" &&
+            r.body.channel === "U777" &&
+            // Only THIS test's ask — earlier webhook tests DM'd the same
+            // buttons; the socket surface name disambiguates.
+            (r.body as { text?: string }).text?.includes("Slack #eng-socket") &&
+            r.body.blocks?.some((b) =>
+              b.elements?.some((el) => el.action_id === "rabble_approve"),
+            ),
+        );
+      value =
+        dm?.body.blocks
+          ?.flatMap((b) => b.elements ?? [])
+          .find((el) => el.action_id === "rabble_approve")?.value ?? "";
+      return value.length > 0;
+    })
+    .toBe(true);
+
+  // …and answer it as an interactivity envelope pushed down the socket.
+  const push = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-interaction`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        payload: {
+          type: "block_actions",
+          user: { id: "U777" },
+          response_url: `${EMULATOR}/mock/slack.com/response/socket-appr-1`,
+          actions: [{ action_id: "rabble_approve", value }],
+        },
+      }),
+    })
+  ).json()) as { delivered: number };
+  expect(push.delivered).toBeGreaterThan(0);
+
+  // The turn resumes, the tool runs approved, and the DM's buttons get
+  // swapped for the outcome via response_url.
+  expect(
+    await pollFirstToolCall("%File an issue about socket approvals%", 20000),
+  ).toMatchObject({
+    name: "create_issue",
+    authType: "user",
+    approval: { status: "approved", decidedByName: "Alex Lin" },
+  });
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/response/socket-appr-1" &&
+          r.body.text?.includes("Approved — the agent is continuing"),
+      );
+    })
+    .toBe(true);
+});
+
 test("the Builder creates a measured draft agent conversationally", async () => {
   // The quiet affordance on the Sessions landing targets the Builder.
   await page.goto("/sessions");
@@ -968,25 +1071,37 @@ test("'agent from this session' hands the transcript to the Builder", async () =
 });
 
 test("pulse-back: a sagging pass rate DMs the agent's owner", async () => {
-  // Three planted recent failures + today's failing judgment cross the
-  // alert floor (>= 4 graded in 7 days at <= 60% pass).
-  await dbQuery(
-    `INSERT INTO eval_results (criterion_id, session_id, passed, reasoning, created_at)
-     SELECT ec.id, s.id, false, 'planted for alert', now() - (n || ' hours')::interval
-     FROM eval_criteria ec
-     JOIN agents a ON a.id = ec.agent_id AND a.name = 'Eng On-Call'
-     CROSS JOIN (SELECT id FROM sessions ORDER BY created_at LIMIT 1) s
-     CROSS JOIN generate_series(1, 3) n
-     WHERE ec.enabled LIMIT 3`,
-  );
-
-  // Script the turn reply plus a FAIL verdict for each enabled criterion.
+  // Plant enough recent failures that after today's failing judgment the
+  // 7-day pass rate is guaranteed at or under the 60% alert floor — the
+  // suite's earlier (passing) judgments count toward the same window.
   const [criteria] = await dbQuery<{ n: number }>(
     `SELECT count(*)::int AS n FROM eval_criteria ec
      JOIN agents a ON a.id = ec.agent_id
      WHERE a.name = 'Eng On-Call' AND ec.enabled`,
   );
   expect(criteria!.n).toBeGreaterThan(0);
+  const [window] = await dbQuery<{ graded: number; passed: number }>(
+    `SELECT count(*)::int AS graded, count(*) FILTER (WHERE er.passed)::int AS passed
+     FROM eval_results er
+     JOIN eval_criteria ec ON ec.id = er.criterion_id
+     JOIN agents a ON a.id = ec.agent_id AND a.name = 'Eng On-Call'
+     WHERE er.created_at > now() - interval '7 days'`,
+  );
+  // rate = passed / (graded + planted + N_new_fails) <= 0.6, min 3 planted
+  const planted = Math.max(
+    3,
+    Math.ceil(window!.passed / 0.6) - window!.graded - criteria!.n,
+  );
+  await dbQuery(
+    `INSERT INTO eval_results (criterion_id, session_id, passed, reasoning, created_at)
+     SELECT ec.id, s.id, false, 'planted for alert', now() - ((n % 48) || ' hours')::interval
+     FROM (SELECT ec.id FROM eval_criteria ec
+           JOIN agents a ON a.id = ec.agent_id AND a.name = 'Eng On-Call'
+           WHERE ec.enabled LIMIT 1) ec
+     CROSS JOIN (SELECT id FROM sessions ORDER BY created_at LIMIT 1) s
+     CROSS JOIN generate_series(1, $1::int) n`,
+    [planted],
+  );
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {
     method: "POST",
     headers: { "content-type": "application/json" },

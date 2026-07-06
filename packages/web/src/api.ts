@@ -320,7 +320,9 @@ export const api = {
 
   // admin
   listConnections: () =>
-    get<{ connections: Array<Connection & { tunnel: boolean }> }>("/api/connections"),
+    get<{ connections: Array<Connection & { tunnel: boolean; agentCount: number }> }>(
+      "/api/connections",
+    ),
   createConnection: (body: {
     vendor: string;
     name: string;

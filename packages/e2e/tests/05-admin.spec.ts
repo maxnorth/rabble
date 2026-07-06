@@ -75,6 +75,13 @@ test("surfaces: the Slack connection attaches to an agent as a delivery point", 
   const surfaces = await dbQuery<{ label: string }>("SELECT label FROM agent_surfaces");
   expect(surfaces).toEqual([{ label: "#eng-oncall" }]);
 
+  // The connections list now attributes the agent to the connection
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+  await expect(
+    page.locator(".row", { hasText: "Acme Slack" }).locator(".chip", { hasText: "1 agent" }),
+  ).toBeVisible();
+
   const audit = await dbQuery<{ action: string }>(
     "SELECT action FROM audit_events WHERE action = 'agent.surface.add'",
   );
@@ -231,6 +238,25 @@ test("slack surface delivery: a channel message becomes a governed session", asy
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
     "Mock reply to: And staging?",
   );
+});
+
+test("session search filters the sidebar", async () => {
+  await page.locator("nav a[title='Sessions']").click();
+  // Let the list render before typing — a fill during the initial render
+  // races React swapping the controlled input.
+  await expect(page.locator(".sidebar-item").nth(2)).toBeVisible();
+  const search = page.getByPlaceholder("Search sessions…");
+  await search.fill("Slack");
+  await expect(search).toHaveValue("Slack");
+  await expect(
+    page.locator(".sidebar-item", { hasText: "Deploy status from Slack?" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".sidebar-item", { hasText: "Find our deploy repos" }),
+  ).toHaveCount(0);
+  await page.getByPlaceholder("Search sessions…").fill("zzz-no-match");
+  await expect(page.getByText("No sessions match")).toBeVisible();
+  await page.getByPlaceholder("Search sessions…").fill("");
 });
 
 test("automations: Run now executes a governed session on the Automation surface", async () => {

@@ -39,7 +39,7 @@ interface SlackEnvelope {
   };
 }
 
-function verifySlackSignature(
+export function verifySlackSignature(
   secret: string,
   timestamp: string,
   rawBody: string,

@@ -50,6 +50,37 @@ export function AdminSection() {
 
 const VENDORS = ["slack", "github", "linear", "datadog", "pagerduty"];
 
+/** Simple brand tiles — a letterform glyph on the vendor's accent. */
+const VENDOR_TILES: Record<string, { glyph: string; bg: string }> = {
+  slack: { glyph: "#", bg: "#4A154B" },
+  github: { glyph: "", bg: "#24292f" },
+  linear: { glyph: "◫", bg: "#5E6AD2" },
+  datadog: { glyph: "🐾", bg: "#632CA6" },
+  pagerduty: { glyph: "◉", bg: "#06AC38" },
+};
+
+function VendorTile({ vendor }: { vendor: string }) {
+  const tile = VENDOR_TILES[vendor];
+  return (
+    <span
+      style={{
+        width: 26,
+        height: 26,
+        borderRadius: 7,
+        display: "inline-flex",
+        alignItems: "center",
+        justifyContent: "center",
+        flexShrink: 0,
+        fontSize: 13,
+        color: "#fff",
+        background: tile?.bg ?? "var(--surface-tool)",
+      }}
+    >
+      {tile?.glyph || vendor[0]?.toUpperCase()}
+    </span>
+  );
+}
+
 function ConnectionsPage() {
   const queryClient = useQueryClient();
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
@@ -90,6 +121,7 @@ function ConnectionsPage() {
             <div className="row-group">
               {list.map((c) => (
                 <div className="row" key={c.id}>
+                  <VendorTile vendor={c.vendor} />
                   <span
                     className="status-dot"
                     style={{
@@ -115,6 +147,11 @@ function ConnectionsPage() {
                       {r}
                     </span>
                   ))}
+                  {c.agentCount > 0 && (
+                    <span className="chip" title="Agents reachable through this connection">
+                      {c.agentCount} agent{c.agentCount === 1 ? "" : "s"}
+                    </span>
+                  )}
                   {c.tunnel && (
                     <span className="chip purple" title="Reached through a private tunnel">
                       tunnel

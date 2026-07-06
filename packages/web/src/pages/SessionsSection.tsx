@@ -28,6 +28,14 @@ type DrawerContent =
 export function SessionsSection() {
   const { sessionId } = useParams();
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.listSessions });
+  const [query, setQuery] = useState("");
+
+  const visible = (sessions.data?.sessions ?? []).filter(
+    (s) =>
+      !query ||
+      s.title.toLowerCase().includes(query.toLowerCase()) ||
+      s.agentName.toLowerCase().includes(query.toLowerCase()),
+  );
 
   return (
     <>
@@ -35,8 +43,14 @@ export function SessionsSection() {
         <NavLink to="/sessions" end className="btn" style={{ margin: "0 4px 12px" }}>
           + New session
         </NavLink>
+        <input
+          placeholder="Search sessions…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{ margin: "0 4px 10px", fontSize: 12 }}
+        />
         <div className="sidebar-title">Recent sessions</div>
-        {sessions.data?.sessions.map((s) => (
+        {visible.map((s) => (
           <NavLink
             key={s.id}
             to={`/sessions/${s.id}`}
@@ -61,9 +75,9 @@ export function SessionsSection() {
             </span>
           </NavLink>
         ))}
-        {sessions.data?.sessions.length === 0 && (
+        {visible.length === 0 && (
           <div className="sidebar-item" style={{ color: "var(--text-muted)" }}>
-            No sessions yet
+            {query ? "No sessions match" : "No sessions yet"}
           </div>
         )}
       </aside>

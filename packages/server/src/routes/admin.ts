@@ -38,12 +38,19 @@ export async function adminRoutes(app: FastifyInstance) {
 
   app.get("/api/connections", async (req) => {
     const rows = await db
-      .select()
+      .select({
+        connection: connections,
+        agentCount: sql<number>`(
+          SELECT count(DISTINCT s.agent_id)::int FROM agent_surfaces s
+          WHERE s.connection_id = connections.id
+        )`,
+      })
       .from(connections)
       .where(eq(connections.orgId, req.user!.orgId))
       .orderBy(connections.name);
     return {
-      connections: rows.map((c) => ({
+      connections: rows.map(({ connection: c, agentCount }) => ({
+        agentCount,
         id: c.id,
         orgId: c.orgId,
         vendor: c.vendor,

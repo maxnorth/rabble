@@ -66,6 +66,26 @@ test("teams: create hierarchy and add the member", async () => {
   await page.getByRole("button", { name: "+ Add", exact: true }).click();
   await expect(page.locator(".row", { hasText: "Bea Ortiz" })).toBeVisible();
 
+  // Team-scoped label: flip Bea to lead (labels don't grant anything)
+  await page
+    .locator(".row", { hasText: "Bea Ortiz" })
+    .locator("button.chip", { hasText: "member" })
+    .click();
+  await expect(
+    page.locator(".row", { hasText: "Bea Ortiz" }).locator(".chip", { hasText: "lead" }),
+  ).toBeVisible();
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ team_role: string }>(
+        `SELECT tm.team_role FROM team_members tm
+         JOIN users u ON u.id = tm.user_id
+         JOIN teams t ON t.id = tm.team_id
+         WHERE u.email = 'bea@acme.com' AND t.slug = 'platform'`,
+      );
+      return rows[0]?.team_role;
+    })
+    .toBe("lead");
+
   const teams = await dbQuery<{ slug: string; parent: string | null }>(
     `SELECT t.slug, p.slug AS parent FROM teams t
      LEFT JOIN teams p ON p.id = t.parent_team_id

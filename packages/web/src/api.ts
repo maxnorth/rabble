@@ -214,6 +214,8 @@ export const api = {
       subTeams: Team[];
       access: TeamAccessEntry[];
     }>(`/api/teams/${id}`),
+  setTeamRole: (teamId: string, userId: string, teamRole: "lead" | "member") =>
+    patch<{ ok: true }>(`/api/teams/${teamId}/members/${userId}`, { teamRole }),
   addTeamMember: (teamId: string, userId: string) =>
     post<{ ok: true }>(`/api/teams/${teamId}/members`, { userId }),
   removeTeamMember: (teamId: string, userId: string) =>

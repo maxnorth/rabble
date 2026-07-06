@@ -102,7 +102,13 @@ export async function teamRoutes(app: FastifyInstance) {
     if (!team) return reply.code(404).send({ error: "Team not found" });
 
     const members = await db
-      .select({ userId: users.id, name: users.name, email: users.email, role: users.role })
+      .select({
+        userId: users.id,
+        name: users.name,
+        email: users.email,
+        role: users.role,
+        teamRole: teamMembers.teamRole,
+      })
       .from(teamMembers)
       .innerJoin(users, eq(teamMembers.userId, users.id))
       .where(eq(teamMembers.teamId, id))
@@ -165,6 +171,24 @@ export async function teamRoutes(app: FastifyInstance) {
           g.targetType === "domain" ? (domainAgents.get(g.targetId) ?? 0) : null,
       })),
     };
+  });
+
+  // Flip a member's team-scoped label (lead/member). Labels don't grant.
+  app.patch("/api/teams/:id/members/:userId", async (req, reply) => {
+    const { id, userId } = req.params as { id: string; userId: string };
+    const { teamRole } = req.body as { teamRole?: "lead" | "member" };
+    if (teamRole !== "lead" && teamRole !== "member") {
+      return reply.code(400).send({ error: "teamRole must be lead or member" });
+    }
+    const updated = await db
+      .update(teamMembers)
+      .set({ teamRole })
+      .where(and(eq(teamMembers.teamId, id), eq(teamMembers.userId, userId)))
+      .returning();
+    if (updated.length === 0) {
+      return reply.code(404).send({ error: "Not a member of this team" });
+    }
+    return { ok: true };
   });
 
   app.post("/api/teams/:id/members", async (req, reply) => {

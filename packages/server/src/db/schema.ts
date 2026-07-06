@@ -211,6 +211,10 @@ export const teamMembers = pgTable(
     userId: uuid("user_id")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
+    // Descriptive label only — access comes exclusively from grants
+    teamRole: text("team_role", { enum: ["lead", "member"] })
+      .notNull()
+      .default("member"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

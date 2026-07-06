@@ -227,6 +227,11 @@ function TeamDetail({ teamId }: { teamId: string }) {
       void queryClient.invalidateQueries({ queryKey: ["teams"] });
     },
   });
+  const setRole = useMutation({
+    mutationFn: ({ userId, teamRole }: { userId: string; teamRole: "lead" | "member" }) =>
+      api.setTeamRole(teamId, userId, teamRole),
+    onSuccess: refresh,
+  });
   const removeMember = useMutation({
     mutationFn: (userId: string) => api.removeTeamMember(teamId, userId),
     onSuccess: () => {
@@ -275,6 +280,20 @@ function TeamDetail({ teamId }: { teamId: string }) {
                 <div className="title">{m.name}</div>
                 <div className="sub mono">{m.email}</div>
               </div>
+              {!team.isEveryone && (
+                <button
+                  className={`chip ${m.teamRole === "lead" ? "purple" : ""}`}
+                  title="Team label only — access still comes from grants"
+                  onClick={() =>
+                    setRole.mutate({
+                      userId: m.userId,
+                      teamRole: m.teamRole === "lead" ? "member" : "lead",
+                    })
+                  }
+                >
+                  {m.teamRole}
+                </button>
+              )}
               <span className="chip">{m.role}</span>
               {!team.isEveryone && (
                 <button className="btn danger" onClick={() => removeMember.mutate(m.userId)}>

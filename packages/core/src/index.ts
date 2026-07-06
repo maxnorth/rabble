@@ -336,6 +336,8 @@ export const teamMemberSchema = z.object({
   name: z.string(),
   email: z.string(),
   role: userRoleSchema,
+  /** Team-scoped label (lead/member) — descriptive; access comes from grants. */
+  teamRole: z.enum(["lead", "member"]).default("member"),
 });
 export type TeamMember = z.infer<typeof teamMemberSchema>;
 

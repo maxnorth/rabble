@@ -130,7 +130,11 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
                   </span>
                 )}
               </div>
-              <div className="sub">{t.memberCount} members</div>
+              <div className="sub">
+                {t.memberCount} members
+                {t.domainGrantCount > 0 && ` · ${t.domainGrantCount} domain grants`}
+                {t.agentGrantCount > 0 && ` · ${t.agentGrantCount} agent grants`}
+              </div>
             </div>
             <span style={{ fontSize: 12, color: "var(--text-muted)" }}>configure →</span>
           </div>
@@ -251,7 +255,10 @@ function TeamDetail({ teamId }: { teamId: string }) {
       </p>
 
       <div className="tabs">
-        {(["members", "sub-teams", "agent access"] as const).map((t) => (
+        {(subTeams.length > 0
+          ? (["members", "sub-teams", "agent access"] as const)
+          : (["members", "agent access"] as const)
+        ).map((t) => (
           <button key={t} className={`tab${tab === t ? " active" : ""}`} onClick={() => setTab(t)}>
             {t}
           </button>
@@ -320,27 +327,57 @@ function TeamDetail({ teamId }: { teamId: string }) {
       )}
 
       {tab === "agent access" && (
-        <div className="row-group">
-          {access.map((a) => (
-            <div className="row" key={a.id}>
-              <span className={`chip ${a.targetType === "domain" ? "purple" : "blue"}`}>
-                {a.targetType}
-              </span>
-              <div className="grow">
-                <div className="title">{a.targetName}</div>
-                <div className="sub">{a.accessRight}</div>
+        <>
+          <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+            Domain grants
+          </div>
+          <div className="row-group" style={{ marginBottom: 16 }}>
+            {access
+              .filter((a) => a.targetType === "domain")
+              .map((a) => (
+                <div className="row" key={a.id}>
+                  <span className="chip purple">domain</span>
+                  <div className="grow">
+                    <div className="title">{a.targetName}</div>
+                    <div className="sub">{a.accessRight}</div>
+                  </div>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {a.agentCount ?? 0} agents
+                  </span>
+                </div>
+              ))}
+            {access.filter((a) => a.targetType === "domain").length === 0 && (
+              <div className="row">
+                <div className="sub">
+                  No domain grants — this team has no access through domains.
+                </div>
               </div>
-            </div>
-          ))}
-          {access.length === 0 && (
-            <div className="row">
-              <div className="sub">
-                This team holds no grants. Grant access from an agent's access
-                tab or a domain page.
+            )}
+          </div>
+          <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+            Direct agent grants
+          </div>
+          <div className="row-group">
+            {access
+              .filter((a) => a.targetType === "agent")
+              .map((a) => (
+                <div className="row" key={a.id}>
+                  <span className="chip blue">agent</span>
+                  <div className="grow">
+                    <div className="title">{a.targetName}</div>
+                    <div className="sub">{a.accessRight}</div>
+                  </div>
+                </div>
+              ))}
+            {access.filter((a) => a.targetType === "agent").length === 0 && (
+              <div className="row">
+                <div className="sub">
+                  None — this team's access comes entirely from domain grants.
+                </div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        </>
       )}
 
       {!team.isEveryone && (

@@ -322,6 +322,9 @@ export const teamSchema = z.object({
   name: z.string(),
   isEveryone: z.boolean(),
   memberCount: z.number().int(),
+  /** Grants this team holds, by target kind (0 when listing nested shapes). */
+  domainGrantCount: z.number().int().default(0),
+  agentGrantCount: z.number().int().default(0),
   createdAt: z.string(),
 });
 export type Team = z.infer<typeof teamSchema>;

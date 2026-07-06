@@ -77,6 +77,8 @@ export interface TeamAccessEntry {
   targetType: "agent" | "domain";
   targetId: string;
   targetName: string;
+  /** For domain grants: how many agents the domain currently reaches. */
+  agentCount: number | null;
 }
 
 export interface StatsResponse {
@@ -177,6 +179,9 @@ export const api = {
   listSessions: () => get<{ sessions: SessionWithAgent[] }>("/api/sessions"),
   createSession: (agentId: string | null, intent?: string) =>
     post<{ session: SessionWithAgent }>("/api/sessions", { agentId, intent }),
+  renameSession: (id: string, title: string) =>
+    patch<{ session: SessionWithAgent }>(`/api/sessions/${id}`, { title }),
+  deleteSession: (id: string) => del<{ ok: true }>(`/api/sessions/${id}`),
   getSession: (id: string) =>
     get<{
       session: SessionWithAgent;

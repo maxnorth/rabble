@@ -154,6 +154,45 @@ export async function sessionRoutes(app: FastifyInstance) {
     };
   });
 
+  app.patch("/api/sessions/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { title } = req.body as { title?: string };
+    if (typeof title !== "string" || !title.trim() || title.length > 200) {
+      return reply.code(400).send({ error: "A title (max 200 chars) is required" });
+    }
+    const [row] = await db
+      .update(sessions)
+      .set({ title: title.trim(), updatedAt: new Date() })
+      .where(
+        and(
+          eq(sessions.id, id),
+          eq(sessions.orgId, req.user!.orgId),
+          eq(sessions.userId, req.user!.id),
+        ),
+      )
+      .returning();
+    if (!row) return reply.code(404).send({ error: "Session not found" });
+    return { session: serializeSession(row) };
+  });
+
+  app.delete("/api/sessions/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const deleted = await db
+      .delete(sessions)
+      .where(
+        and(
+          eq(sessions.id, id),
+          eq(sessions.orgId, req.user!.orgId),
+          eq(sessions.userId, req.user!.id),
+        ),
+      )
+      .returning({ id: sessions.id });
+    if (deleted.length === 0) {
+      return reply.code(404).send({ error: "Session not found" });
+    }
+    return { ok: true };
+  });
+
   // Resolve a pending in-thread approval
   app.post("/api/sessions/:id/approvals/:approvalId", async (req, reply) => {
     const { id, approvalId } = req.params as { id: string; approvalId: string };

@@ -234,6 +234,37 @@ test("transcripts survive a full page reload", async () => {
   await expect(page.locator(".msg-agent")).toHaveCount(2);
 });
 
+test("sessions: rename inline and delete with cascade", async () => {
+  // Rename the open session from its header title
+  await page.locator(".mono", { hasText: "What is the deploy status?" }).click();
+  await page.keyboard.press("ControlOrMeta+a");
+  await page.keyboard.type("Deploy status check");
+  await page.keyboard.press("Enter");
+  await expect(
+    page.locator(".sidebar-item", { hasText: "Deploy status check" }),
+  ).toBeVisible();
+  const renamed = await dbQuery<{ title: string }>(
+    "SELECT title FROM sessions WHERE title = 'Deploy status check'",
+  );
+  expect(renamed).toHaveLength(1);
+
+  // Delete the auto-routed session; its transcript goes with it
+  const doomed = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE title = 'Auto-routed question'",
+  );
+  await page.locator(".sidebar-item", { hasText: "Auto-routed question" }).click();
+  page.once("dialog", (dialog) => void dialog.accept());
+  await page.locator("button[title='Delete session']").click();
+  await expect(
+    page.locator(".sidebar-item", { hasText: "Auto-routed question" }),
+  ).toHaveCount(0);
+  const gone = await dbQuery<{ count: string }>(
+    "SELECT count(*) FROM messages WHERE session_id = $1",
+    [doomed[0]!.id],
+  );
+  expect(Number(gone[0]!.count)).toBe(0);
+});
+
 test("API rejects unauthenticated requests", async () => {
   const anon = await request.newContext({ baseURL: "http://localhost:3178" });
   for (const path of ["/api/agents", "/api/sessions", "/api/models", "/api/auth/me"]) {

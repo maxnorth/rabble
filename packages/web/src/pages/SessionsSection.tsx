@@ -425,6 +425,23 @@ function SessionThread({ sessionId }: { sessionId: string }) {
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.getPreferences });
   const inlineToolCalls = prefs.data?.preferences.inlineToolCalls ?? true;
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
+  const navigate = useNavigate();
+  const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const rename = useMutation({
+    mutationFn: (title: string) => api.renameSession(sessionId, title),
+    onSuccess: () => {
+      setEditingTitle(null);
+      void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+  const removeSession = useMutation({
+    mutationFn: () => api.deleteSession(sessionId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+      navigate("/sessions");
+    },
+  });
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [liveTools, setLiveTools] = useState<Array<{ toolCall: ToolCall; running: boolean }>>([]);
@@ -588,10 +605,43 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           >
             {agentGlyph}
           </span>
-          <span className="mono" style={{ fontSize: 13, color: "var(--text-1)" }}>
-            {session.data?.session.title || "New session"}
-          </span>
+          {editingTitle !== null ? (
+            <input
+              className="mono"
+              autoFocus
+              value={editingTitle}
+              onChange={(e) => setEditingTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && editingTitle.trim()) rename.mutate(editingTitle);
+                if (e.key === "Escape") setEditingTitle(null);
+              }}
+              onBlur={() => setEditingTitle(null)}
+              style={{ fontSize: 13, width: 280 }}
+            />
+          ) : (
+            <span
+              className="mono"
+              style={{ fontSize: 13, color: "var(--text-1)", cursor: "text" }}
+              title="Click to rename"
+              onClick={() =>
+                setEditingTitle(session.data?.session.title ?? "")
+              }
+            >
+              {session.data?.session.title || "New session"}
+            </span>
+          )}
           <span className="chip">{session.data?.session.surface ?? "Web"}</span>
+          <button
+            title="Delete session"
+            style={{ color: "var(--text-muted)", fontSize: 13, padding: "2px 4px" }}
+            onClick={() => {
+              if (confirm("Delete this session and its transcript?")) {
+                removeSession.mutate();
+              }
+            }}
+          >
+            🗑
+          </button>
           {evalResults.length > 0 && (
             <button
               className={`chip ${passedCount === evalResults.length ? "green" : "amber"}`}

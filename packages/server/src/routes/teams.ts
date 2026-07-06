@@ -42,7 +42,23 @@ export async function teamRoutes(app: FastifyInstance) {
       .where(eq(teams.orgId, req.user!.orgId))
       .orderBy(teams.name);
     const counts = await memberCounts(req.user!.orgId);
-    return { teams: rows.map((t) => serializeTeam(t, counts.get(t.id) ?? 0)) };
+    const grantRows = await db
+      .select({
+        subjectId: grants.subjectId,
+        domainGrants: sql<number>`count(*) FILTER (WHERE ${grants.targetType} = 'domain')::int`,
+        agentGrants: sql<number>`count(*) FILTER (WHERE ${grants.targetType} = 'agent')::int`,
+      })
+      .from(grants)
+      .where(and(eq(grants.orgId, req.user!.orgId), eq(grants.subjectType, "team")))
+      .groupBy(grants.subjectId);
+    const grantCounts = new Map(grantRows.map((g) => [g.subjectId, g]));
+    return {
+      teams: rows.map((t) => ({
+        ...serializeTeam(t, counts.get(t.id) ?? 0),
+        domainGrantCount: grantCounts.get(t.id)?.domainGrants ?? 0,
+        agentGrantCount: grantCounts.get(t.id)?.agentGrants ?? 0,
+      })),
+    };
   });
 
   app.post("/api/teams", async (req, reply) => {
@@ -120,6 +136,17 @@ export async function teamRoutes(app: FastifyInstance) {
       : [];
     const agentName = new Map(agentRows.map((a) => [a.id, a.name]));
     const domainName = new Map(domainRows.map((d) => [d.id, d.name]));
+    const domainAgentCounts = domainIds.length
+      ? await db
+          .select({
+            domainId: agents.domainId,
+            count: sql<number>`count(*)::int`,
+          })
+          .from(agents)
+          .where(inArray(agents.domainId, domainIds))
+          .groupBy(agents.domainId)
+      : [];
+    const domainAgents = new Map(domainAgentCounts.map((d) => [d.domainId, d.count]));
 
     return {
       team: serializeTeam(team, counts.get(id) ?? 0),
@@ -134,6 +161,8 @@ export async function teamRoutes(app: FastifyInstance) {
           g.targetType === "agent"
             ? (agentName.get(g.targetId) ?? "(deleted)")
             : (domainName.get(g.targetId) ?? "(deleted)"),
+        agentCount:
+          g.targetType === "domain" ? (domainAgents.get(g.targetId) ?? 0) : null,
       })),
     };
   });

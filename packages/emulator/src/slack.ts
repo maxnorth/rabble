@@ -31,6 +31,14 @@ export function mountSlack(app: FastifyInstance): void {
     return { ok: true, user: { id: user, profile: { email } } };
   });
 
+  app.post("/mock/slack.com/api/users.lookupByEmail", async (req) => {
+    logRequest("slack.com", "POST", "/api/users.lookupByEmail", req.body ?? null);
+    const { email } = (req.body ?? {}) as { email?: string };
+    const entry = [...state.slackUsers.entries()].find(([, e]) => e === email);
+    if (!entry) return { ok: false, error: "users_not_found" };
+    return { ok: true, user: { id: entry[0], profile: { email } } };
+  });
+
   app.post("/mock/slack.com/api/conversations.info", async (req) => {
     logRequest("slack.com", "POST", "/api/conversations.info", req.body ?? null);
     const { channel } = (req.body ?? {}) as { channel?: string };

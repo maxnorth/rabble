@@ -284,6 +284,17 @@ export async function inboundRoutes(app: FastifyInstance) {
       }
 
       await postComment(fullText || "(no reply)");
+
+      // The commenter probably isn't watching Rabble — offer the DM ping.
+      const { notifyBackgroundReply } = await import("../runtime/notify.js");
+      void notifyBackgroundReply({
+        user: platformUser.user,
+        sessionId: session!.id,
+        surface: session!.surface,
+        agentName: matched.agent.name,
+        replyPreview: fullText,
+      });
+
       return { ok: true, sessionId: session!.id };
     });
 

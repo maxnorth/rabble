@@ -382,6 +382,60 @@ test("github surface delivery: issue comments become governed sessions", async (
   await expect(page.locator(".chip", { hasText: "GitHub acme/api#7" })).toBeVisible();
 });
 
+test("background replies ping the user's Slack DM when opted in", async () => {
+  // Alex opts in (the Slack workspace already knows alex@acme.com = U777)
+  await page.locator("nav a[title*='profile']").click();
+  await page.locator(".sidebar-item", { hasText: "Agent preferences" }).click();
+  await page
+    .locator(".row", { hasText: "Notify me when a background task finishes" })
+    .locator(".toggle")
+    .click();
+  await page.getByRole("button", { name: "Save preferences" }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+
+  // Another comment lands on the mapped repo while Alex is "away"
+  await signedGithubPost(
+    {
+      action: "created",
+      repository: { full_name: "acme/api" },
+      issue: { number: 7, title: "Deploys are flaky on Fridays" },
+      comment: {
+        body: "Any update on the cache region fix?",
+        user: { login: "alexcodes", type: "User" },
+      },
+    },
+    "d-005",
+  );
+
+  // The agent's reply is DM'd to Alex through the org's Slack connection
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { channel?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.channel === "U777" &&
+          r.body.text?.includes("replied on GitHub acme/api#7") &&
+          r.body.text?.includes("open the session in Rabble"),
+      );
+    })
+    .toBe(true);
+
+  // Opt back out so later flows stay quiet
+  await page.locator("nav a[title*='profile']").click();
+  await page.locator(".sidebar-item", { hasText: "Agent preferences" }).click();
+  await page
+    .locator(".row", { hasText: "Notify me when a background task finishes" })
+    .locator(".toggle")
+    .click();
+  await page.getByRole("button", { name: "Save preferences" }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+});
+
 test("session search filters the sidebar", async () => {
   // Hard navigation: /sessions/:id -> /sessions remounts the section, and a
   // fill during that remount lands on the discarded input.

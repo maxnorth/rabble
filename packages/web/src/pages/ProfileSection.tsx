@@ -211,7 +211,7 @@ function AgentPreferences() {
     {
       key: "notifyOnBackground",
       label: "Notify me when a background task finishes",
-      hint: "Delivery lands with surfaces — stored for now",
+      hint: "Slack DM when an agent replies on a surface you're not watching",
     },
   ];
 

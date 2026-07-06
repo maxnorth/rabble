@@ -1,4 +1,4 @@
-# Surfaces: connecting a real Slack workspace
+# Surfaces: Slack workspaces and GitHub repos
 
 A surface is a delivery point — the platform owns the session either way.
 This guide wires a real Slack workspace so channel messages become governed
@@ -58,9 +58,47 @@ channel's name as the label (e.g. `#eng-oncall`).
 - The session appears in the web app with a `Slack #channel` chip; the
   reply lands back in the Slack thread.
 
+---
+
+# GitHub repos as surfaces
+
+Issue comments in a mapped repo become governed sessions (issue =
+session); the agent replies as an issue comment.
+
+## 1. Create the webhook
+
+Repo (or org) → Settings → Webhooks → Add:
+
+- Payload URL: `https://<your-rabble-host>/api/inbound/github`
+- Content type: `application/json`
+- Secret: generate one — you'll give it to Rabble next
+- Events: "Issue comments"
+
+## 2. Register the connection in Rabble
+
+Admin → Connections → **+ Add connection**: vendor `github`, a token able
+to comment on the repo (fine-grained PAT or app installation token), and
+the **webhook secret** from step 1. Leave the base URL empty for
+github.com.
+
+## 3. Map the repo and bridge identities
+
+- Agent → **surfaces** tab → attach the GitHub connection with the repo
+  path as the label (e.g. `acme/api`).
+- Each teammate connects their GitHub account under
+  **Profile → Connected accounts**, entering their GitHub username —
+  that's how a commenter becomes a governed platform identity. Unknown
+  commenters get a comment pointing them there, never a session.
+
+Deliveries are verified with `X-Hub-Signature-256` and deduped by
+delivery id; `ping` is answered automatically.
+
 ## Limits (v1)
 
-- Public channels only (`message.channels`); DMs and private channels need
-  additional scopes/events and aren't wired yet.
-- Approvals can't be answered from Slack — run those actions from the web.
-- One workspace per connection; multiple workspaces = multiple connections.
+- Slack: public channels only (`message.channels`); DMs and private
+  channels need additional scopes/events and aren't wired yet.
+- GitHub: issue comments only (no PR review threads or discussions yet).
+- Approvals can't be answered from an unattended surface — run those
+  actions from the web app.
+- One workspace/installation per connection; use multiple connections for
+  more.

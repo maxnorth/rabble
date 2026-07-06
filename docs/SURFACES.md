@@ -172,7 +172,8 @@ delivery id; `ping` is answered automatically.
 
 - Slack: public channels only (`message.channels`); DMs and private
   channels need additional scopes/events and aren't wired yet.
-- GitHub: issue comments only (no PR review threads or discussions yet).
+- GitHub: issue and PR *conversation* comments (both arrive as
+  `issue_comment`); PR review threads and discussions aren't wired yet.
 - Approvals can't be answered from an unattended surface — run those
   actions from the web app.
 - One workspace/installation per connection; use multiple connections for

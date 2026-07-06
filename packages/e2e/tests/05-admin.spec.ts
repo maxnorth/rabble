@@ -630,6 +630,44 @@ test("github surface delivery: issue comments become governed sessions", async (
   await expect(page.locator(".chip", { hasText: "GitHub acme/api#7" })).toBeVisible();
 });
 
+test("PR conversation comments ride the same surface (PRs are issues)", async () => {
+  // GitHub fires issue_comment for PR conversations too — the payload's
+  // issue carries a pull_request marker but the flow is identical.
+  const delivery = await signedGithubPost(
+    {
+      action: "created",
+      repository: { full_name: "acme/api" },
+      issue: {
+        number: 42,
+        title: "Add rate limiting to the API gateway",
+        pull_request: { url: "https://api.github.com/repos/acme/api/pulls/42" },
+      },
+      comment: {
+        body: "Does this change our p99 target?",
+        user: { login: "alexcodes", type: "User" },
+      },
+    },
+    "d-pr-001",
+  );
+  expect(delivery.status).toBe(200);
+  const [session] = await dbQuery<{ id: string; surface: string }>(
+    "SELECT id, surface FROM sessions WHERE surface_key = 'github:acme/api#42'",
+  );
+  expect(session).toBeDefined();
+  expect(session!.surface).toBe("GitHub acme/api#42");
+
+  const log = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=api.github.com`)
+  ).json()) as { requests: Array<{ path: string; body: { body?: string } }> };
+  expect(
+    log.requests.some(
+      (r) =>
+        r.path === "/repos/acme/api/issues/42/comments" &&
+        r.body.body?.includes("Mock reply to: Does this change our p99 target?"),
+    ),
+  ).toBe(true);
+});
+
 test("background replies ping the user's Slack DM when opted in", async () => {
   // Alex opts in (the Slack workspace already knows alex@acme.com = U777)
   await page.locator("nav a[title*='profile']").click();

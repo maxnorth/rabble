@@ -1,0 +1,314 @@
+/**
+ * Inbound surface delivery. Slack Events API webhooks become governed
+ * sessions: a message in a channel mapped to an agent surface starts (or
+ * continues) a session for the matching platform user, runs a real agent
+ * turn, and threads the reply back via chat.postMessage.
+ *
+ * Authentication follows Slack's signing convention: the connection stores
+ * the app's signing secret and every request is verified with
+ * v0=HMAC_SHA256(secret, "v0:{timestamp}:{rawBody}").
+ */
+import { createHmac, timingSafeEqual } from "node:crypto";
+import type { FastifyInstance } from "fastify";
+import { and, eq, isNotNull } from "drizzle-orm";
+import { db } from "../db/client.js";
+import {
+  agentSurfaces,
+  agents,
+  connections,
+  messages,
+  models,
+  sessions,
+  users,
+} from "../db/schema.js";
+import { decryptSecret } from "../crypto.js";
+import { runAgentTurn } from "../runtime/agentTurn.js";
+import { judgeSession } from "../evals/judge.js";
+import type { ToolCall } from "@rabblehq/core";
+
+interface SlackEnvelope {
+  type: string;
+  challenge?: string;
+  event?: {
+    type: string;
+    subtype?: string;
+    bot_id?: string;
+    channel?: string;
+    user?: string;
+    text?: string;
+    ts?: string;
+    thread_ts?: string;
+  };
+}
+
+function verifySlackSignature(
+  secret: string,
+  timestamp: string,
+  rawBody: string,
+  signature: string,
+): boolean {
+  const base = `v0:${timestamp}:${rawBody}`;
+  const expected = `v0=${createHmac("sha256", secret).update(base).digest("hex")}`;
+  const a = Buffer.from(expected);
+  const b = Buffer.from(signature);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function slackApi(
+  baseUrl: string,
+  token: string,
+  method: string,
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(`${baseUrl}/api/${method}`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(body),
+  });
+  return (await res.json()) as Record<string, unknown>;
+}
+
+export async function inboundRoutes(app: FastifyInstance) {
+  // Signature verification needs the raw body — parse JSON ourselves.
+  app.register(async (scope) => {
+    scope.addContentTypeParser(
+      "application/json",
+      { parseAs: "string" },
+      (_req, body, done) => done(null, body),
+    );
+
+    scope.post("/api/inbound/slack", async (req, reply) => {
+      const rawBody = req.body as string;
+      const timestamp = String(req.headers["x-slack-request-timestamp"] ?? "");
+      const signature = String(req.headers["x-slack-signature"] ?? "");
+
+      // Replay window: Slack recommends rejecting anything older than 5 min.
+      const age = Math.abs(Date.now() / 1000 - Number(timestamp));
+      if (!timestamp || Number.isNaN(age) || age > 300) {
+        return reply.code(401).send({ error: "Stale or missing timestamp" });
+      }
+
+      // Identify the connection whose signing secret validates the request.
+      const candidates = await db
+        .select()
+        .from(connections)
+        .where(
+          and(
+            eq(connections.vendor, "slack"),
+            isNotNull(connections.encryptedSigningSecret),
+          ),
+        );
+      const connection = candidates.find((c) => {
+        try {
+          const secret = decryptSecret(c.encryptedSigningSecret!);
+          return verifySlackSignature(secret, timestamp, rawBody, signature);
+        } catch {
+          return false;
+        }
+      });
+      if (!connection) {
+        return reply.code(401).send({ error: "Signature verification failed" });
+      }
+
+      let envelope: SlackEnvelope;
+      try {
+        envelope = JSON.parse(rawBody) as SlackEnvelope;
+      } catch {
+        return reply.code(400).send({ error: "Invalid JSON" });
+      }
+
+      // Slack's endpoint handshake.
+      if (envelope.type === "url_verification") {
+        return { challenge: envelope.challenge };
+      }
+      if (envelope.type !== "event_callback" || !envelope.event) {
+        return { ok: true, ignored: "unsupported envelope" };
+      }
+
+      const event = envelope.event;
+      // Only plain user messages — no bot echoes, edits, or joins.
+      if (
+        event.type !== "message" ||
+        event.bot_id ||
+        event.subtype ||
+        !event.channel ||
+        !event.user ||
+        !event.text?.trim() ||
+        !event.ts
+      ) {
+        return { ok: true, ignored: "not a user message" };
+      }
+
+      const baseUrl = connection.baseUrl ?? "https://slack.com";
+      const token = connection.encryptedToken
+        ? decryptSecret(connection.encryptedToken)
+        : "";
+
+      // Which agent listens on this channel?
+      const channelInfo = await slackApi(baseUrl, token, "conversations.info", {
+        channel: event.channel,
+      });
+      const channelName =
+        ((channelInfo.channel as { name?: string } | undefined)?.name ?? "")
+          .replace(/^#/, "");
+      const surfaceRows = await db
+        .select({ surface: agentSurfaces, agent: agents })
+        .from(agentSurfaces)
+        .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
+        .where(eq(agentSurfaces.connectionId, connection.id));
+      const matched = surfaceRows.find((r) => {
+        const label = r.surface.label.replace(/^#/, "");
+        return label === channelName || label === event.channel;
+      });
+      if (!matched) return { ok: true, ignored: "no agent on this channel" };
+
+      // Sessions belong to people: resolve the Slack user to a platform user.
+      const userInfo = await slackApi(baseUrl, token, "users.info", {
+        user: event.user,
+      });
+      const email = (
+        userInfo.user as { profile?: { email?: string } } | undefined
+      )?.profile?.email;
+      const threadTs = event.thread_ts ?? event.ts;
+      const [platformUser] = email
+        ? await db
+            .select()
+            .from(users)
+            .where(
+              and(eq(users.orgId, connection.orgId), eq(users.email, email)),
+            )
+            .limit(1)
+        : [];
+      if (!platformUser) {
+        await slackApi(baseUrl, token, "chat.postMessage", {
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
+        });
+        return { ok: true, ignored: "no matching platform user" };
+      }
+
+      // One Slack thread = one session.
+      const surfaceKey = `slack:${event.channel}:${threadTs}`;
+      let [session] = await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.surfaceKey, surfaceKey))
+        .limit(1);
+      if (!session) {
+        const title =
+          event.text.length > 60 ? `${event.text.slice(0, 57)}…` : event.text;
+        [session] = await db
+          .insert(sessions)
+          .values({
+            orgId: connection.orgId,
+            userId: platformUser.id,
+            agentId: matched.agent.id,
+            title,
+            surface: `Slack #${channelName || event.channel}`,
+            surfaceKey,
+          })
+          .returning();
+      }
+
+      const [model] = matched.agent.modelId
+        ? await db
+            .select()
+            .from(models)
+            .where(eq(models.id, matched.agent.modelId))
+            .limit(1)
+        : [];
+
+      const history = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.sessionId, session!.id))
+        .orderBy(messages.createdAt);
+      await db
+        .insert(messages)
+        .values({ sessionId: session!.id, role: "user", content: event.text });
+
+      const { orgs } = await import("../db/schema.js");
+      const { orgSettingsSchema } = await import("@rabblehq/core");
+      const [org] = await db
+        .select({ settings: orgs.settings })
+        .from(orgs)
+        .where(eq(orgs.id, connection.orgId))
+        .limit(1);
+      const orgSettings = orgSettingsSchema.parse({ ...(org?.settings as object) });
+      const sessionApproved = history.some((m) =>
+        ((m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>).some(
+          (tc) =>
+            tc.approval?.status === "approved" ||
+            tc.approval?.status === "auto-approved",
+        ),
+      );
+
+      let fullText = "";
+      let inputTokens = 0;
+      let outputTokens = 0;
+      const toolCalls: ToolCall[] = [];
+      try {
+        for await (const turnEvent of runAgentTurn({
+          agent: matched.agent,
+          model,
+          user: platformUser,
+          sessionId: session!.id,
+          history,
+          userContent: event.text,
+          requireApproval: orgSettings.requireApprovalForUserTools,
+          sessionApproved,
+          interactive: false,
+        })) {
+          if (turnEvent.type === "text") fullText += turnEvent.text;
+          else if (turnEvent.type === "usage") {
+            inputTokens += turnEvent.inputTokens;
+            outputTokens += turnEvent.outputTokens;
+          } else if (turnEvent.type === "tool-end") {
+            toolCalls.push(turnEvent.toolCall);
+          }
+        }
+      } catch (err) {
+        req.log.error({ err }, "slack surface turn failed");
+        await slackApi(baseUrl, token, "chat.postMessage", {
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: "Something went wrong running the agent — check the session in Rabble.",
+        });
+        return { ok: true, error: "turn failed" };
+      }
+
+      await db.insert(messages).values({
+        sessionId: session!.id,
+        role: "agent",
+        content: fullText,
+        toolCalls,
+        inputTokens,
+        outputTokens,
+      });
+      await db
+        .update(sessions)
+        .set({ updatedAt: new Date() })
+        .where(eq(sessions.id, session!.id));
+
+      await slackApi(baseUrl, token, "chat.postMessage", {
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: fullText || "(no reply)",
+      });
+
+      if (model) {
+        void judgeSession({
+          sessionId: session!.id,
+          agent: matched.agent,
+          model,
+        }).catch((err) => req.log.warn({ err }, "live eval failed"));
+      }
+
+      return { ok: true, sessionId: session!.id };
+    });
+  });
+}

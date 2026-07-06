@@ -21,6 +21,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { profileRoutes } from "./routes/profile.js";
 import { automationRoutes } from "./routes/automations.js";
 import { statsRoutes } from "./routes/stats.js";
+import { inboundRoutes } from "./routes/inbound.js";
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -62,6 +63,7 @@ export async function buildServer() {
 
   app.get("/api/health", async () => ({ ok: true }));
 
+  await app.register(inboundRoutes);
   await app.register(authRoutes);
   await app.register(modelRoutes);
   await app.register(agentRoutes);

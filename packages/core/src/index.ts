@@ -222,6 +222,8 @@ export const sessionSchema = z.object({
   userId: z.string().uuid(),
   agentId: z.string().uuid(),
   title: z.string(),
+  /** Where the session originates: "Web" or e.g. "Slack #eng-oncall". */
+  surface: z.string().default("Web"),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

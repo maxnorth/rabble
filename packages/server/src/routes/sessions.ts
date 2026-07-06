@@ -260,6 +260,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         userContent: body.content,
         requireApproval: orgSettings.requireApprovalForUserTools,
         sessionApproved,
+        interactive: true,
       })) {
         if (event.type === "usage") {
           inputTokens += event.inputTokens;

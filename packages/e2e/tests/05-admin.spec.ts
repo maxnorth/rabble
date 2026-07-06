@@ -5,6 +5,7 @@
  * profile page. Ends with the server-log cleanliness check for the entire
  * suite run.
  */
+import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { expect, request, test, type Page } from "@playwright/test";
 import { EMULATOR, serverLogPath } from "../global-setup";
@@ -34,7 +35,10 @@ test("connections: add Slack, verified against the emulator", async () => {
   await page.getByRole("button", { name: "+ Add connection" }).click();
   await page.getByPlaceholder("Acme Slack").fill("Acme Slack");
   await page.getByPlaceholder("https://slack.com").fill(`${EMULATOR}/mock/slack.com`);
-  await page.locator(".modal input[type=password]").fill("xoxb-emulated");
+  await page.locator(".modal input[type=password]").first().fill("xoxb-emulated");
+  await page
+    .getByPlaceholder("Slack app signing secret")
+    .fill("emu-signing-secret");
   await page.getByRole("button", { name: "+ Add", exact: true }).click();
 
   const row = page.locator(".row", { hasText: "Acme Slack" });
@@ -75,6 +79,158 @@ test("surfaces: the Slack connection attaches to an agent as a delivery point", 
     "SELECT action FROM audit_events WHERE action = 'agent.surface.add'",
   );
   expect(audit).toHaveLength(1);
+});
+
+const SERVER = "http://localhost:3178";
+
+function signedSlackPost(body: unknown) {
+  const raw = JSON.stringify(body);
+  const ts = String(Math.floor(Date.now() / 1000));
+  const sig = `v0=${createHmac("sha256", "emu-signing-secret")
+    .update(`v0:${ts}:${raw}`)
+    .digest("hex")}`;
+  return fetch(`${SERVER}/api/inbound/slack`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-slack-request-timestamp": ts,
+      "x-slack-signature": sig,
+    },
+    body: raw,
+  });
+}
+
+test("slack surface delivery: a channel message becomes a governed session", async () => {
+  // Teach the emulated workspace who's who
+  await fetch(`${EMULATOR}/admin/slack`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      users: { U777: "alex@acme.com", U888: "stranger@elsewhere.io" },
+      channels: { C777: "eng-oncall" },
+    }),
+  });
+
+  // Slack's URL handshake
+  const verification = await signedSlackPost({
+    type: "url_verification",
+    challenge: "chz-123",
+  });
+  expect(((await verification.json()) as { challenge: string }).challenge).toBe(
+    "chz-123",
+  );
+
+  // A bad signature is rejected outright
+  const forged = await fetch(`${SERVER}/api/inbound/slack`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-slack-request-timestamp": String(Math.floor(Date.now() / 1000)),
+      "x-slack-signature": "v0=deadbeef",
+    },
+    body: JSON.stringify({ type: "event_callback" }),
+  });
+  expect(forged.status).toBe(401);
+
+  // Alex posts in #eng-oncall — the channel the agent surface maps
+  const delivery = await signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C777",
+      user: "U777",
+      text: "Deploy status from Slack?",
+      ts: "1712.001",
+    },
+  });
+  expect(delivery.status).toBe(200);
+  const deliveryBody = (await delivery.json()) as Record<string, unknown>;
+  expect(deliveryBody).toEqual({ ok: true, sessionId: expect.any(String) });
+
+  const [session] = await dbQuery<{
+    id: string;
+    surface: string;
+    title: string;
+  }>(
+    "SELECT id, surface, title FROM sessions WHERE surface_key = 'slack:C777:1712.001'",
+  );
+  expect(session).toBeDefined();
+  expect(session!.surface).toBe("Slack #eng-oncall");
+  expect(session!.title).toBe("Deploy status from Slack?");
+
+  const rows = await dbQuery<{ role: string; content: string }>(
+    "SELECT role, content FROM messages WHERE session_id = $1 ORDER BY created_at",
+    [session!.id],
+  );
+  expect(rows.map((m) => m.role)).toEqual(["user", "agent"]);
+  expect(rows[1]!.content).toBe("Mock reply to: Deploy status from Slack?");
+
+  // The reply threaded back into Slack
+  const log = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+  };
+  const posted = log.requests.filter((r) => r.path === "/api/chat.postMessage");
+  expect(
+    posted.some(
+      (r) =>
+        r.body.thread_ts === "1712.001" &&
+        r.body.text?.includes("Mock reply to: Deploy status from Slack?"),
+    ),
+  ).toBe(true);
+
+  // A follow-up in the same thread lands in the SAME session
+  await signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C777",
+      user: "U777",
+      text: "And staging?",
+      ts: "1712.002",
+      thread_ts: "1712.001",
+    },
+  });
+  const followUp = await dbQuery<{ role: string }>(
+    "SELECT role FROM messages WHERE session_id = $1 ORDER BY created_at",
+    [session!.id],
+  );
+  expect(followUp.map((m) => m.role)).toEqual(["user", "agent", "user", "agent"]);
+
+  // Someone without a Rabble account gets a polite refusal, not a session
+  await signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C777",
+      user: "U888",
+      text: "Let me in",
+      ts: "1712.099",
+    },
+  });
+  const ghost = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE surface_key = 'slack:C777:1712.099'",
+  );
+  expect(ghost).toHaveLength(0);
+  const refusals = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as { requests: Array<{ path: string; body: { text?: string } }> };
+  expect(
+    refusals.requests.some((r) =>
+      r.body?.text?.includes("I can only act for Rabble users"),
+    ),
+  ).toBe(true);
+
+  // The session shows up in Alex's web app with its surface chip
+  await page.locator("nav a[title='Sessions']").click();
+  await page
+    .locator(".sidebar-item", { hasText: "Deploy status from Slack?" })
+    .click();
+  await expect(page.locator(".chip", { hasText: "Slack #eng-oncall" })).toBeVisible();
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: And staging?",
+  );
 });
 
 test("api keys: read scope is enforced over HTTP", async () => {

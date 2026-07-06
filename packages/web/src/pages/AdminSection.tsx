@@ -156,6 +156,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
     roles: ["Interface"] as ConnectionRole[],
     baseUrl: "",
     token: "",
+    signingSecret: "",
     tunnel: false,
   });
   const create = useMutation({
@@ -166,6 +167,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
         roles: form.roles,
         baseUrl: form.baseUrl.trim() || null,
         token: form.token || undefined,
+        signingSecret: form.signingSecret || undefined,
         tunnel: form.tunnel,
       }),
     onSuccess: async () => {
@@ -248,6 +250,21 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
               onChange={(e) => setForm({ ...form, token: e.target.value })}
             />
           </div>
+          {form.vendor === "slack" && (
+            <div className="field">
+              <label>Signing secret (optional)</label>
+              <input
+                type="password"
+                placeholder="Slack app signing secret"
+                value={form.signingSecret}
+                onChange={(e) => setForm({ ...form, signingSecret: e.target.value })}
+              />
+              <span className="hint">
+                Lets Slack deliver channel messages to agents — verify inbound
+                events from your Slack app.
+              </span>
+            </div>
+          )}
           <div className="field">
             <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
               <input

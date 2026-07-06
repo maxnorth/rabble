@@ -53,6 +53,20 @@ export async function buildEmulator() {
     return { ok: true, queued: state.llmQueue.length };
   });
 
+  app.put("/admin/slack", async (req) => {
+    const { users, channels } = (req.body ?? {}) as {
+      users?: Record<string, string>;
+      channels?: Record<string, string>;
+    };
+    for (const [id, email] of Object.entries(users ?? {})) {
+      state.slackUsers.set(id, email);
+    }
+    for (const [id, name] of Object.entries(channels ?? {})) {
+      state.slackChannels.set(id, name);
+    }
+    return { ok: true };
+  });
+
   app.put("/admin/mcp/:serverKey", async (req) => {
     const { serverKey } = req.params as { serverKey: string };
     const { tools } = req.body as { tools: McpToolDef[] };

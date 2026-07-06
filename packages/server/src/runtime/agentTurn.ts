@@ -47,6 +47,11 @@ interface AgentTurnInput {
   requireApproval: boolean;
   /** An earlier call in this session was already approved by this user. */
   sessionApproved: boolean;
+  /**
+   * Whether the surface can host an approval prompt. Non-interactive
+   * surfaces (Slack v1) auto-deny user-auth tools that would need one.
+   */
+  interactive: boolean;
 }
 
 export type AgentTurnEvent =
@@ -163,6 +168,21 @@ async function buildGovernedTools(
                   (preferences.approvalPosture === "session" && input.sessionApproved));
               if (autoApprove) {
                 approval = { status: "auto-approved", decidedByName: input.user.name };
+              } else if (!input.interactive) {
+                // No way to prompt on this surface — refuse the action.
+                approval = { status: "denied", decidedByName: null };
+                const denied: ToolCall = {
+                  ...call,
+                  output:
+                    "Approvals aren't available on this surface yet — run this from the web app.",
+                  approval,
+                  durationMs: Date.now() - startedAt,
+                };
+                emit({ type: "tool-end", toolCall: denied });
+                return (
+                  "This action needs the user's approval, which isn't possible on " +
+                  "this surface. Tell the user to run it from the Rabble web app."
+                );
               } else {
                 const { approvalId, decision } = requestApproval({
                   sessionId: input.sessionId,

@@ -88,7 +88,10 @@ export async function adminRoutes(app: FastifyInstance) {
         status = "needs-auth";
       }
 
-      const { tunnel } = req.body as { tunnel?: boolean };
+      const { tunnel, signingSecret } = req.body as {
+        tunnel?: boolean;
+        signingSecret?: string;
+      };
       const [row] = await db
         .insert(connections)
         .values({
@@ -98,6 +101,9 @@ export async function adminRoutes(app: FastifyInstance) {
           roles: body.roles,
           baseUrl: body.baseUrl ?? null,
           encryptedToken: body.token ? encryptSecret(body.token) : null,
+          encryptedSigningSecret: signingSecret
+            ? encryptSecret(signingSecret)
+            : null,
           status,
           tunnel: tunnel ?? false,
         })
@@ -110,7 +116,20 @@ export async function adminRoutes(app: FastifyInstance) {
         targetId: row!.id,
         summary: `Added ${body.vendor} connection "${body.name}"`,
       });
-      return { connection: { ...row, hasToken: row!.encryptedToken !== null } };
+      return {
+        connection: {
+          id: row!.id,
+          orgId: row!.orgId,
+          vendor: row!.vendor,
+          name: row!.name,
+          roles: (row!.roles ?? []) as ConnectionRole[],
+          baseUrl: row!.baseUrl,
+          hasToken: row!.encryptedToken !== null,
+          status: row!.status,
+          tunnel: row!.tunnel,
+          createdAt: row!.createdAt.toISOString(),
+        },
+      };
     },
   );
 

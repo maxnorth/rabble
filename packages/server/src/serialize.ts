@@ -63,6 +63,7 @@ export function serializeSession(row: typeof sessions.$inferSelect): Session {
     userId: row.userId,
     agentId: row.agentId,
     title: row.title,
+    surface: row.surface,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

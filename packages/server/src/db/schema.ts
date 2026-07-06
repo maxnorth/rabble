@@ -142,6 +142,10 @@ export const sessions = pgTable("sessions", {
     .notNull()
     .references(() => agents.id),
   title: text("title").notNull().default(""),
+  // Where the session originates: "Web" or a delivery point like "Slack #eng-oncall"
+  surface: text("surface").notNull().default("Web"),
+  // Correlation key for surface threads, e.g. "slack:C042:1712.34"
+  surfaceKey: text("surface_key"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -363,6 +367,7 @@ export const connections = pgTable("connections", {
   roles: jsonb("roles").notNull().default([]),
   baseUrl: text("base_url"),
   encryptedToken: text("encrypted_token"),
+  encryptedSigningSecret: text("encrypted_signing_secret"),
   status: text("status", { enum: ["connected", "needs-auth", "error"] })
     .notNull()
     .default("connected"),

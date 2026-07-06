@@ -9,6 +9,7 @@
  * that the run produced no server-side errors.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { createServer } from "node:net";
 import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -75,7 +76,22 @@ export default async function globalSetup() {
     DATABASE_URL: e2eDatabaseUrl,
   });
 
-  // 2. Emulator
+  // 2. Emulator — refuse to run against a stale process from an earlier
+  // suite: a leftover listener on our ports would silently serve old code.
+  for (const port of [EMULATOR_PORT, E2E_PORT]) {
+    const taken = await new Promise<boolean>((resolve) => {
+      const probe = createServer();
+      probe.once("error", () => resolve(true));
+      probe.once("listening", () => probe.close(() => resolve(false)));
+      probe.listen(port, "127.0.0.1");
+    });
+    if (taken) {
+      throw new Error(
+        `Port ${port} is already in use — kill the stale process first ` +
+          `(fuser -k ${port}/tcp) so the suite tests freshly built code.`,
+      );
+    }
+  }
   const children: ChildProcess[] = [];
   const emulator = spawn(
     "node",

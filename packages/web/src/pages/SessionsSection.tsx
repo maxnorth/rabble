@@ -574,7 +574,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           <span className="mono" style={{ fontSize: 13, color: "var(--text-1)" }}>
             {session.data?.session.title || "New session"}
           </span>
-          <span className="chip">Web</span>
+          <span className="chip">{session.data?.session.surface ?? "Web"}</span>
           {evalResults.length > 0 && (
             <button
               className={`chip ${passedCount === evalResults.length ? "green" : "amber"}`}

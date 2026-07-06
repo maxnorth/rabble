@@ -32,18 +32,25 @@ interface EmulatorState {
   llmQueue: ScriptedReply[];
   mcpServers: Map<string, McpToolDef[]>;
   requests: LoggedRequest[];
+  /** Slack workspace directory: user id -> email, channel id -> name. */
+  slackUsers: Map<string, string>;
+  slackChannels: Map<string, string>;
 }
 
 export const state: EmulatorState = {
   llmQueue: [],
   mcpServers: new Map(),
   requests: [],
+  slackUsers: new Map(),
+  slackChannels: new Map(),
 };
 
 export function reset(): void {
   state.llmQueue = [];
   state.mcpServers = new Map();
   state.requests = [];
+  state.slackUsers = new Map();
+  state.slackChannels = new Map();
   seedDefaults();
 }
 

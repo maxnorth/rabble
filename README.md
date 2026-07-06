@@ -81,12 +81,19 @@ built-in Claude models.
 
 ## Development
 
+Tool versions are pinned in [`mise.toml`](mise.toml), which is also the task
+runner ([mise](https://mise.jdx.dev)):
+
 ```bash
-pnpm dev        # server (tsx watch) + web (vite) in parallel
-pnpm build      # build all packages
-pnpm typecheck  # typecheck all packages
-pnpm test:e2e   # full end-to-end suite (needs Postgres running)
+mise install     # node + pnpm at pinned versions
+mise run setup   # install deps, start Postgres, migrate
+mise run dev     # server (:3080) + web (:5173) with hot reload
+mise run check   # everything CI runs: typecheck + unit + e2e
+mise tasks       # list all tasks (db, migrate, emulator, e2e:file, ...)
 ```
+
+The underlying `pnpm` scripts (`pnpm dev`, `pnpm build`, `pnpm typecheck`,
+`pnpm test`, `pnpm test:e2e`) still work directly if you don't use mise.
 
 The e2e suite (`packages/e2e`) boots a fresh `rabble_e2e` database, the
 production server build, and a mock streaming model endpoint, then drives the

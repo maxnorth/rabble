@@ -1,0 +1,82 @@
+# Toolchain + task runner for Rabble. Install mise (https://mise.jdx.dev),
+# then `mise install` once and `mise run <task>` for everything below.
+
+[tools]
+node = "22"
+pnpm = "10"
+
+[env]
+_.file = ".env"
+
+# ---------------------------------------------------------------------------
+# Setup & day-to-day
+# ---------------------------------------------------------------------------
+
+[tasks.setup]
+description = "First-time setup: install deps, start Postgres, migrate"
+run = [
+  "pnpm install",
+  "docker compose up -d postgres",
+  "pnpm --filter @rabble/server db:migrate",
+]
+
+[tasks.dev]
+description = "Run the server (:3080) and web app (:5173) with hot reload"
+run = "pnpm dev"
+
+[tasks.build]
+description = "Build all packages"
+run = "pnpm build"
+
+[tasks.migrate]
+description = "Apply pending database migrations"
+run = "pnpm --filter @rabble/server db:migrate"
+
+# ---------------------------------------------------------------------------
+# Quality gates (same set CI runs)
+# ---------------------------------------------------------------------------
+
+[tasks.typecheck]
+description = "Typecheck every package"
+run = "pnpm typecheck"
+
+[tasks.test]
+description = "Unit tests (vitest) across packages"
+run = "pnpm test"
+
+[tasks.e2e]
+description = "Full end-to-end suite: fresh DB + emulator + production build"
+run = ["pnpm build", "pnpm --filter @rabble/e2e e2e"]
+
+[tasks."e2e:file"]
+description = "One e2e journey file, e.g. `mise run e2e:file 03-tools`"
+dir = "packages/e2e"
+run = "pnpm exec playwright test"
+
+[tasks.check]
+description = "Everything CI checks: typecheck + unit + build + e2e"
+depends = ["typecheck", "test", "e2e"]
+
+# ---------------------------------------------------------------------------
+# Services & utilities
+# ---------------------------------------------------------------------------
+
+[tasks.db]
+description = "Start Postgres (docker compose)"
+run = "docker compose up -d postgres"
+
+[tasks."db:psql"]
+description = "Open a psql shell on the dev database"
+run = "docker compose exec postgres psql -U rabble rabble"
+
+[tasks.emulator]
+description = "Run the external-service emulator on :4100"
+run = "pnpm --filter @rabble/emulator dev"
+
+[tasks.up]
+description = "Run the whole app in Docker (app + Postgres)"
+run = "docker compose up --build"
+
+[tasks.clean]
+description = "Remove build artifacts and turbo cache"
+run = "rm -rf packages/*/dist packages/*/.turbo .turbo"

@@ -241,9 +241,9 @@ test("slack surface delivery: a channel message becomes a governed session", asy
 });
 
 test("session search filters the sidebar", async () => {
-  await page.locator("nav a[title='Sessions']").click();
-  // Let the list render before typing — a fill during the initial render
-  // races React swapping the controlled input.
+  // Hard navigation: /sessions/:id -> /sessions remounts the section, and a
+  // fill during that remount lands on the discarded input.
+  await page.goto("/sessions");
   await expect(page.locator(".sidebar-item").nth(2)).toBeVisible();
   const search = page.getByPlaceholder("Search sessions…");
   await search.fill("Slack");

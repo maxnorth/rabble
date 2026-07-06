@@ -93,8 +93,15 @@ function ConnectionsPage() {
 
   return (
     <div className="content-col">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: 24,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
           <h1 className="page-title">Connections</h1>
           <p className="page-subtitle">
             First-party platform connections. A vendor can host multiple apps;
@@ -102,7 +109,11 @@ function ConnectionsPage() {
             (pure tool endpoints).
           </p>
         </div>
-        <button className="btn" onClick={() => setShowAdd(true)}>
+        <button
+          className="btn"
+          style={{ flexShrink: 0, whiteSpace: "nowrap" }}
+          onClick={() => setShowAdd(true)}
+        >
           + Add connection
         </button>
       </div>

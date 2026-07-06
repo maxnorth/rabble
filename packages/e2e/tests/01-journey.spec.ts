@@ -237,6 +237,20 @@ test("transcripts survive a full page reload", async () => {
   await expect(page.locator(".msg-agent")).toHaveCount(2);
 });
 
+test("a transcript exports as Markdown", async () => {
+  // Still on the deploy-status session from the reload test
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("button[title='Export transcript (Markdown)']").click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toMatch(/\.md$/);
+  const path = await download.path();
+  const { readFileSync } = await import("node:fs");
+  const text = readFileSync(path!, "utf8");
+  expect(text).toContain("# What is the deploy status?");
+  expect(text).toContain("## Eng On-Call");
+  expect(text).toContain("Mock reply to: What is the deploy status?");
+});
+
 test("sessions: rename inline and delete with cascade", async () => {
   // Rename the open session from its header title
   await page.locator(".mono", { hasText: "What is the deploy status?" }).click();

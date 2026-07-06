@@ -689,6 +689,38 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           )}
           <span className="chip">{session.data?.session.surface ?? "Web"}</span>
           <button
+            title="Export transcript (Markdown)"
+            style={{ color: "var(--text-muted)", fontSize: 12, padding: "2px 4px" }}
+            onClick={() => {
+              const data = session.data;
+              if (!data) return;
+              const lines = [
+                `# ${data.session.title || "Session"}`,
+                "",
+                `Agent: ${data.session.agentName} · Surface: ${data.session.surface} · Exported ${new Date().toLocaleString()}`,
+                "",
+                ...messages.flatMap((m) => [
+                  `## ${m.role === "user" ? "User" : data.session.agentName}`,
+                  ...m.toolCalls.map(
+                    (tc) =>
+                      `> tool: \`${tc.name}\` (${tc.authType ?? "service"} auth${tc.approval ? `, ${tc.approval.status}` : ""})`,
+                  ),
+                  m.content,
+                  "",
+                ]),
+              ];
+              const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = `${(data.session.title || "session").replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}.md`;
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+          >
+            ⇩ export
+          </button>
+          <button
             title="Delete session"
             style={{ color: "var(--text-muted)", fontSize: 13, padding: "2px 4px" }}
             onClick={() => {

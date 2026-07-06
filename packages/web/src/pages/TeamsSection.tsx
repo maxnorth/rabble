@@ -131,9 +131,11 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
                 )}
               </div>
               <div className="sub">
-                {t.memberCount} members
-                {t.domainGrantCount > 0 && ` · ${t.domainGrantCount} domain grants`}
-                {t.agentGrantCount > 0 && ` · ${t.agentGrantCount} agent grants`}
+                {t.memberCount} member{t.memberCount === 1 ? "" : "s"}
+                {t.domainGrantCount > 0 &&
+                  ` · ${t.domainGrantCount} domain grant${t.domainGrantCount === 1 ? "" : "s"}`}
+                {t.agentGrantCount > 0 &&
+                  ` · ${t.agentGrantCount} agent grant${t.agentGrantCount === 1 ? "" : "s"}`}
               </div>
             </div>
             <span style={{ fontSize: 12, color: "var(--text-muted)" }}>configure →</span>

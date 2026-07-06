@@ -373,6 +373,16 @@ export async function seedDemo(): Promise<void> {
       surface: "Automation · Weekly review digest",
     },
     {
+      agent: "Eng On-Call",
+      user: teammates[0],
+      title: "Deploys are flaky on Fridays",
+      ask: "What changed in the deploy pipeline this week?",
+      reply:
+        "Two changes landed: the artifact cache moved regions (#4808) and the canary window shrank to 10 minutes (#4815). The Friday flakes correlate with the cache move — regional cold starts. Suggest pinning the cache region for the deploy job.",
+      day: 5,
+      surface: "GitHub acme/api#412",
+    },
+    {
       agent: "Deploy Gate",
       user: teammates[0],
       title: "Hotfix for the checkout latency",

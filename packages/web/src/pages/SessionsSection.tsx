@@ -1092,17 +1092,27 @@ function FileArtifactCard({
   toolCall: ToolCall;
   onOpen: (name: string, content: string) => void;
 }) {
-  const input = toolCall.input as { file_path?: string; content?: string };
+  const input = toolCall.input as {
+    file_path?: string;
+    content?: string;
+    old_string?: string;
+    new_string?: string;
+  };
   const name = input.file_path ?? "file";
-  const content = input.content ?? String(toolCall.output ?? "");
+  const content = input.content ?? input.new_string ?? String(toolCall.output ?? "");
   const lines = content.split("\n").length;
+  // edit_file carries a diff shape: show +added −removed like the prototype
+  const meta =
+    toolCall.name === "edit_file" && input.old_string != null
+      ? `diff · +${(input.new_string ?? "").split("\n").length} −${input.old_string.split("\n").length}`
+      : `file · ${lines} lines`;
   return (
     <div className="tool-call" onClick={() => onOpen(name, content)}>
       <span style={{ color: "var(--text-dim)" }}>≡</span>
       <span style={{ flex: 1, minWidth: 0 }}>
         <span className="tool-name">{name}</span>
         <span className="tool-server" style={{ marginLeft: 8 }}>
-          file · {lines} lines
+          {meta}
         </span>
       </span>
       <span style={{ color: "var(--accent-text)", fontSize: 12 }}>open →</span>

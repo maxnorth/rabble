@@ -381,8 +381,10 @@ export const api = {
         createdAt: string;
       }>;
     }>(`/api/stats/failures?agentId=${agentId}&days=${days}`),
-  stats: (days: number, agentId?: string) =>
-    get<StatsResponse>(`/api/stats?days=${days}${agentId ? `&agentId=${agentId}` : ""}`),
+  stats: (days: number, agentId?: string, userId?: string) =>
+    get<StatsResponse>(
+      `/api/stats?days=${days}${agentId ? `&agentId=${agentId}` : ""}${userId ? `&userId=${userId}` : ""}`,
+    ),
 };
 
 /**

@@ -404,6 +404,14 @@ test("stats dashboards reflect real usage", async () => {
     page.locator(".chart-card", { hasText: "Turns per session" }).locator(".bar-row").first(),
   ).toBeVisible();
 
+  // Filtering by user: Bea drove one session in 02-governance
+  await page.locator("select[title='Filter by user']").selectOption({ label: "Bea Ortiz" });
+  const beaSessions = page.locator(".kpi", { hasText: "Sessions" }).first();
+  await expect
+    .poll(async () => Number(await beaSessions.locator(".value").innerText()))
+    .toBe(1);
+  await page.locator("select[title='Filter by user']").selectOption("");
+
   // Filtering to one agent narrows the numbers without erroring
   await page.locator("select[title='Filter by agent']").selectOption({ label: "Eng On-Call" });
   const filteredSessions = page.locator(".kpi", { hasText: "Sessions" }).first();

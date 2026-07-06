@@ -1228,7 +1228,7 @@ function AccessTab({ agentId }: { agentId: string }) {
         grants inherited from its domain. There is no owner — rights come only
         from grants.
       </p>
-      {domain && (
+      {domain ? (
         <div
           className="card"
           style={{
@@ -1248,6 +1248,28 @@ function AccessTab({ agentId }: { agentId: string }) {
           </span>
           <Link to={`/domains/${domain.id}`} style={{ color: "var(--accent-text)" }}>
             Edit domain grants →
+          </Link>
+        </div>
+      ) : (
+        <div
+          className="card"
+          style={{
+            padding: 12,
+            marginBottom: 14,
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            fontSize: 12.5,
+            color: "var(--text-dim)",
+          }}
+        >
+          <span className="chip">no domain</span>
+          <span className="grow">
+            Not in a domain — access here is direct grants only. Adding it to a
+            domain lets team access flow in automatically.
+          </span>
+          <Link to={`/agents/${agentId}`} style={{ color: "var(--accent-text)" }}>
+            + Add to domain
           </Link>
         </div>
       )}

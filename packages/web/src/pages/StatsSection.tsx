@@ -141,11 +141,13 @@ function fmtUsd(n: number): string {
 export function StatsSection() {
   const [days, setDays] = useState(30);
   const [agentId, setAgentId] = useState("");
+  const [userId, setUserId] = useState("");
   const [page, setPage] = useState<Page>("Overview");
   const agents = useQuery({ queryKey: ["agents"], queryFn: api.listAgents });
+  const users = useQuery({ queryKey: ["users"], queryFn: api.listUsers });
   const stats = useQuery({
-    queryKey: ["stats", days, agentId],
-    queryFn: () => api.stats(days, agentId || undefined),
+    queryKey: ["stats", days, agentId, userId],
+    queryFn: () => api.stats(days, agentId || undefined, userId || undefined),
   });
   const data = stats.data;
 
@@ -185,6 +187,18 @@ export function StatsSection() {
                 {agents.data?.agents.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={userId}
+                onChange={(e) => setUserId(e.target.value)}
+                title="Filter by user"
+              >
+                <option value="">All users</option>
+                {users.data?.users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
                   </option>
                 ))}
               </select>

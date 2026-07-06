@@ -57,15 +57,19 @@ export async function statsRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/stats", async (req) => {
-    const { days: daysRaw, agentId } = req.query as {
+    const { days: daysRaw, agentId, userId } = req.query as {
       days?: string;
       agentId?: string;
+      userId?: string;
     };
     const days = Math.min(Math.max(Number(daysRaw ?? 30), 1), 365);
     const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const priorSince = new Date(since.getTime() - days * 24 * 60 * 60 * 1000);
     const orgId = req.user!.orgId;
-    const agentFilter = agentId ? [eq(sessions.agentId, agentId)] : [];
+    const agentFilter = [
+      ...(agentId ? [eq(sessions.agentId, agentId)] : []),
+      ...(userId ? [eq(sessions.userId, userId)] : []),
+    ];
 
     const [kpis] = await db
       .select({
@@ -235,6 +239,7 @@ export async function statsRoutes(app: FastifyInstance) {
       LEFT JOIN models mo ON mo.id = a.model_id
       WHERE s.org_id = ${orgId} AND m.created_at >= ${since}
         ${agentId ? sql`AND s.agent_id = ${agentId}` : sql``}
+        ${userId ? sql`AND s.user_id = ${userId}` : sql``}
       GROUP BY a.name
       ORDER BY spend DESC
     `);

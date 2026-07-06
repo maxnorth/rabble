@@ -617,6 +617,13 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           // Approval outcomes live on in the persisted tool-call chips
           setApprovals([]);
           void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+          // Live judging lands a few seconds AFTER the turn — refetch so the
+          // criteria chip reflects the fresh verdict, not the previous one.
+          for (const delay of [2500, 7000]) {
+            setTimeout(() => {
+              void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+            }, delay);
+          }
         } else if (event.type === "error") {
           setError(event.error);
           setStreamingText(null);

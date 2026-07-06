@@ -344,7 +344,7 @@ test("criteria trends: pass rate vs the prior 30-day window", async () => {
 test("sub-agents: link an agent and annotate the edge", async () => {
   await page.locator("nav a[title='Agents']").click();
   await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
-  await page.getByRole("button", { name: "agents", exact: true }).click();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
 
   const linkable = page.locator(".row", { hasText: "Claude Agent" });
   await linkable.getByRole("button", { name: "Attach" }).click();
@@ -365,7 +365,7 @@ test("sub-agents: link an agent and annotate the edge", async () => {
 
   // Survives a reload
   await page.reload();
-  await page.getByRole("button", { name: "agents", exact: true }).click();
+  await page.getByRole("button", { name: "Agents", exact: true }).click();
   await expect(
     page.getByPlaceholder("When is it called? e.g. Before any deploy action"),
   ).toHaveValue("Called for anything requiring long-form writing");
@@ -414,4 +414,29 @@ test("duplicate: the copy carries config and wiring, never history", async () =>
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("button", { name: "Delete agent" }).click();
   await expect(page.getByRole("heading", { name: "All agents" })).toBeVisible();
+});
+
+test("a fresh judgment updates the open session without a reload", async () => {
+  // The spot-check overturn left this session's verdict at FAIL
+  await page.locator("nav a[title='Sessions']").click();
+  await page.locator(".sidebar-item", { hasText: "Is prod healthy?" }).click();
+  const chip = page.locator("button.chip", { hasText: "criteria" });
+  await expect(chip).toContainText("! 0/1 criteria");
+
+  // A new turn triggers re-judging (emulator default: PASS). The chip must
+  // flip in place — no reload — once the background verdict lands.
+  await page.locator(".thread-composer textarea").fill("Checking prod again");
+  await page.locator(".thread-composer button", { hasText: "Send" }).click();
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: Checking prod again",
+    { timeout: 15_000 },
+  );
+  await expect(chip).toContainText("✓ 1/1 criteria", { timeout: 12_000 });
+
+  // Stats reads the same rows — the session view and Stats now agree
+  const results = await dbQuery<{ passed: boolean; review_status: string | null }>(
+    `SELECT er.passed, er.review_status FROM eval_results er
+     JOIN sessions s ON s.id = er.session_id WHERE s.title = 'Is prod healthy?'`,
+  );
+  expect(results).toEqual([{ passed: true, review_status: null }]);
 });

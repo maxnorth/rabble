@@ -61,7 +61,7 @@ The research docs are context, not specs: they explain *why* the design is shape
 ### Agents
 - Rail: + New agent, **★ Favorites** (starred agents pin here), then **All agents** entry.
 - **All agents directory**: a sortable table (click column headers: Agent / Domain / Eval score / Last updated / Tools; click again to flip) with text search and **dynamic filters** ("+ Filter" popup → Domain submenu, Starred, You own, Eval ≥ 90%; applied filters are removable chips). The directory doubles as a *trust surface*: eval scores and attributes tell a stranger whether to rely on an agent they didn't build.
-- **Agent config**: 8 tabs — identity · surfaces · MCP · agents (sub-agents) · automations · **evals** · access · advanced.
+- **Agent config**: 8 tabs — Identity · Surfaces · MCP · Agents (sub-agents) · Automations · **Evals** · Access · Advanced. (Corrected to the prototype's Title Case — an earlier transcription had these lowercase.)
   - **Evals tab**: criteria (live, evaluated against real sessions, with pass %, trend, session counts) + suites (offline mock-session test cases, with gating flags). Track-record view.
   - **Access tab**: direct grants + domain grants, plain-language rights (use · edit · admin).
 
@@ -96,7 +96,7 @@ The research docs are context, not specs: they explain *why* the design is shape
 - **Domains** (not Spaces, not folders): flat, optional, grant-carrying agent collections.
 - **Connections** (not Integrations) in Admin.
 - **Natural casing for display names** — agents and domains display as "Eng On-Call", "Deploy Gate", "Engineering"; slugs (`eng-oncall`) exist internally only.
-- Analytics = **"Stats"**; admin = **"Admin"**; agent tools tab = **"MCP"**; agent reachability tab = **"surfaces"**.
+- Analytics = **"Stats"**; admin = **"Admin"**; agent tools tab = **"MCP"**; agent reachability tab = **"Surfaces"** (tabs are Title Case, per the prototype).
 - Connections vs. MCP servers are intentionally separate concepts.
 - "+ Add" / "Attach" phrasing (not "Create") for shared resources.
 - No per-agent "owner"; rights come from grants (direct or domain).

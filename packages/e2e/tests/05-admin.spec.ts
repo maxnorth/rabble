@@ -821,13 +821,21 @@ test("stats dashboards reflect real usage", async () => {
     page.locator(".chart-card", { hasText: "Pass rate by agent" }),
   ).toContainText("Eng On-Call");
 
-  // Drill down: clicking the agent's bar lists its failing cases (the
-  // overturned verdict from the spot-check flow)
+  // Drill down: clicking the agent's bar lists its failing cases. Plant a
+  // recent failure — earlier flows re-judged their sessions green.
+  await dbQuery(
+    `INSERT INTO eval_results (criterion_id, session_id, passed, reasoning, created_at)
+     SELECT ec.id, s.id, false, 'Missed the runbook link', now() - interval '2 days'
+     FROM eval_criteria ec, sessions s
+     WHERE s.title = 'Find our deploy repos' LIMIT 1`,
+  );
+  await page.locator(".sidebar-item", { hasText: "Overview" }).click();
+  await page.locator(".sidebar-item", { hasText: "Eval performance" }).click();
   await page.locator(".bar-row", { hasText: "Eng On-Call" }).first().click();
   const failCard = page.locator(".chart-card", {
     has: page.getByRole("heading", { name: "Failing cases" }),
   });
-  await expect(failCard).toContainText("Stays on topic");
+  await expect(failCard).toContainText("Missed the runbook link");
   await expect(failCard.locator("a", { hasText: "open session →" }).first()).toBeVisible();
 
   // Usage & spend tab: token usage recorded from the emulator's usage blocks

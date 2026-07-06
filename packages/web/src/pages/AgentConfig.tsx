@@ -94,7 +94,7 @@ export function AgentConfig({ agentId }: { agentId: string }) {
             className={`tab${t === activeTab ? " active" : ""}`}
             onClick={() => navigate(`/agents/${agentId}/${t === "identity" ? "" : t}`)}
           >
-            {t === "mcp" ? "MCP" : t}
+            {t === "mcp" ? "MCP" : t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
       </div>

@@ -87,10 +87,19 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     })
     .catch((err) => {
       console.error("migration failed:", err instanceof Error ? err.message : err);
-      if ((err as { code?: string }).code === "ECONNREFUSED") {
+      const code = (err as { code?: string }).code;
+      if (code === "ECONNREFUSED") {
         console.error(
           "Postgres isn't reachable. Start it first: docker compose up -d --wait postgres\n" +
             `(connection string: ${env.databaseUrl.replace(/:[^:@/]+@/, ":***@")})`,
+        );
+      } else if (code === "28000" || code === "3D000") {
+        console.error(
+          "Connected to a Postgres server, but the role/database doesn't exist.\n" +
+            "You may be talking to a different Postgres than the compose container\n" +
+            "(e.g. Homebrew on the same port). Rabble's container listens on\n" +
+            "localhost:55432 — check DATABASE_URL in your .env, then:\n" +
+            "  docker compose up -d --wait postgres && mise run migrate",
         );
       }
       console.error(err);

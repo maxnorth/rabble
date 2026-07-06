@@ -11,7 +11,7 @@ function required(name: string, fallback?: string): string {
 export const env = {
   databaseUrl: required(
     "DATABASE_URL",
-    "postgres://rabble:rabble@localhost:5432/rabble",
+    "postgres://rabble:rabble@localhost:55432/rabble",
   ),
   port: Number(process.env.PORT ?? 3080),
   cookieSecret: required("COOKIE_SECRET", "dev-only-insecure-secret"),

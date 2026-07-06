@@ -26,7 +26,7 @@ export const EMULATOR = `http://localhost:${EMULATOR_PORT}`;
 
 const adminUrl =
   process.env.E2E_ADMIN_DATABASE_URL ??
-  "postgres://rabble:rabble@localhost:5432/rabble";
+  "postgres://rabble:rabble@localhost:55432/rabble";
 export const e2eDatabaseUrl = adminUrl.replace(/\/[^/]*$/, `/${E2E_DB}`);
 
 async function waitFor(url: string, timeoutMs = 30_000): Promise<void> {

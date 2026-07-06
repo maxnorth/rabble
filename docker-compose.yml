@@ -21,7 +21,9 @@ services:
       POSTGRES_PASSWORD: rabble
       POSTGRES_DB: rabble
     ports:
-      - "5432:5432"
+      # Non-default host port so a locally installed Postgres on 5432
+      # (Homebrew, Postgres.app) never shadows this container.
+      - "55432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

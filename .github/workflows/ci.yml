@@ -16,7 +16,7 @@ jobs:
           POSTGRES_PASSWORD: rabble
           POSTGRES_DB: rabble
         ports:
-          - 5432:5432
+          - 55432:5432
         options: >-
           --health-cmd "pg_isready -U rabble"
           --health-interval 5s

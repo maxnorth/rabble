@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "db:migrate": "tsx src/db/migrate.ts",
     "seed:demo": "tsx src/db/seedDemo.ts",
+    "rotate:secret": "tsx src/db/rotateSecret.ts",
     "test": "vitest run"
   },
   "dependencies": {

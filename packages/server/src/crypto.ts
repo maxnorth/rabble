@@ -37,7 +37,11 @@ export function hashAuthToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-const encryptionKey = scryptSync(env.encryptionSecret, "rabble-secrets-v1", 32);
+export function deriveEncryptionKey(secret: string): Buffer {
+  return scryptSync(secret, "rabble-secrets-v1", 32);
+}
+
+const encryptionKey = deriveEncryptionKey(env.encryptionSecret);
 
 export function encryptSecret(plaintext: string): string {
   const iv = randomBytes(12);
@@ -47,14 +51,14 @@ export function encryptSecret(plaintext: string): string {
   return `v1:${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;
 }
 
-export function decryptSecret(stored: string): string {
+export function decryptSecret(stored: string, key: Buffer = encryptionKey): string {
   const [version, ivHex, tagHex, dataHex] = stored.split(":");
   if (version !== "v1" || !ivHex || !tagHex || !dataHex) {
     throw new Error("Unrecognized secret format");
   }
   const decipher = createDecipheriv(
     "aes-256-gcm",
-    encryptionKey,
+    key,
     Buffer.from(ivHex, "hex"),
   );
   decipher.setAuthTag(Buffer.from(tagHex, "hex"));

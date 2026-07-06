@@ -18,6 +18,7 @@ import Fastify from "fastify";
 import { mountAnthropic, mountOpenAi } from "./llm.js";
 import { mountMcp } from "./mcp.js";
 import { mountSlack } from "./slack.js";
+import { mountGithub } from "./github.js";
 import { reset, state, type McpToolDef, type ScriptedReply } from "./state.js";
 
 export async function buildEmulator() {
@@ -30,6 +31,7 @@ export async function buildEmulator() {
   mountAnthropic(app);
   mountMcp(app);
   mountSlack(app);
+  mountGithub(app);
 
   // --- admin ---
   app.post("/admin/reset", async () => {

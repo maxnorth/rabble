@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { verifySlackSignature } from "./inbound.js";
+import { verifyGithubSignature, verifySlackSignature } from "./inbound.js";
 
 function sign(secret: string, timestamp: string, body: string): string {
   return `v0=${createHmac("sha256", secret).update(`v0:${timestamp}:${body}`).digest("hex")}`;
@@ -29,5 +29,23 @@ describe("verifySlackSignature", () => {
     expect(verifySlackSignature("other-secret", ts, body, sign(secret, ts, body))).toBe(false);
     expect(verifySlackSignature(secret, ts, body, "v0=nothex")).toBe(false);
     expect(verifySlackSignature(secret, ts, body, "")).toBe(false);
+  });
+});
+
+describe("verifyGithubSignature", () => {
+  const secret = "gh-webhook-secret";
+  const body = JSON.stringify({ action: "created", comment: { body: "hi" } });
+  const sign = (sec: string, raw: string) =>
+    `sha256=${createHmac("sha256", sec).update(raw).digest("hex")}`;
+
+  it("accepts GitHub's sha256 HMAC over the raw body", () => {
+    expect(verifyGithubSignature(secret, body, sign(secret, body))).toBe(true);
+  });
+
+  it("rejects tampered bodies, wrong secrets, and malformed signatures", () => {
+    expect(verifyGithubSignature(secret, body + " ", sign(secret, body))).toBe(false);
+    expect(verifyGithubSignature("other", body, sign(secret, body))).toBe(false);
+    expect(verifyGithubSignature(secret, body, "sha256=nope")).toBe(false);
+    expect(verifyGithubSignature(secret, body, "")).toBe(false);
   });
 });

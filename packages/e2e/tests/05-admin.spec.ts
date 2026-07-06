@@ -240,6 +240,148 @@ test("slack surface delivery: a channel message becomes a governed session", asy
   );
 });
 
+function signedGithubPost(body: unknown, deliveryId: string, event = "issue_comment") {
+  const raw = JSON.stringify(body);
+  const sig = `sha256=${createHmac("sha256", "gh-webhook-secret").update(raw).digest("hex")}`;
+  return fetch(`${SERVER}/api/inbound/github`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-hub-signature-256": sig,
+      "x-github-event": event,
+      "x-github-delivery": deliveryId,
+    },
+    body: raw,
+  });
+}
+
+test("github surface delivery: issue comments become governed sessions", async () => {
+  // A GitHub connection with a webhook secret, pointed at the emulator
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+  await page.getByRole("button", { name: "+ Add connection" }).click();
+  await page.locator(".modal select").first().selectOption("github");
+  await page.getByPlaceholder("Acme Slack").fill("Acme GitHub");
+  await page
+    .getByPlaceholder("https://slack.com")
+    .fill(`${EMULATOR}/mock/api.github.com`);
+  await page.locator(".modal input[type=password]").first().fill("ghs-emulated");
+  await page.getByPlaceholder("GitHub webhook secret").fill("gh-webhook-secret");
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+  await expect(page.locator(".row", { hasText: "Acme GitHub" })).toBeVisible();
+
+  // Alex bridges his GitHub identity via Profile › Connected accounts
+  await page.locator("nav a[title*='profile']").click();
+  const githubRow = page.locator(".row", { hasText: "Github" });
+  await githubRow.getByRole("button", { name: "Connect" }).click();
+  await page.getByPlaceholder("Username (for surface identity)").fill("alexcodes");
+  await page.getByPlaceholder("Token").fill("gho-alex");
+  await githubRow.getByRole("button", { name: "Save" }).click();
+  await expect(githubRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+
+  // Map the repo onto the agent as a surface
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).first().click();
+  await page.getByRole("button", { name: "surfaces" }).click();
+  // Wait for the tab to replace the identity tab (which has its own selects)
+  await expect(page.locator(".row", { hasText: "Web sessions" })).toBeVisible();
+  await page.locator("select").selectOption({ label: "Acme GitHub (github)" });
+  // The label placeholder is vendor-aware (repo path for GitHub)
+  await page.getByPlaceholder("acme/api").fill("acme/api");
+  await page.getByRole("button", { name: "Attach surface" }).click();
+  await expect(page.locator(".row", { hasText: "acme/api" })).toBeVisible();
+
+  // A forged signature is rejected
+  const forged = await fetch(`${SERVER}/api/inbound/github`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-hub-signature-256": "sha256=deadbeef",
+      "x-github-event": "issue_comment",
+      "x-github-delivery": "d-000",
+    },
+    body: JSON.stringify({ action: "created" }),
+  });
+  expect(forged.status).toBe(401);
+
+  // alexcodes comments on an issue in the mapped repo
+  const payload = {
+    action: "created",
+    repository: { full_name: "acme/api" },
+    issue: { number: 7, title: "Deploys are flaky on Fridays" },
+    comment: {
+      body: "What changed in the deploy pipeline this week?",
+      user: { login: "alexcodes", type: "User" },
+    },
+  };
+  const delivery = await signedGithubPost(payload, "d-001");
+  expect(delivery.status).toBe(200);
+  expect(((await delivery.json()) as { sessionId?: string }).sessionId).toBeTruthy();
+
+  const [session] = await dbQuery<{ id: string; surface: string; title: string }>(
+    "SELECT id, surface, title FROM sessions WHERE surface_key = 'github:acme/api#7'",
+  );
+  expect(session!.surface).toBe("GitHub acme/api#7");
+  expect(session!.title).toBe("Deploys are flaky on Fridays");
+
+  // The reply went back as an issue comment
+  const log = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=api.github.com`)
+  ).json()) as { requests: Array<{ path: string; body: { body?: string } }> };
+  expect(
+    log.requests.some(
+      (r) =>
+        r.path === "/repos/acme/api/issues/7/comments" &&
+        r.body.body?.includes("Mock reply to: What changed in the deploy pipeline"),
+    ),
+  ).toBe(true);
+
+  // Same issue, second comment -> same session; duplicate delivery -> ignored
+  await signedGithubPost(
+    { ...payload, comment: { ...payload.comment, body: "And who approved it?" } },
+    "d-002",
+  );
+  const dupe = await signedGithubPost(
+    { ...payload, comment: { ...payload.comment, body: "And who approved it?" } },
+    "d-002",
+  );
+  expect(((await dupe.json()) as { ignored?: string }).ignored).toBe("duplicate delivery");
+  const transcript = await dbQuery<{ role: string }>(
+    "SELECT role FROM messages WHERE session_id = $1 ORDER BY created_at",
+    [session!.id],
+  );
+  expect(transcript.map((m) => m.role)).toEqual(["user", "agent", "user", "agent"]);
+
+  // A stranger gets pointed at connected accounts, and no session
+  await signedGithubPost(
+    {
+      ...payload,
+      issue: { number: 99, title: "Who are you?" },
+      comment: { body: "hello?", user: { login: "ghost", type: "User" } },
+    },
+    "d-003",
+  );
+  const ghost = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE surface_key = 'github:acme/api#99'",
+  );
+  expect(ghost).toHaveLength(0);
+  const refusal = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=api.github.com`)
+  ).json()) as { requests: Array<{ body: { body?: string } }> };
+  expect(
+    refusal.requests.some((r) =>
+      r.body.body?.includes("connect your GitHub account under Profile"),
+    ),
+  ).toBe(true);
+
+  // Visible in the web app with its surface chip
+  await page.locator("nav a[title='Sessions']").click();
+  await page
+    .locator(".sidebar-item", { hasText: "Deploys are flaky on Fridays" })
+    .click();
+  await expect(page.locator(".chip", { hasText: "GitHub acme/api#7" })).toBeVisible();
+});
+
 test("session search filters the sidebar", async () => {
   // Hard navigation: /sessions/:id -> /sessions remounts the section, and a
   // fill during that remount lands on the discarded input.
@@ -424,19 +566,20 @@ test("stats dashboards reflect real usage", async () => {
 test("profile: connected account and approval posture persist", async () => {
   await page.locator("nav a[title*='profile']").click();
 
-  // Connect a personal GitHub token inline on the vendor row
-  const githubRow = page.locator(".row", { hasText: "GitHub" });
-  await githubRow.getByRole("button", { name: "Connect" }).click();
-  await githubRow.getByPlaceholder("Token").fill("gho_personal");
-  await githubRow.getByRole("button", { name: "Save" }).click();
-  await expect(githubRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+  // Connect a personal Linear token inline on the vendor row (GitHub is
+  // already connected by the github-surface test)
+  const linearRow = page.locator(".row", { hasText: "Linear" });
+  await linearRow.getByRole("button", { name: "Connect" }).click();
+  await linearRow.getByPlaceholder("Token").fill("lin_personal");
+  await linearRow.getByRole("button", { name: "Save" }).click();
+  await expect(linearRow.locator(".chip", { hasText: "connected" })).toBeVisible();
 
   const accounts = await dbQuery<{ vendor: string; encrypted_token: string }>(
-    "SELECT vendor, encrypted_token FROM user_connected_accounts",
+    "SELECT vendor, encrypted_token FROM user_connected_accounts WHERE vendor = 'linear'",
   );
-  expect(accounts[0]!.vendor).toBe("github");
+  expect(accounts[0]!.vendor).toBe("linear");
   expect(accounts[0]!.encrypted_token).toMatch(/^v1:/);
-  expect(accounts[0]!.encrypted_token).not.toContain("gho_personal");
+  expect(accounts[0]!.encrypted_token).not.toContain("lin_personal");
 
   // Trust posture saves and persists (stored as "trust")
   await page.locator(".sidebar-item", { hasText: "Agent preferences" }).click();

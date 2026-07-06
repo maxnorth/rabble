@@ -79,12 +79,14 @@ function ConnectedAccounts() {
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: api.listAccounts });
   const [connecting, setConnecting] = useState<string | null>(null);
   const [token, setToken] = useState("");
+  const [label, setLabel] = useState("");
 
   const connect = useMutation({
-    mutationFn: (vendor: string) => api.connectAccount({ vendor, token }),
+    mutationFn: (vendor: string) => api.connectAccount({ vendor, token, label }),
     onSuccess: () => {
       setConnecting(null);
       setToken("");
+      setLabel("");
       void queryClient.invalidateQueries({ queryKey: ["accounts"] });
     },
   });
@@ -138,12 +140,18 @@ function ConnectedAccounts() {
               ) : connecting === vendor ? (
                 <>
                   <input
-                    type="password"
                     autoFocus
+                    placeholder="Username (for surface identity)"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    style={{ width: 190 }}
+                  />
+                  <input
+                    type="password"
                     placeholder="Token"
                     value={token}
                     onChange={(e) => setToken(e.target.value)}
-                    style={{ width: 180 }}
+                    style={{ width: 150 }}
                   />
                   <button
                     className="btn primary"

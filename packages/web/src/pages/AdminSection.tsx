@@ -299,18 +299,25 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
               onChange={(e) => setForm({ ...form, token: e.target.value })}
             />
           </div>
-          {form.vendor === "slack" && (
+          {(form.vendor === "slack" || form.vendor === "github") && (
             <div className="field">
-              <label>Signing secret (optional)</label>
+              <label>
+                {form.vendor === "slack" ? "Signing secret" : "Webhook secret"} (optional)
+              </label>
               <input
                 type="password"
-                placeholder="Slack app signing secret"
+                placeholder={
+                  form.vendor === "slack"
+                    ? "Slack app signing secret"
+                    : "GitHub webhook secret"
+                }
                 value={form.signingSecret}
                 onChange={(e) => setForm({ ...form, signingSecret: e.target.value })}
               />
               <span className="hint">
-                Lets Slack deliver channel messages to agents — verify inbound
-                events from your Slack app.
+                {form.vendor === "slack"
+                  ? "Lets Slack deliver channel messages to agents — verifies inbound events from your Slack app."
+                  : "Lets GitHub deliver issue comments to agents — verifies inbound webhooks from your repos."}
               </span>
             </div>
           )}

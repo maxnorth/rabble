@@ -273,6 +273,18 @@ export async function inboundRoutes(app: FastifyInstance) {
           requireApproval: orgSettings.requireApprovalForUserTools,
           sessionApproved: false,
           interactive: false,
+          // Asks pend (web card) and go out as Slack DM buttons when the
+          // org has a Slack connection — same broker either way.
+          approvalPrompt: async (ask) => {
+            const { sendSlackApprovalPrompt } = await import("../runtime/notify.js");
+            await sendSlackApprovalPrompt({
+              user: platformUser.user,
+              sessionId: session!.id,
+              surface: session!.surface,
+              agentName: matched.agent.name,
+              ask,
+            });
+          },
         });
         fullText = result.fullText;
       } catch (err) {
@@ -593,52 +605,13 @@ export async function inboundRoutes(app: FastifyInstance) {
           // Deliver approval asks as DM buttons instead of auto-denying —
           // the broker still owns the decision and the timeout.
           approvalPrompt: async (ask) => {
-            const lookup = await slackApi(baseUrl, token, "users.lookupByEmail", {
-              email: platformUser.email,
-            });
-            const dmUser = (lookup.user as { id?: string } | undefined)?.id;
-            if (!dmUser) return;
-            const value = JSON.stringify({
-              approvalId: ask.approvalId,
+            const { sendSlackApprovalPrompt } = await import("../runtime/notify.js");
+            await sendSlackApprovalPrompt({
+              user: platformUser,
               sessionId: session!.id,
-            });
-            await slackApi(baseUrl, token, "chat.postMessage", {
-              channel: dmUser,
-              text:
-                `${matched.agent.name} wants to run ${ask.toolName}` +
-                `${ask.serverName ? ` via ${ask.serverName}` : ""} acting as you ` +
-                `(from ${session!.surface}).`,
-              blocks: [
-                {
-                  type: "section",
-                  text: {
-                    type: "mrkdwn",
-                    text:
-                      `*Approval needed — acting as you*\n` +
-                      `${matched.agent.name} wants to run \`${ask.toolName}\`` +
-                      `${ask.serverName ? ` via ${ask.serverName}` : ""} on ${session!.surface}.`,
-                  },
-                },
-                {
-                  type: "actions",
-                  elements: [
-                    {
-                      type: "button",
-                      style: "primary",
-                      action_id: "rabble_approve",
-                      text: { type: "plain_text", text: "Approve as me" },
-                      value,
-                    },
-                    {
-                      type: "button",
-                      style: "danger",
-                      action_id: "rabble_deny",
-                      text: { type: "plain_text", text: "Deny" },
-                      value,
-                    },
-                  ],
-                },
-              ],
+              surface: session!.surface,
+              agentName: matched.agent.name,
+              ask,
             });
           },
         });

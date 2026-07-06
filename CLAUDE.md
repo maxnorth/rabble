@@ -69,6 +69,10 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   POST /api/inbound/slack (Slack v0 HMAC signing over the RAW body — the
   route scope has its own string content-type parser; don't move it under
   the JSON-parsed tree).
+- Approvals: the in-memory broker (runtime/approvals.ts) arbitrates all
+  surfaces — web card, Slack DM buttons (interactivity endpoint), and
+  pending asks returned on session GET. e2e runs with
+  APPROVAL_TIMEOUT_MS=15000; UI-path approval tests must beat that window.
 - Trust data (spot-check queue, scope violations 30d, graded count, judge
   model) comes from GET /api/agents/:id/trust; scope violations are
   recorded by the runtime when the model calls a tool outside its governed

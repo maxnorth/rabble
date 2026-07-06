@@ -22,9 +22,7 @@ import {
   users,
 } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
-import { runAgentTurn } from "../runtime/agentTurn.js";
-import { judgeSession } from "../evals/judge.js";
-import type { ToolCall } from "@rabblehq/core";
+import { executeTurnAndPersist } from "../runtime/executeTurn.js";
 
 interface SlackEnvelope {
   type: string;
@@ -222,15 +220,6 @@ export async function inboundRoutes(app: FastifyInstance) {
             .limit(1)
         : [];
 
-      const history = await db
-        .select()
-        .from(messages)
-        .where(eq(messages.sessionId, session!.id))
-        .orderBy(messages.createdAt);
-      await db
-        .insert(messages)
-        .values({ sessionId: session!.id, role: "user", content: event.text });
-
       const { orgs } = await import("../db/schema.js");
       const { orgSettingsSchema } = await import("@rabblehq/core");
       const [org] = await db
@@ -239,7 +228,11 @@ export async function inboundRoutes(app: FastifyInstance) {
         .where(eq(orgs.id, connection.orgId))
         .limit(1);
       const orgSettings = orgSettingsSchema.parse({ ...(org?.settings as object) });
-      const sessionApproved = history.some((m) =>
+      const priorMessages = await db
+        .select()
+        .from(messages)
+        .where(eq(messages.sessionId, session!.id));
+      const sessionApproved = priorMessages.some((m) =>
         ((m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>).some(
           (tc) =>
             tc.approval?.status === "approved" ||
@@ -248,29 +241,18 @@ export async function inboundRoutes(app: FastifyInstance) {
       );
 
       let fullText = "";
-      let inputTokens = 0;
-      let outputTokens = 0;
-      const toolCalls: ToolCall[] = [];
       try {
-        for await (const turnEvent of runAgentTurn({
+        const result = await executeTurnAndPersist({
+          sessionId: session!.id,
           agent: matched.agent,
           model,
           user: platformUser,
-          sessionId: session!.id,
-          history,
-          userContent: event.text,
+          content: event.text,
           requireApproval: orgSettings.requireApprovalForUserTools,
           sessionApproved,
           interactive: false,
-        })) {
-          if (turnEvent.type === "text") fullText += turnEvent.text;
-          else if (turnEvent.type === "usage") {
-            inputTokens += turnEvent.inputTokens;
-            outputTokens += turnEvent.outputTokens;
-          } else if (turnEvent.type === "tool-end") {
-            toolCalls.push(turnEvent.toolCall);
-          }
-        }
+        });
+        fullText = result.fullText;
       } catch (err) {
         req.log.error({ err }, "slack surface turn failed");
         await slackApi(baseUrl, token, "chat.postMessage", {
@@ -281,32 +263,11 @@ export async function inboundRoutes(app: FastifyInstance) {
         return { ok: true, error: "turn failed" };
       }
 
-      await db.insert(messages).values({
-        sessionId: session!.id,
-        role: "agent",
-        content: fullText,
-        toolCalls,
-        inputTokens,
-        outputTokens,
-      });
-      await db
-        .update(sessions)
-        .set({ updatedAt: new Date() })
-        .where(eq(sessions.id, session!.id));
-
       await slackApi(baseUrl, token, "chat.postMessage", {
         channel: event.channel,
         thread_ts: threadTs,
         text: fullText || "(no reply)",
       });
-
-      if (model) {
-        void judgeSession({
-          sessionId: session!.id,
-          agent: matched.agent,
-          model,
-        }).catch((err) => req.log.warn({ err }, "live eval failed"));
-      }
 
       return { ok: true, sessionId: session!.id };
     });

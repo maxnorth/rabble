@@ -408,6 +408,9 @@ function SessionThread({ sessionId }: { sessionId: string }) {
   const agentRow = agentsQuery.data?.agents.find(
     (a) => a.id === session.data?.session.agentId,
   );
+  const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.getPreferences });
+  const inlineToolCalls = prefs.data?.preferences.inlineToolCalls ?? true;
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [liveTools, setLiveTools] = useState<Array<{ toolCall: ToolCall; running: boolean }>>([]);
@@ -626,23 +629,39 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                   </div>
                   <div className="bubble">
                     <div className="agent-name">{agentName}</div>
-                    {m.toolCalls.map((tc) =>
-                      isFileArtifact(tc) ? (
-                        <FileArtifactCard
-                          key={tc.id}
-                          toolCall={tc}
-                          onOpen={(name, content) =>
-                            setDrawer({ kind: "file", name, content })
+                    {!inlineToolCalls &&
+                      m.toolCalls.length > 0 &&
+                      !expandedTools.has(m.id) && (
+                        <button
+                          className="chip"
+                          style={{ marginBottom: 6 }}
+                          title="Tool calls are collapsed (Profile › Agent preferences)"
+                          onClick={() =>
+                            setExpandedTools((prev) => new Set(prev).add(m.id))
                           }
-                        />
-                      ) : (
-                        <ToolCallChip
-                          key={tc.id}
-                          toolCall={tc}
-                          onClick={() => setDrawer({ kind: "tool", toolCall: tc })}
-                        />
-                      ),
-                    )}
+                        >
+                          {m.toolCalls.length} tool call
+                          {m.toolCalls.length === 1 ? "" : "s"} · show
+                        </button>
+                      )}
+                    {(inlineToolCalls || expandedTools.has(m.id)) &&
+                      m.toolCalls.map((tc) =>
+                        isFileArtifact(tc) ? (
+                          <FileArtifactCard
+                            key={tc.id}
+                            toolCall={tc}
+                            onOpen={(name, content) =>
+                              setDrawer({ kind: "file", name, content })
+                            }
+                          />
+                        ) : (
+                          <ToolCallChip
+                            key={tc.id}
+                            toolCall={tc}
+                            onClick={() => setDrawer({ kind: "tool", toolCall: tc })}
+                          />
+                        ),
+                      )}
                     {m.content}
                   </div>
                 </div>

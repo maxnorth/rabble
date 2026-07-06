@@ -289,6 +289,10 @@ export const api = {
     get<{ automations: Automation[] }>(`/api/agents/${agentId}/automations`),
   createAutomation: (agentId: string, body: { name: string; schedule: string; prompt: string }) =>
     post<{ automation: Automation }>(`/api/agents/${agentId}/automations`, body),
+  runAutomation: (id: string) =>
+    post<{ sessionId: string; reply: string; toolCalls: number }>(
+      `/api/automations/${id}/run`,
+    ),
   toggleAutomation: (id: string, enabled: boolean) =>
     patch<{ automation: Automation }>(`/api/automations/${id}`, { enabled }),
   deleteAutomation: (id: string) => del<{ ok: true }>(`/api/automations/${id}`),

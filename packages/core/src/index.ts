@@ -451,6 +451,8 @@ export const automationSchema = z.object({
   schedule: z.string(),
   prompt: z.string(),
   enabled: z.boolean(),
+  lastRunAt: z.string().nullable().default(null),
+  lastSessionId: z.string().uuid().nullable().default(null),
   createdAt: z.string(),
 });
 export type Automation = z.infer<typeof automationSchema>;

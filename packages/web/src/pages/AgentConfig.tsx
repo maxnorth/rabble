@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { GrantEditor } from "./AgentsSection";
-import { AGENT_COLORS, AGENT_GLYPHS } from "../lib/time";
+import { AGENT_COLORS, AGENT_GLYPHS, relativeTime } from "../lib/time";
 
 const AGENT_TABS = [
   "identity",
@@ -744,13 +744,21 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
     mutationFn: (id: string) => api.deleteAutomation(id),
     onSuccess: refresh,
   });
+  const run = useMutation({
+    mutationFn: (id: string) => api.runAutomation(id),
+    onSuccess: refresh,
+  });
 
   return (
     <>
       <p className="page-subtitle">
-        Scheduled runs of this agent. Definitions live here; execution runs on
-        the platform's scheduling engine.
+        Scheduled runs of this agent. Each run is a real governed session on
+        the Automation surface — Run now executes immediately; recurring
+        schedules land with the platform's scheduling engine.
       </p>
+      {run.isError && (
+        <p className="error-text">{(run.error as Error).message}</p>
+      )}
       <div className="row-group" style={{ marginBottom: 20 }}>
         {automations.data?.automations.map((a) => (
           <div className="row" key={a.id}>
@@ -761,8 +769,36 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
             />
             <div className="grow">
               <div className="title">{a.name}</div>
-              <div className="sub mono">{a.schedule}</div>
+              <div className="sub mono">
+                {a.schedule}
+                {a.lastRunAt && (
+                  <>
+                    {" · last ran "}
+                    {relativeTime(a.lastRunAt)}
+                    {a.lastSessionId && (
+                      <>
+                        {" · "}
+                        <Link
+                          to={`/sessions/${a.lastSessionId}`}
+                          style={{ color: "var(--accent-text)" }}
+                        >
+                          view session →
+                        </Link>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
+            {canEdit && (
+              <button
+                className="btn"
+                disabled={run.isPending}
+                onClick={() => run.mutate(a.id)}
+              >
+                {run.isPending ? "Running…" : "Run now"}
+              </button>
+            )}
             {canEdit && (
               <button className="btn danger" onClick={() => remove.mutate(a.id)}>
                 Delete

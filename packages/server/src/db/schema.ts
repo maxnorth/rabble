@@ -352,6 +352,10 @@ export const automations = pgTable("automations", {
   schedule: text("schedule").notNull(),
   prompt: text("prompt").notNull().default(""),
   enabled: boolean("enabled").notNull().default(false),
+  lastRunAt: timestamp("last_run_at", { withTimezone: true }),
+  lastSessionId: uuid("last_session_id").references((): AnyPgColumn => sessions.id, {
+    onDelete: "set null",
+  }),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

@@ -233,6 +233,49 @@ test("slack surface delivery: a channel message becomes a governed session", asy
   );
 });
 
+test("automations: Run now executes a governed session on the Automation surface", async () => {
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "automations" }).click();
+
+  await page.getByPlaceholder("Morning digest").fill("Morning digest");
+  await page
+    .getByPlaceholder("What the agent should do on each run")
+    .fill("Summarize overnight incidents");
+  await page.getByRole("button", { name: "+ Add automation" }).click();
+  const row = page.locator(".row", { hasText: "Morning digest" });
+  await expect(row).toBeVisible();
+
+  await row.getByRole("button", { name: "Run now" }).click();
+  await expect(row.getByRole("link", { name: "view session →" })).toBeVisible({
+    timeout: 20_000,
+  });
+  await expect(row).toContainText("last ran");
+
+  const [session] = await dbQuery<{ id: string; surface: string }>(
+    "SELECT id, surface FROM sessions WHERE surface LIKE 'Automation%'",
+  );
+  expect(session!.surface).toBe("Automation · Morning digest");
+  const transcript = await dbQuery<{ role: string; content: string }>(
+    "SELECT role, content FROM messages WHERE session_id = $1 ORDER BY created_at",
+    [session!.id],
+  );
+  expect(transcript.map((m) => m.role)).toEqual(["user", "agent"]);
+  expect(transcript[0]!.content).toBe("Summarize overnight incidents");
+  expect(transcript[1]!.content).toBe("Mock reply to: Summarize overnight incidents");
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'automation.run'",
+  );
+  expect(audit).toHaveLength(1);
+
+  // The run's session opens like any other, on its surface
+  await row.getByRole("link", { name: "view session →" }).click();
+  await expect(page.locator(".chip", { hasText: "Automation · Morning digest" })).toBeVisible();
+  await expect(page.locator(".msg-agent .bubble")).toContainText(
+    "Mock reply to: Summarize overnight incidents",
+  );
+});
+
 test("api keys: read scope is enforced over HTTP", async () => {
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "API keys" }).click();
@@ -362,6 +405,35 @@ test("profile: connected account and approval posture persist", async () => {
     "SELECT preferences FROM users WHERE email = 'alex@acme.com'",
   );
   expect(prefs[0]!.preferences.approvalPosture).toBe("trust");
+});
+
+test("preferences: collapsed tool calls hide chips until expanded", async () => {
+  // Turn "Show tool calls inline" off
+  await page.locator("nav a[title*='profile']").click();
+  await page.locator(".sidebar-item", { hasText: "Agent preferences" }).click();
+  await page
+    .locator(".row", { hasText: "Show tool calls inline" })
+    .locator(".toggle")
+    .click();
+  await page.getByRole("button", { name: "Save preferences" }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
+
+  // The MCP session from the tools journey now collapses its call
+  await page.locator("nav a[title='Sessions']").click();
+  await page.locator(".sidebar-item", { hasText: "Find our deploy repos" }).click();
+  await expect(page.locator(".tool-call")).toHaveCount(0);
+  await page.getByRole("button", { name: "1 tool call · show" }).first().click();
+  await expect(page.locator(".tool-call", { hasText: "search_repos" })).toBeVisible();
+
+  // Restore the default so later flows see inline chips
+  await page.locator("nav a[title*='profile']").click();
+  await page.locator(".sidebar-item", { hasText: "Agent preferences" }).click();
+  await page
+    .locator(".row", { hasText: "Show tool calls inline" })
+    .locator(".toggle")
+    .click();
+  await page.getByRole("button", { name: "Save preferences" }).click();
+  await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
 });
 
 test("with trust posture, user-auth tools skip the card", async () => {

@@ -61,6 +61,12 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   reply echoes the last user message ("Mock reply to: ..."); judge prompts
   (containing "Respond with exactly PASS or FAIL") get "PASS". Slack
   directory (user id → email, channel id → name) via `PUT /admin/slack`.
+- Slack has two transports sharing one pipeline (`surfaces/slack.ts`):
+  Events webhooks and Socket Mode (connection stores an encrypted app
+  token → server dials `apps.connections.open` and acks envelopes by id).
+  Emulator: `POST /admin/slack/socket-event` pushes an event to connected
+  sockets; `GET /admin/slack/socket` shows socket count + sent/ack log.
+  Event-id dedupe spans both transports.
 - Gating: PATCH /api/agents/:id runs the agent's gating suites against the
   CANDIDATE config for behavior changes (name/description/instructions/
   tone/model) and 409s on a failing case — remember this when e2e edits a

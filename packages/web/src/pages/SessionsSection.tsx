@@ -29,6 +29,34 @@ export function SessionsSection() {
   const { sessionId } = useParams();
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.listSessions });
   const [query, setQuery] = useState("");
+  const navigate = useNavigate();
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  // Shortcuts: "/" focuses search, "n" starts a session (outside inputs)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        e.metaKey ||
+        e.ctrlKey ||
+        e.altKey
+      ) {
+        return;
+      }
+      if (e.key === "/") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (e.key === "n") {
+        e.preventDefault();
+        navigate("/sessions");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [navigate]);
 
   const visible = (sessions.data?.sessions ?? []).filter(
     (s) =>
@@ -44,7 +72,8 @@ export function SessionsSection() {
           + New session
         </NavLink>
         <input
-          placeholder="Search sessions…"
+          ref={searchRef}
+          placeholder="Search sessions…  ( / )"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           style={{ margin: "0 4px 10px", fontSize: 12 }}

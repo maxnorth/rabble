@@ -107,9 +107,9 @@ export async function seedDemo(): Promise<void> {
     .values({ orgId, name: "Support", slug: "support" })
     .returning();
   await db.insert(teamMembers).values([
-    { teamId: engineering!.id, userId: teammates[0]!.id },
+    { teamId: engineering!.id, userId: teammates[0]!.id, teamRole: "lead" as const },
     { teamId: platform!.id, userId: teammates[1]!.id },
-    { teamId: support!.id, userId: teammates[2]!.id },
+    { teamId: support!.id, userId: teammates[2]!.id, teamRole: "lead" as const },
   ]);
 
   // Domains
@@ -537,6 +537,26 @@ export async function seedDemo(): Promise<void> {
       output: "Deterministic checklist behavior verified.",
       reasoning: "Matches the rubric.",
     });
+  }
+
+  // Trust-loop flavor: one recorded scope violation and one verdict in review
+  const { scopeViolations } = await import("./schema.js");
+  const docsWriter = byName.get("Docs Writer")!;
+  await db.insert(scopeViolations).values({
+    orgId,
+    agentId: docsWriter.id,
+    toolName: "delete_wiki_space",
+    createdAt: daysAgo(8),
+  });
+  const [disputable] = await db
+    .select()
+    .from(evalResults)
+    .limit(1);
+  if (disputable) {
+    await db
+      .update(evalResults)
+      .set({ reviewStatus: "open", disputedBy: owner!.id, disputedAt: daysAgo(1) })
+      .where(eq(evalResults.id, disputable.id));
   }
 
   // Audit trail flavor

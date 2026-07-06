@@ -829,6 +829,37 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           >
             🗑
           </button>
+          {(() => {
+            const builder = agentsQuery.data?.agents.find(
+              (a) => a.builtin === "builder" && a.myRight,
+            );
+            if (!builder || agentRow?.builtin) return null;
+            return (
+              <button
+                title="Start a Builder session that drafts an agent for this kind of work"
+                style={{ color: "var(--text-muted)", fontSize: 12, padding: "2px 4px" }}
+                onClick={async () => {
+                  const asks = messages
+                    .filter((m) => m.role === "user")
+                    .map((m) => `- ${m.content.slice(0, 200)}`)
+                    .slice(0, 5)
+                    .join("\n");
+                  const { session: created } = await api.createSession(builder.id);
+                  await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+                  navigate(`/sessions/${created.id}`, {
+                    state: {
+                      initialMessage:
+                        `I keep doing this kind of work by hand — draft an agent for it. ` +
+                        `From my session "${session.data?.session.title ?? ""}", here's what I asked:\n${asks}\n` +
+                        `Propose a draft with eval criteria and confirm what you inferred.`,
+                    },
+                  });
+                }}
+              >
+                ✦ agent from this
+              </button>
+            );
+          })()}
           {evalResults.length > 0 && (
             <button
               className={`chip ${passedCount === evalResults.length ? "green" : "amber"}`}

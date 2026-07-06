@@ -178,6 +178,14 @@ export const accessRequestSchema = z.object({
   decidedByName: z.string().nullable(),
   decidedAt: z.string().nullable(),
   createdAt: z.string(),
+  /** Track record of the target agent — evidence for the access decision. */
+  evidence: z
+    .object({
+      passRate30d: z.number().nullable(),
+      graded30d: z.number(),
+      scopeViolations30d: z.number(),
+    })
+    .optional(),
 });
 export type AccessRequest = z.infer<typeof accessRequestSchema>;
 

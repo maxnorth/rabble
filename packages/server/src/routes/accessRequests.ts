@@ -28,6 +28,42 @@ async function requireOrgAdmin(req: FastifyRequest, reply: FastifyReply) {
   }
 }
 
+/**
+ * Track record for the approval decision — the thesis in one payload:
+ * evidence (pass rate, graded volume, recent scope violations) is what
+ * lets an approver sign a defensible yes. Agent targets only.
+ */
+async function evidenceFor(
+  targetType: "agent" | "domain" | "model",
+  targetId: string,
+): Promise<
+  { passRate30d: number | null; graded30d: number; scopeViolations30d: number } | undefined
+> {
+  if (targetType !== "agent") return undefined;
+  const [row] = await db
+    .select({
+      graded: sql<number>`count(*)::int`,
+      passed: sql<number>`count(*) FILTER (WHERE er.passed)::int`,
+    })
+    .from(sql`eval_results er`)
+    .innerJoin(sql`eval_criteria ec`, sql`ec.id = er.criterion_id`)
+    .where(
+      sql`ec.agent_id = ${targetId} AND er.created_at > now() - interval '30 days'`,
+    );
+  const [violations] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(sql`scope_violations sv`)
+    .where(
+      sql`sv.agent_id = ${targetId} AND sv.created_at > now() - interval '30 days'`,
+    );
+  const graded = row?.graded ?? 0;
+  return {
+    passRate30d: graded > 0 ? Math.round(((row?.passed ?? 0) / graded) * 100) : null,
+    graded30d: graded,
+    scopeViolations30d: violations?.count ?? 0,
+  };
+}
+
 async function targetNameFor(
   targetType: "agent" | "domain" | "model",
   targetId: string,
@@ -94,6 +130,8 @@ export async function accessRequestRoutes(app: FastifyInstance) {
           decidedByName: deciderName ?? null,
           decidedAt: r.decidedAt?.toISOString() ?? null,
           createdAt: r.createdAt.toISOString(),
+          evidence:
+            r.status === "open" ? await evidenceFor(r.targetType, r.targetId) : undefined,
         });
       }
       return { requests };

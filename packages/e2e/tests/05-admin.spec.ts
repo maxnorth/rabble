@@ -940,6 +940,33 @@ test("the Builder creates a measured draft agent conversationally", async () => 
   expect(criterionAudit).toHaveLength(1);
 });
 
+test("'agent from this session' hands the transcript to the Builder", async () => {
+  // From a normal work session, the affordance spins up a Builder session
+  // seeded with what the user kept asking for.
+  await page.goto("/sessions");
+  // Renamed from "What is the deploy status?" in journey 01.
+  await page.locator(".sidebar-item", { hasText: "Deploy status check" }).click();
+  await page.getByRole("button", { name: "✦ agent from this" }).click();
+
+  await expect(page.locator(".thread-composer textarea")).toHaveAttribute(
+    "placeholder",
+    "Message Builder…",
+  );
+  await expect(page.locator(".msg-user").first()).toContainText(
+    "draft an agent for it",
+    { timeout: 15000 },
+  );
+  await expect(page.locator(".msg-user").first()).toContainText(
+    "What is the deploy status?",
+  );
+  // The scripted queue is empty, so the Builder just echoes — the point is
+  // the session exists, targets the Builder, and carries the context.
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to:",
+    { timeout: 15000 },
+  );
+});
+
 test("hitting an access limit becomes a request an admin approves", async ({
   browser,
 }) => {
@@ -1014,6 +1041,12 @@ test("hitting an access limit becomes a request an admin approves", async ({
   await expect(requestRow).toContainText("Eng On-Call");
   await expect(requestRow).toContainText("Tune the CI triage instructions");
   await expect(requestRow.locator(".chip", { hasText: "via Builder" })).toBeVisible();
+  // Track record shown as evidence for the decision — the thesis in one chip
+  // (Eng On-Call was judged in the evals journey, so a 30d pass rate exists).
+  await expect(requestRow.locator(".chip", { hasText: "% pass" })).toBeVisible();
+  await expect(requestRow.locator(".chip", { hasText: "graded" })).toContainText(
+    /\d+% pass · \d+ graded/,
+  );
   await requestRow.getByRole("button", { name: "Approve", exact: true }).click();
   await expect(page.locator(".row", { hasText: "Approved by Alex Lin" })).toBeVisible();
 

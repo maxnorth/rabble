@@ -107,6 +107,31 @@ function AccessRequestsPage() {
                 {r.reason || "No reason given"} · {relativeTime(r.createdAt)}
               </div>
             </div>
+            {r.evidence && (
+              <span
+                className={`chip ${
+                  r.evidence.passRate30d === null
+                    ? ""
+                    : r.evidence.passRate30d >= 90
+                      ? "green"
+                      : "amber"
+                }`}
+                title="The agent's measured track record — evidence for this access decision (last 30 days)"
+              >
+                {r.evidence.passRate30d === null
+                  ? "no track record yet"
+                  : `${r.evidence.passRate30d}% pass · ${r.evidence.graded30d} graded`}
+              </span>
+            )}
+            {r.evidence && r.evidence.scopeViolations30d > 0 && (
+              <span
+                className="chip amber"
+                title="Times the agent tried a tool outside its governed set in the last 30 days"
+              >
+                {r.evidence.scopeViolations30d} scope violation
+                {r.evidence.scopeViolations30d === 1 ? "" : "s"}
+              </span>
+            )}
             {r.via === "builder" && <span className="chip purple">via Builder</span>}
             <button
               className="btn primary"

@@ -109,6 +109,25 @@ test("suites: create, add a case, run it", async () => {
   expect(results[0]!.output).toContain("Mock reply to:");
 });
 
+test("freeze: a judged session becomes a suite case from the eval drawer", async () => {
+  // Back to the judged session; the criteria chip opens the eval drawer
+  await page.locator("nav a[title='Sessions']").click();
+  await page.locator(".sidebar-item", { hasText: "Is prod healthy?" }).click();
+  await page.locator("button.chip", { hasText: "criteria" }).click();
+
+  const freeze = page.locator("div", { hasText: "Freeze as test case" }).last();
+  await freeze.locator("select").selectOption({ label: "Smoke" });
+  await freeze.getByRole("button", { name: "+ Add to suite" }).click();
+  await expect(page.locator(".chip", { hasText: "Added to suite ✓" })).toBeVisible();
+
+  const cases = await dbQuery<{ input: string; source_session_id: string | null }>(
+    "SELECT input, source_session_id FROM eval_cases ORDER BY created_at",
+  );
+  expect(cases).toHaveLength(2);
+  expect(cases[1]!.input).toContain("Is prod healthy?");
+  expect(cases[1]!.source_session_id).not.toBeNull();
+});
+
 test("anthropic protocol: agent on the emulated Anthropic API works", async () => {
   // Register an Anthropic-protocol custom model pointing at the emulator
   await page.locator("nav a[title='Admin']").click();

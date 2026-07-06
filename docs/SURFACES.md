@@ -30,6 +30,12 @@ Admin → Connections → **+ Add connection**:
 
 Rabble supports both of Slack's delivery mechanisms; pick one per app.
 
+> **A bot token alone is not enough.** The token lets Rabble *send*
+> (post replies, DMs), but Slack never *delivers* channel messages to
+> Rabble unless one transport below is configured. A Slack connection with
+> neither shows a **"no event delivery"** chip in Admin › Connections —
+> tagging the bot will do nothing.
+
 ### Option A — Socket Mode (recommended; no public URL)
 
 Rabble dials out to Slack over a WebSocket, so it works from behind a
@@ -38,11 +44,14 @@ firewall, on localhost, or anywhere without a public HTTPS endpoint.
 - Slack app → **Basic Information → App-Level Tokens** → generate a token
   with the `connections:write` scope (`xapp-…`)
 - Slack app → **Socket Mode** → enable
+- Slack app → **Event Subscriptions** → enable and subscribe to the bot
+  event `message.channels` (no Request URL is needed in Socket Mode, but
+  the subscription itself still is — without it Slack sends nothing)
 - Paste the token into the connection's **App-level token (Socket Mode)**
   field when registering it in Rabble
 
-That's it — events and the Approve/Deny interactivity payloads stream over
-the socket. Rabble acks each envelope immediately, reconnects with backoff,
+Events and the Approve/Deny interactivity payloads stream over the
+socket. Rabble acks each envelope immediately, reconnects with backoff,
 and honors Slack's periodic `disconnect` refreshes. No Request URLs needed.
 
 ### Option B — Events API webhooks (needs a public URL)
@@ -72,6 +81,31 @@ dedupe, so enabling both never double-runs a turn.
 Invite the bot to the channel (`/invite @your-app`), then in Rabble open
 the agent → **surfaces** tab → attach the Slack connection with the
 channel's name as the label (e.g. `#eng-oncall`).
+
+## Troubleshooting: "nothing happens when I message the channel"
+
+Work down this list — each item silently drops delivery when missed:
+
+1. **A transport is configured** — the connection needs an app-level token
+   (Socket Mode) *or* a signing secret + public Request URL (webhooks). A
+   bot token alone can't receive anything (look for the "no event
+   delivery" chip on the connection).
+2. **Event subscription exists** — the Slack app subscribes to the bot
+   event `message.channels` (required for both transports).
+3. **The bot is in the channel** — `/invite @your-app`. Slack only
+   delivers channel messages to members.
+4. **The surface label matches the channel** — `#eng-oncall` on the
+   agent's Surfaces tab must match the channel's name (or channel id).
+5. **Your Slack email matches your Rabble email** — the sender is resolved
+   via `users.info` profile email; a mismatch gets the polite
+   "I can only act for Rabble users" refusal (which also requires the
+   `users:read.email` scope).
+6. Server logs: every dropped delivery returns an `ignored: <reason>`
+   response — `curl` the webhook or watch the socket manager's log lines.
+
+Note: you don't need to @-mention the bot — any message in a mapped
+channel is delivered (mentions are just messages that include
+`<@BOTID>`).
 
 ## What happens on delivery
 

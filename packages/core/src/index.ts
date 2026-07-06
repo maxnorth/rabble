@@ -512,6 +512,7 @@ export const connectionSchema = z.object({
   baseUrl: z.string().nullable(),
   hasToken: z.boolean(),
   hasAppToken: z.boolean().optional(),
+  hasSigningSecret: z.boolean().optional(),
   status: z.enum(["connected", "needs-auth", "error"]),
   createdAt: z.string(),
 });

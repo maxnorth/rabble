@@ -294,6 +294,22 @@ function ConnectionsPage() {
                       Socket Mode
                     </span>
                   )}
+                  {c.vendor === "slack" && !c.hasAppToken && !c.hasSigningSecret && (
+                    <span
+                      className="chip amber"
+                      title="Slack has no way to deliver channel messages to Rabble. Re-add this connection with an app-level token (Socket Mode, easiest — no public URL) or a signing secret (Events API webhooks)."
+                    >
+                      no event delivery
+                    </span>
+                  )}
+                  {c.vendor === "github" && !c.hasSigningSecret && (
+                    <span
+                      className="chip amber"
+                      title="No webhook secret — GitHub deliveries can't be verified, so issue comments never reach agents. Re-add this connection with the webhook secret."
+                    >
+                      no event delivery
+                    </span>
+                  )}
                   <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
                     {c.status}
                   </span>

@@ -20,7 +20,6 @@ import {
   agents,
   connections,
   messages,
-  models,
   sessions,
   users,
 } from "../db/schema.js";
@@ -162,21 +161,19 @@ export async function processSlackEvent(
       return { ok: true, ignored: "no matching platform user" };
     }
     const { rightsForAllAgents, hasRight } = await import("../rights.js");
-    const { isNull } = await import("drizzle-orm");
     const rights = await rightsForAllAgents({
       id: platformUser.id,
       orgId: platformUser.orgId,
       role: platformUser.role,
     } as Parameters<typeof rightsForAllAgents>[0]);
+    // Unlike web Auto (which has an explicit Builder affordance), DMs have
+    // no chrome — so the Builder IS a routing candidate here, and "make me
+    // an agent that…" works straight from Slack.
     const candidates = await db
       .select()
       .from(agents)
       .where(
-        and(
-          eq(agents.orgId, connection.orgId),
-          eq(agents.status, "active"),
-          isNull(agents.builtin),
-        ),
+        and(eq(agents.orgId, connection.orgId), eq(agents.status, "active")),
       )
       .orderBy(agents.name);
     const usable = candidates.filter((c) => hasRight(rights.get(c.id) ?? null, "use"));
@@ -244,13 +241,9 @@ export async function processSlackEvent(
       .returning();
   }
 
-  const [model] = agent.modelId
-    ? await db
-        .select()
-        .from(models)
-        .where(eq(models.id, agent.modelId))
-        .limit(1)
-    : [];
+  // resolveAgentModel covers the Builder (no pinned model → org default).
+  const { resolveAgentModel } = await import("../models/resolve.js");
+  const model = await resolveAgentModel(agent);
 
   const { orgs } = await import("../db/schema.js");
   const { orgSettingsSchema } = await import("@rabblehq/core");

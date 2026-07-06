@@ -930,6 +930,53 @@ test("a 1:1 DM to the bot becomes an auto-routed personal session", async () => 
     "SELECT id FROM sessions WHERE surface_key = 'slack:D9002:1800.050'",
   );
   expect(strangerSessions).toHaveLength(0);
+
+  // "Make me an agent…" routes to the Builder — creation works from Slack.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "text", text: "builder" }),
+  });
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "D9001",
+        channel_type: "im",
+        user: "U777",
+        text: "Can you build me an agent for onboarding docs?",
+        ts: "1800.200",
+      },
+    }),
+  });
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ slug: string; surface: string }>(
+        `SELECT a.slug, s.surface FROM sessions s
+         JOIN agents a ON a.id = s.agent_id
+         WHERE s.surface_key = 'slack:D9001:1800.200'`,
+      );
+      return rows[0] ?? null;
+    })
+    .toEqual({ slug: "builder", surface: "Slack DM" });
+  // The Builder has no pinned model — the org default answered anyway.
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.thread_ts === "1800.200" &&
+          r.body.text?.includes("Mock reply to: Can you build me an agent"),
+      );
+    })
+    .toBe(true);
 });
 
 test("socket mode interactivity: DM buttons resolve approvals over the WebSocket", async () => {

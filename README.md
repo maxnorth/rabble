@@ -17,21 +17,31 @@ What works today:
   track record as evidence), file artifacts, and per-user approval
   postures (always ask / once per session / trust) under an org-wide
   approval floor.
-- **Surfaces** — Slack channels and GitHub repos map onto agents: signed
-  webhooks turn channel messages and issue comments into governed sessions
+- **The Builder** — every org ships with a built-in agent that creates
+  and configures agents *conversationally*, operating the platform
+  through its own governed tools (drafts, eval criteria, test cases, MCP
+  wiring) in the standard inline tool-call UI — every action approved by
+  you and audited "via Builder". Agents are born measured.
+- **Surfaces** — Slack channels and GitHub repos map onto agents, over
+  **Socket Mode** (outbound WebSocket, no public URL needed) or signed
+  webhooks: channel messages and issue comments become governed sessions
   (thread/issue = session, replies delivered back). Every message is
   attributed to its human author, participants see and can continue shared
   threads from the web, and opted-in users get a Slack DM when an agent
   replies somewhere they aren't watching.
 - **Governance** — teams / domains / grants with real enforcement and
-  cascade (no owners, only grants), model-access grants, org policies
+  cascade (no owners, only grants), **Share as one verb** (audience picker,
+  plain-language rights, pause/unshare), **access requests** (ask from the
+  agent page or let the Builder ask for you; admins approve next to the
+  agent's measured track record), model-access grants, org policies
   (who can create agents, approval floor, retention), and a full
   control-plane audit log with CSV export.
 - **Evals as evidence** — live criteria judged on real sessions, offline
   suites with freeze-a-session-as-test-case, **gating suites that block a
   regressing agent change before it saves**, a judge spot-check queue
   (disagree → human review → uphold/overturn), scope-violation tracking,
-  and 30-day trust trends.
+  30-day trust trends, and pass-rate-drop alerts that DM the agent's
+  owner when quality sags.
 - **Automations** — defined per agent and runnable on demand as real
   governed sessions on the Automation surface (recurring schedules land
   with the Hatchet-based scheduler).

@@ -6,7 +6,7 @@ import {
   type StreamEvent,
   type ToolCall,
 } from "@rabblehq/core";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, messages, models, sessions, users } from "../db/schema.js";
 import { requireUser } from "../auth.js";
@@ -19,6 +19,18 @@ import { judgeSession } from "../evals/judge.js";
 
 function sendEvent(reply: FastifyReply, event: StreamEvent) {
   reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+}
+
+/**
+ * Session visibility: the person who started it, plus anyone who authored
+ * a message in it (shared surface threads are group spaces). Rename and
+ * delete stay with the session's user.
+ */
+function participantPredicate(userId: string) {
+  return sql`(${sessions.userId} = ${userId} OR EXISTS (
+    SELECT 1 FROM messages pm
+    WHERE pm.session_id = ${sessions.id} AND pm.author_user_id = ${userId}
+  ))`;
 }
 
 export async function sessionRoutes(app: FastifyInstance) {
@@ -38,7 +50,7 @@ export async function sessionRoutes(app: FastifyInstance) {
       .where(
         and(
           eq(sessions.orgId, req.user!.orgId),
-          eq(sessions.userId, req.user!.id),
+          participantPredicate(req.user!.id),
         ),
       )
       .orderBy(desc(sessions.updatedAt))
@@ -114,7 +126,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         and(
           eq(sessions.id, id),
           eq(sessions.orgId, req.user!.orgId),
-          eq(sessions.userId, req.user!.id),
+          participantPredicate(req.user!.id),
         ),
       )
       .limit(1);
@@ -232,7 +244,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         and(
           eq(sessions.id, id),
           eq(sessions.orgId, req.user!.orgId),
-          eq(sessions.userId, req.user!.id),
+          participantPredicate(req.user!.id),
         ),
       )
       .limit(1);

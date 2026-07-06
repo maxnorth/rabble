@@ -274,6 +274,56 @@ test("slack surface delivery: a channel message becomes a governed session", asy
   );
 });
 
+test("participants can view and continue a shared thread — not manage it", async ({
+  browser,
+}) => {
+  const beaPage = await browser.newPage();
+  await beaPage.goto("/");
+  await beaPage.locator("input[type=email]").fill("bea@acme.com");
+  await beaPage.locator("input[type=password]").fill("bea-real-password-1");
+  await beaPage.getByRole("button", { name: "Sign in" }).click();
+  await expect(beaPage.locator(".session-greeting")).toBeVisible();
+
+  // The Slack thread Bea joined shows in her sidebar
+  await beaPage
+    .locator(".sidebar-item", { hasText: "Deploy status from Slack?" })
+    .click();
+  // Alex's messages carry his name from her point of view
+  await expect(
+    beaPage.locator(".msg-user", { hasText: "Deploy status from Slack?" }),
+  ).toContainText("Alex Lin");
+
+  // She can continue the conversation from the web
+  await beaPage
+    .locator(".thread-composer textarea")
+    .fill("From the web: I'm rolling back the cache change");
+  await beaPage.locator(".thread-composer button", { hasText: "Send" }).click();
+  await expect(beaPage.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: From the web: I'm rolling back the cache change",
+    { timeout: 15_000 },
+  );
+
+  const [session] = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE surface_key = 'slack:C777:1712.001'",
+  );
+  const authored = await dbQuery<{ author: string | null }>(
+    `SELECT u.name AS author FROM messages m
+     LEFT JOIN users u ON u.id = m.author_user_id
+     WHERE m.session_id = $1 AND m.role = 'user' ORDER BY m.created_at DESC LIMIT 1`,
+    [session!.id],
+  );
+  expect(authored[0]!.author).toBe("Bea Ortiz");
+
+  // Rename/delete stay with the session's user
+  const del = await beaPage.request.delete(`/api/sessions/${session!.id}`);
+  expect(del.status()).toBe(404);
+  const rename = await beaPage.request.patch(`/api/sessions/${session!.id}`, {
+    data: { title: "Bea's now" },
+  });
+  expect(rename.status()).toBe(404);
+  await beaPage.close();
+});
+
 function signedGithubPost(body: unknown, deliveryId: string, event = "issue_comment") {
   const raw = JSON.stringify(body);
   const sig = `sha256=${createHmac("sha256", "gh-webhook-secret").update(raw).digest("hex")}`;

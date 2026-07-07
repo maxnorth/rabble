@@ -2101,6 +2101,12 @@ test("stats dashboards reflect real usage", async () => {
     "Eng On-Call",
   );
 
+  // Sessions-per-day is a dense, zero-filled timeline — most days in the
+  // window have no sessions, so a gap bar (title "…: 0") must be present.
+  // (Without zero-fill the chart collapses to one equal bar per active day.)
+  const perDayCard = page.locator(".chart-card", { hasText: "Sessions per day" });
+  await expect(perDayCard.locator('[title$=": 0"]').first()).toBeAttached();
+
   // Skill use tab: auth-type split from the MCP calls in 03-tools
   await page.locator(".sidebar-item", { hasText: "Skill use" }).click();
   await expect(

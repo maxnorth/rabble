@@ -198,15 +198,28 @@ export async function statsRoutes(app: FastifyInstance) {
       .orderBy(sql`count(*) DESC`)
       .limit(10);
 
-    const perDay = await db
-      .select({
-        day: sql<string>`to_char(date_trunc('day', ${sessions.createdAt}), 'YYYY-MM-DD')`,
-        count: sql<number>`count(*)::int`,
-      })
-      .from(sessions)
-      .where(and(eq(sessions.orgId, orgId), gte(sessions.createdAt, since), ...agentFilter))
-      .groupBy(sql`date_trunc('day', ${sessions.createdAt})`)
-      .orderBy(sql`date_trunc('day', ${sessions.createdAt})`);
+    // Dense daily series: generate every day in the window and left-join
+    // counts, so the chart shows the real timeline (gaps and spikes) instead
+    // of collapsing to one equal-height bar per day that happened to have a
+    // session. date_trunc on both sides keeps the buckets timezone-aligned.
+    const perDayResult = await db.execute(sql`
+      SELECT to_char(d, 'YYYY-MM-DD') AS day, coalesce(c.count, 0)::int AS count
+      FROM generate_series(
+        date_trunc('day', ${since}::timestamptz),
+        date_trunc('day', now()),
+        interval '1 day'
+      ) AS d
+      LEFT JOIN (
+        SELECT date_trunc('day', created_at) AS day, count(*)::int AS count
+        FROM sessions
+        WHERE org_id = ${orgId} AND created_at >= ${since}
+          ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+          ${userId ? sql`AND user_id = ${userId}` : sql``}
+        GROUP BY 1
+      ) c ON c.day = d
+      ORDER BY d
+    `);
+    const perDay = perDayResult.rows as Array<{ day: string; count: number }>;
 
     // Tool usage by tool name and server ("skill use")
     const perToolResult = await db.execute(sql`

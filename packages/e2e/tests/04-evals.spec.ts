@@ -71,6 +71,15 @@ test("a session gets judged and shows eval chips", async () => {
   await criteriaChip.click();
   await expect(page.locator(".drawer")).toContainText("Stays on topic");
   await expect(page.locator(".drawer")).toContainText("PASS");
+
+  // The directory eval-score chip carries the trust denominator (how many
+  // results back the score) in its tooltip — 100% from one result reads
+  // very differently from 100% from fifty.
+  await page.locator("nav a[title='Agents']").click();
+  const scoreChip = page
+    .locator(".dir-table tbody tr", { hasText: "Eng On-Call" })
+    .locator(".chip", { hasText: "%" });
+  await expect(scoreChip).toHaveAttribute("title", /across \d+ eval result/);
 });
 
 test("suites: create, add a case, run it", async () => {

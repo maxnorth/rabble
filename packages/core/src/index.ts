@@ -748,6 +748,8 @@ export type ConnectedAccount = z.infer<typeof connectedAccountSchema>;
 export const agentDirectoryRowSchema = agentSchema.extend({
   domainName: z.string().nullable(),
   evalScore: z.number().nullable(),
+  /** Number of eval results behind evalScore (the trust denominator). */
+  evalCount: z.number().int().default(0),
   toolCount: z.number().int(),
   starred: z.boolean(),
   /** The caller's effective right on this agent (null = none). */

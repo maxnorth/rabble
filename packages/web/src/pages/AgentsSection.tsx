@@ -409,6 +409,9 @@ function AgentDirectory() {
                 {a.evalScore !== null ? (
                   <span
                     className={`chip ${a.evalScore >= 90 ? "green" : a.evalScore >= 70 ? "blue" : "amber"}`}
+                    title={`All-time pass rate across ${a.evalCount ?? 0} eval ${
+                      (a.evalCount ?? 0) === 1 ? "result" : "results"
+                    }. Stats › Eval performance shows windowed rates.`}
                   >
                     {a.evalScore}%
                   </span>
@@ -509,7 +512,16 @@ function DomainDetail({ domainId }: { domainId: string }) {
               <div className="title">{a.name}</div>
               <div className="sub mono">{a.slug}</div>
             </div>
-            {a.evalScore !== null && <span className="chip blue">{a.evalScore}%</span>}
+            {a.evalScore !== null && (
+              <span
+                className="chip blue"
+                title={`All-time pass rate across ${a.evalCount ?? 0} eval ${
+                  (a.evalCount ?? 0) === 1 ? "result" : "results"
+                }.`}
+              >
+                {a.evalScore}%
+              </span>
+            )}
           </div>
         ))}
         {members.length === 0 && (

@@ -383,8 +383,18 @@ export async function evalRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get("/api/suites/:suiteId/cases", async (req) => {
+  app.get("/api/suites/:suiteId/cases", async (req, reply) => {
     const { suiteId } = req.params as { suiteId: string };
+    // Scope by the suite's agent: cases carry input/rubric, so a suite id from
+    // another org must not read them.
+    const [suite] = await db
+      .select({ agentId: evalSuites.agentId })
+      .from(evalSuites)
+      .where(eq(evalSuites.id, suiteId))
+      .limit(1);
+    if (!suite || !(await agentInOrg(req.user!.orgId, suite.agentId))) {
+      return reply.code(404).send({ error: "Suite not found" });
+    }
     const rows = await db
       .select()
       .from(evalCases)

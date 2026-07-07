@@ -3,7 +3,7 @@ import { createTeamSchema, slugify } from "@rabblehq/core";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, domains, grants, teamMembers, teams, users } from "../db/schema.js";
-import { requireUser } from "../auth.js";
+import { requireUser, isOrgAdmin } from "../auth.js";
 import { recordAudit } from "../audit.js";
 
 function serializeTeam(
@@ -34,6 +34,14 @@ async function memberCounts(orgId: string): Promise<Map<string, number>> {
 
 export async function teamRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
+  // Teams and their membership feed the grant cascade, so mutating them is
+  // org-admin territory (reads stay open to members). Closes self-join
+  // privilege escalation and cross-tenant membership edits.
+  app.addHook("preHandler", async (req, reply) => {
+    if (req.method !== "GET" && !isOrgAdmin(req.user)) {
+      return reply.code(403).send({ error: "Org admin access required" });
+    }
+  });
 
   app.get("/api/teams", async (req) => {
     const rows = await db

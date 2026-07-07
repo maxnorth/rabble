@@ -8,13 +8,22 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { models, providerKeys } from "../db/schema.js";
 import { encryptSecret } from "../crypto.js";
-import { requireUser } from "../auth.js";
+import { requireUser, isOrgAdmin } from "../auth.js";
 import { serializeModel } from "../serialize.js";
 import { MODEL_CATALOG, getCatalogModel } from "../models/catalog.js";
 import { env } from "../env.js";
 
 export async function modelRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
+  // The model registry and provider keys are org-shared and secret-bearing:
+  // registering/deleting models and writing provider keys is org-admin
+  // territory. Reads (catalog, list, provider status) stay open so members
+  // can see what's available.
+  app.addHook("preHandler", async (req, reply) => {
+    if (req.method !== "GET" && !isOrgAdmin(req.user)) {
+      return reply.code(403).send({ error: "Org admin access required" });
+    }
+  });
 
   app.get("/api/models/catalog", async () => ({ catalog: MODEL_CATALOG }));
 

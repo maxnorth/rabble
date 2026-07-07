@@ -35,8 +35,15 @@ export async function automationRoutes(app: FastifyInstance) {
   // automation only fires via "Run now" — the UI says so plainly.
   app.get("/api/scheduler", async () => ({ active: isSchedulerActive() }));
 
-  app.get("/api/agents/:agentId/automations", async (req) => {
+  app.get("/api/agents/:agentId/automations", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
+    // Scope the read: automations carry a prompt, so only someone with `use`
+    // on this agent (which is org-scoped) may list them — never a bare agent
+    // id from another org.
+    const rights = await rightsForAllAgents(req.user!);
+    if (!hasRight(rights.get(agentId) ?? null, "use")) {
+      return reply.code(403).send({ error: "You need access to this agent" });
+    }
     const rows = await db
       .select()
       .from(automations)

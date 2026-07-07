@@ -141,6 +141,26 @@ describe("nextCronRun", () => {
     expect(nextCronRun("not a cron", mon9)).toBeNull();
     expect(nextCronRun("0 0 30 2 *", mon9)).toBeNull(); // Feb 30 never
   });
+
+  it("only ever returns an instant that cronMatches accepts (invariant)", () => {
+    // The two share cron-field logic; this guards against them drifting apart.
+    const exprs = [
+      "0 9 * * 1-5",
+      "*/15 * * * *",
+      "0 0 1 * *",
+      "0 0 29 2 *",
+      "30 8,12,18 * * *",
+      "0 0 1 1 *",
+      "0 12 * * 0",
+    ];
+    const from = new Date(Date.UTC(2023, 2, 9, 13, 42)); // arbitrary Thu
+    for (const expr of exprs) {
+      const next = nextCronRun(expr, from);
+      expect(next, expr).not.toBeNull();
+      expect(cronMatches(expr, next!), expr).toBe(true);
+      expect(next!.getTime()).toBeGreaterThan(from.getTime());
+    }
+  });
 });
 
 describe("describeCron", () => {

@@ -112,6 +112,16 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
     "SELECT price_input_per_mtok FROM models",
   );
   expect(Number(priced[0]!.price_input_per_mtok)).toBe(3);
+
+  // Registering a model is a control-plane change: it lands in the audit log
+  // with the endpoint (where org traffic now flows) but never the API key.
+  const audit = await dbQuery<{ summary: string; metadata: string }>(
+    "SELECT summary, metadata::text FROM audit_events WHERE action = 'model.register'",
+  );
+  expect(audit).toHaveLength(1);
+  expect(audit[0]!.summary).toContain("Mock Model");
+  expect(audit[0]!.metadata).toContain("localhost:4100/mock/api.openai.com");
+  expect(audit[0]!.metadata).not.toContain("test-key-secret");
 });
 
 test("agents: create, configure, and activate an agent", async () => {

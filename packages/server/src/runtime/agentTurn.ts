@@ -42,10 +42,14 @@ import { Channel } from "./channel.js";
 import { gateUserAuth, type GateContext } from "./userAuthGate.js";
 import { buildPlatformTools } from "./platformTools.js";
 
-// How deep a chain of agents-calling-agents may go. Bounded delegation is a
-// product pillar, not open-ended recursion — a parent may delegate, and its
-// sub-agent may delegate once more, but the chain stops there.
+// How deep a chain of agents-calling-agents may go, and how many delegations
+// one turn may issue. Bounded delegation is a product pillar, not open-ended
+// recursion: with depth 3 a root can delegate, its child once more, and that
+// grandchild once more — the chain stops there. The per-turn breadth cap
+// keeps a single message from fanning out into a runaway tree of nested,
+// separately-judged turns (cost/DoS amplification).
 const MAX_DELEGATION_DEPTH = 3;
+const MAX_DELEGATIONS_PER_TURN = 8;
 
 export interface AgentTurnInput {
   agent: typeof agents.$inferSelect;
@@ -310,15 +314,35 @@ async function buildSubAgentTools(
       chain,
     ),
   );
+  // One shared budget across every delegation tool this turn offers, so the
+  // model can't fan a single message out into a runaway tree of nested turns.
+  let delegationsUsed = 0;
+  // Tool names must be unique within a tool set: distinct slugs can collide
+  // after sanitizing/truncation, so disambiguate on the rare clash.
+  const usedNames = new Set<string>();
   const tools = [];
   for (const { child, note } of links) {
     // Depth cap + cycle guard (see delegableChildIds).
     if (!offerable.has(child.id)) continue;
+    // Same-org only — a link is a within-org capability; never run an agent
+    // from another org as this user.
+    if (child.orgId !== input.agent.orgId) continue;
 
-    const toolName = subAgentToolName(child.slug);
+    let toolName = subAgentToolName(child.slug);
+    for (let n = 2; usedNames.has(toolName); n += 1) {
+      toolName = `${subAgentToolName(child.slug).slice(0, 61)}_${n}`;
+    }
+    usedNames.add(toolName);
     tools.push(
       tool(
         async (args: Record<string, unknown>) => {
+          if (delegationsUsed >= MAX_DELEGATIONS_PER_TURN) {
+            return (
+              `This turn's delegation budget (max ${MAX_DELEGATIONS_PER_TURN}) is used up. ` +
+              "Answer with what you have instead of delegating further."
+            );
+          }
+          delegationsUsed += 1;
           const task = String(args.task ?? "");
           const callId = randomUUID();
           const startedAt = Date.now();
@@ -368,7 +392,11 @@ async function buildSubAgentTools(
               user: input.user,
               content: task,
               requireApproval: input.requireApproval,
-              sessionApproved: input.sessionApproved,
+              // A parent-session approval must NOT authorize a different agent
+              // in a different session: the child starts un-approved, so its
+              // user-auth tools face their own gate (and, being non-interactive,
+              // auto-deny) rather than inheriting the parent's consent.
+              sessionApproved: false,
               // A nested turn has no surface of its own to prompt on.
               interactive: false,
               delegationChain: [...chain, input.agent.id],

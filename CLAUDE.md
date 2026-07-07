@@ -106,9 +106,14 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   the child's model/MCP tools/auth gates apply so governance composes. The
   edge note is the tool description; the child's reply folds back as the tool
   output; each call audits `agent.delegate` (metadata carries the
-  `childSessionId`). Depth/cycles are bounded (MAX_DELEGATION_DEPTH threaded
-  as `delegationChain` through executeTurn), and delegation tool names join
-  `allowedTools` so a legitimate call isn't a false scope violation.
+  `childSessionId`). The child starts UN-approved (`sessionApproved:false`) —
+  a parent-session consent never authorizes a different agent — so its
+  user-auth tools face their own gate and, being non-interactive, auto-deny.
+  Depth/cycles are bounded (MAX_DELEGATION_DEPTH threaded as `delegationChain`
+  through executeTurn), breadth is capped per turn
+  (MAX_DELEGATIONS_PER_TURN), links are same-org only, and delegation tool
+  names join `allowedTools` so a legitimate call isn't a false scope
+  violation.
 - e2e global-setup refuses to start if :4100/:3178 are already bound —
   kill stale processes (`fuser -k 4100/tcp 3178/tcp`) instead of letting
   tests hit an old build.

@@ -8,7 +8,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, streamMessage } from "../api";
-import { relativeTime, AGENT_COLORS } from "../lib/time";
+import { relativeTime, count, AGENT_COLORS } from "../lib/time";
 
 interface PendingApproval {
   approvalId: string;
@@ -885,7 +885,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           >
             <span style={{ fontSize: 13, fontWeight: 500 }}>{agentName}</span>
             <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
-              {agentRow ? `${agentRow.toolCount} tools · ` : ""}view agent →
+              {agentRow ? `${count(agentRow.toolCount, "tool")} · ` : ""}view agent →
             </span>
           </button>
         </div>
@@ -1151,7 +1151,7 @@ function AgentProfileDrawer({
             eval {agent.evalScore}%
           </span>
         )}
-        <span className="chip">{agent.toolCount} tools</span>
+        <span className="chip">{count(agent.toolCount, "tool")}</span>
       </div>
       {agent.description && (
         <>

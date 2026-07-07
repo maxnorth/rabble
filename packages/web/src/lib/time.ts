@@ -15,6 +15,11 @@ export function relativeTime(iso: string | null | undefined): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/** "1 tool" / "3 tools" — a count with a correctly pluralized noun. */
+export function count(n: number, singular: string, plural = `${singular}s`): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
 export const AGENT_COLORS: Record<string, string> = {
   blue: "var(--blue)",
   green: "var(--green)",

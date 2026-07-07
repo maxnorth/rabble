@@ -14,11 +14,14 @@ import { db, pool } from "./client.js";
 import { hashPassword, encryptSecret, hashAuthToken } from "../crypto.js";
 import {
   agents,
+  agentMcpServers,
   agentSurfaces,
+  agentToolConfigs,
   apiKeys,
   auditEvents,
   connections,
   domains,
+  mcpServers,
   evalCriteria,
   evalResults,
   evalSuites,
@@ -675,6 +678,103 @@ export async function seedDemo(): Promise<void> {
     lastUsedAt: daysAgo(0, 6),
   });
 
+  // MCP servers + per-agent tool grants: the tool-governance story. Without
+  // these the directory shows every agent at "0 tools" and Admin › MCP is
+  // empty, even though sessions reference tool calls. One tool is user-auth
+  // so the approval/scope story has something to point at.
+  const [githubMcp] = await db
+    .insert(mcpServers)
+    .values({
+      orgId,
+      slug: "github",
+      name: "GitHub",
+      url: "https://mcp.acme.dev/github",
+      category: "Tools",
+      tools: [
+        { name: "search_repos", description: "Search repositories in the org" },
+        { name: "search_ci_runs", description: "Look up recent CI runs for a repo" },
+        { name: "create_issue", description: "Open an issue (acts as the calling user)" },
+      ],
+      status: "connected" as const,
+      createdAt: daysAgo(55),
+    })
+    .returning();
+  const [datadogMcp] = await db
+    .insert(mcpServers)
+    .values({
+      orgId,
+      slug: "datadog",
+      name: "Datadog",
+      url: "https://mcp.acme.dev/datadog",
+      category: "Tools",
+      tools: [{ name: "query_metrics", description: "Query a metric timeseries" }],
+      status: "connected" as const,
+      createdAt: daysAgo(48),
+    })
+    .returning();
+  // Server-level attachment (what "used by" counts) mirrors the per-tool
+  // grants below — an agent attaches a server, then enables tools on it.
+  await db.insert(agentMcpServers).values([
+    { agentId: byName.get("Eng On-Call")!.id, serverId: githubMcp!.id },
+    { agentId: byName.get("Eng On-Call")!.id, serverId: datadogMcp!.id },
+    { agentId: byName.get("Deploy Gate")!.id, serverId: githubMcp!.id },
+    { agentId: byName.get("PR Summarizer")!.id, serverId: githubMcp!.id },
+  ]);
+  await db.insert(agentToolConfigs).values([
+    // Eng On-Call reads CI as the service account, but opening an issue
+    // acts as the user — so it needs an approval each time.
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      serverId: githubMcp!.id,
+      toolName: "search_ci_runs",
+      authType: "service" as const,
+    },
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      serverId: githubMcp!.id,
+      toolName: "create_issue",
+      authType: "user" as const,
+    },
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      serverId: datadogMcp!.id,
+      toolName: "query_metrics",
+      authType: "service" as const,
+    },
+    {
+      agentId: byName.get("Deploy Gate")!.id,
+      serverId: githubMcp!.id,
+      toolName: "search_ci_runs",
+      authType: "service" as const,
+    },
+    {
+      agentId: byName.get("PR Summarizer")!.id,
+      serverId: githubMcp!.id,
+      toolName: "search_repos",
+      authType: "service" as const,
+    },
+  ]);
+  await db.insert(auditEvents).values([
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "mcp.add",
+      targetType: "mcp_server",
+      targetId: githubMcp!.id,
+      summary: 'Registered MCP server "GitHub"',
+      createdAt: daysAgo(55),
+    },
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "mcp.add",
+      targetType: "mcp_server",
+      targetId: datadogMcp!.id,
+      summary: 'Registered MCP server "Datadog"',
+      createdAt: daysAgo(48),
+    },
+  ]);
+
   // An open access request (filed via the Builder) so Admin › Access
   // requests demos with real track-record evidence behind the decision.
   const { accessRequests } = await import("./schema.js");
@@ -699,7 +799,7 @@ export async function seedDemo(): Promise<void> {
   });
 
   console.log(
-    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, 2 connections with surfaces, an API key, an open access request, audit trail`,
+    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, 2 connections with surfaces, 2 MCP servers with tool grants, an API key, an open access request, audit trail`,
   );
 }
 

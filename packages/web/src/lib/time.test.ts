@@ -1,5 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { relativeTime, AGENT_COLORS, AGENT_GLYPHS } from "./time";
+import { relativeTime, count, AGENT_COLORS, AGENT_GLYPHS } from "./time";
+
+describe("count", () => {
+  it("pluralizes on everything but one", () => {
+    expect(count(1, "tool")).toBe("1 tool");
+    expect(count(0, "tool")).toBe("0 tools");
+    expect(count(3, "tool")).toBe("3 tools");
+  });
+  it("takes an explicit plural", () => {
+    expect(count(2, "agent", "agents")).toBe("2 agents");
+  });
+});
 
 describe("relativeTime", () => {
   const at = (msAgo: number) => new Date(Date.now() - msAgo).toISOString();

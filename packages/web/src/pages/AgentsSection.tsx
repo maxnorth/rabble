@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { AgentConfig } from "./AgentConfig";
-import { relativeTime, AGENT_COLORS } from "../lib/time";
+import { relativeTime, count, AGENT_COLORS } from "../lib/time";
 
 export function AgentsSection() {
   const { agentId, domainId } = useParams();
@@ -54,7 +54,7 @@ export function AgentsSection() {
                 <span className="label">
                   {a.name}
                   <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
-                    {a.scope} · {a.toolCount} tools
+                    {a.scope} · {count(a.toolCount, "tool")}
                   </span>
                 </span>
                 <SidebarStar agent={a} />

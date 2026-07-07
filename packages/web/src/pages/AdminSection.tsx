@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { api } from "../api";
 import { GrantEditor } from "./AgentsSection";
-import { relativeTime } from "../lib/time";
+import { relativeTime, count } from "../lib/time";
 
 const ADMIN_PAGES = [
   { key: "connections", label: "Connections" },
@@ -795,7 +795,7 @@ function McpServersPage() {
               {selected.status}
             </span>
             <span className="chip">{selected.category}</span>
-            <span className="chip blue">{selected.tools.length} tools</span>
+            <span className="chip blue">{count(selected.tools.length, "tool")}</span>
             <span style={{ fontSize: 12, color: "var(--text-dim)", alignSelf: "center" }}>
               Test connection re-discovers the tool catalog. Enablement and
               service/user auth are set per agent on its MCP tab.
@@ -870,7 +870,7 @@ function McpServersPage() {
                   <div className="sub mono">{s.url}</div>
                 </div>
                 <span className="chip">{s.category}</span>
-                <span className="chip blue">{s.tools.length} tools</span>
+                <span className="chip blue">{count(s.tools.length, "tool")}</span>
                 <span className="chip purple">used by {s.usedByCount}</span>
                 <button
                   className="btn danger"

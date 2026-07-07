@@ -318,7 +318,12 @@ export async function seedDemo(): Promise<void> {
     reply: string;
     day: number;
     surface?: string;
-    tool?: { name: string; server: string; auth: "service" | "user" };
+    tool?: {
+      name: string;
+      server: string;
+      auth: "service" | "user";
+      output?: string;
+    };
   }> = [
     {
       agent: "Eng On-Call",
@@ -329,6 +334,24 @@ export async function seedDemo(): Promise<void> {
         "The build is failing in the integration stage: `test_rate_limiter` times out against the shared Redis. It started with #4821 which lowered the connection pool. Recommend reverting the pool change or bumping the test timeout — runbook: go/redis-pools.",
       day: 1,
       tool: { name: "search_ci_runs", server: "GitHub", auth: "service" },
+    },
+    {
+      // Bounded delegation in action: Eng On-Call hands the PR read to its
+      // wired sub-agent and folds the answer back.
+      agent: "Eng On-Call",
+      user: owner,
+      title: "Is #4830 safe to merge tonight?",
+      ask: "Is #4830 safe to merge tonight?",
+      reply:
+        "Not tonight. I had PR Summarizer read it: it swaps the retry queue to exponential backoff but only covers the happy path, and there's a duplicate-delivery risk on a crash between ack and commit (queue.ts:88). Add a test for the crash path first, then it's a clean merge.",
+      day: 5,
+      tool: {
+        name: "ask_pr-summarizer",
+        server: "PR Summarizer",
+        auth: "service",
+        output:
+          "#4830 swaps the retry queue to exponential backoff. Risk: duplicate delivery on a crash between ack and commit (queue.ts:88). Tests cover the happy path only.",
+      },
     },
     {
       agent: "Deploy Gate",
@@ -440,7 +463,7 @@ export async function seedDemo(): Promise<void> {
             name: spec.tool.name,
             serverName: spec.tool.server,
             input: { ref: spec.title },
-            output: "ok",
+            output: spec.tool.output ?? "ok",
             authType: spec.tool.auth,
             approval:
               spec.tool.auth === "user"

@@ -11,10 +11,13 @@
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { db, pool } from "./client.js";
-import { hashPassword } from "../crypto.js";
+import { hashPassword, encryptSecret, hashAuthToken } from "../crypto.js";
 import {
   agents,
+  agentSurfaces,
+  apiKeys,
   auditEvents,
+  connections,
   domains,
   evalCriteria,
   evalResults,
@@ -591,6 +594,87 @@ export async function seedDemo(): Promise<void> {
     })),
   );
 
+  // Connections + surfaces: the delivery story. A Slack workspace on Socket
+  // Mode and a GitHub app, each mapped to an agent, so Admin › Connections
+  // and the agent Surfaces tab aren't empty in the demo. Secrets are
+  // encrypted like production; they're throwaway placeholders here.
+  const [slackConn] = await db
+    .insert(connections)
+    .values({
+      orgId,
+      vendor: "slack",
+      name: "Acme Slack",
+      roles: ["Interface"],
+      baseUrl: null,
+      encryptedToken: encryptSecret("xoxb-demo-placeholder"),
+      encryptedSigningSecret: encryptSecret("demo-signing-secret"),
+      encryptedAppToken: encryptSecret("xapp-demo-placeholder"),
+      status: "connected" as const,
+      createdAt: daysAgo(58),
+    })
+    .returning();
+  const [githubConn] = await db
+    .insert(connections)
+    .values({
+      orgId,
+      vendor: "github",
+      name: "Acme GitHub",
+      roles: ["Interface", "Tools"],
+      baseUrl: null,
+      encryptedToken: encryptSecret("ghp-demo-placeholder"),
+      encryptedSigningSecret: encryptSecret("demo-webhook-secret"),
+      status: "connected" as const,
+      createdAt: daysAgo(52),
+    })
+    .returning();
+  await db.insert(agentSurfaces).values([
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      connectionId: slackConn!.id,
+      label: "#eng-oncall",
+      createdAt: daysAgo(58),
+    },
+    {
+      agentId: byName.get("PR Summarizer")!.id,
+      connectionId: githubConn!.id,
+      label: "acme/api",
+      createdAt: daysAgo(52),
+    },
+  ]);
+  await db.insert(auditEvents).values([
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "connection.add",
+      targetType: "connection",
+      targetId: slackConn!.id,
+      summary: 'Added slack connection "Acme Slack"',
+      createdAt: daysAgo(58),
+    },
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "connection.add",
+      targetType: "connection",
+      targetId: githubConn!.id,
+      summary: 'Added github connection "Acme GitHub"',
+      createdAt: daysAgo(52),
+    },
+  ]);
+
+  // A read-scoped API key (hash only — the plaintext was shown once at
+  // creation, exactly like production) so Admin › API keys isn't empty.
+  await db.insert(apiKeys).values({
+    orgId,
+    name: "CI dashboard (read-only)",
+    scope: "read" as const,
+    prefix: "rbl_ci",
+    keyHash: hashAuthToken(`rbl_ci_${"demo".repeat(8)}`),
+    createdBy: owner!.id,
+    createdAt: daysAgo(40),
+    lastUsedAt: daysAgo(0, 6),
+  });
+
   // An open access request (filed via the Builder) so Admin › Access
   // requests demos with real track-record evidence behind the decision.
   const { accessRequests } = await import("./schema.js");
@@ -615,7 +699,7 @@ export async function seedDemo(): Promise<void> {
   });
 
   console.log(
-    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, an open access request, audit trail`,
+    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, 2 connections with surfaces, an API key, an open access request, audit trail`,
   );
 }
 

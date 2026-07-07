@@ -147,12 +147,25 @@ From the J1 journey mapping (full detail in the journey map doc's "Planned solut
   detects it) → admin approves next to the track-record evidence chip →
   the grant materializes → the action runs → audit trail. What remains
   is scripting it as a demo.
-- Creation flows are stubs (+ New agent/team, Register model, Add connection, + Create key…).
-- Only **one scripted session** (Eng On-Call CI triage). More scripted sessions hitting different personas would strengthen demos.
-- Stats/Audit filters and exports are display-only. Model selector and logo picker on Identity are static.
+- ~~Creation flows are stubs~~ — SHIPPED: + New agent/team, + Add custom
+  model, + Add connection (with in-place Edit), + Add MCP server, + Create
+  API key are all real modals that persist and audit.
+- ~~Only **one scripted session**~~ — SHIPPED: `seedDemo` lays down a
+  lived-in org (5 agents across personas, 10 sessions with tool calls,
+  evals with 60-day trends, connections + surfaces, MCP servers + tool
+  grants, an open access request, audit trail). The e2e emulator scripts
+  further sessions per test.
+- ~~Stats/Audit filters and exports are display-only~~ — SHIPPED: Stats
+  filter by agent/user/range; Audit filters by action category and exports
+  CSV. ~~Model selector and logo picker on Identity are static~~ — SHIPPED:
+  the Identity logo, color, and model pickers all persist on save.
 - Stage 7 of J1 (pulse-back): **pass-rate-drop alerts shipped** (7-day
   rate ≤60% with ≥4 graded → owner gets a Slack DM + audit event, daily
   dedupe). Digests remain, landing with the Hatchet scheduler.
+
+Genuinely still open: the **Hatchet scheduler** (recurring gate runs,
+retention sweeps, automation schedules, pulse-back digests) — code path is
+ready; blocked only on pulling the engine image in this environment.
 
 ---
 

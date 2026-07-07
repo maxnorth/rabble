@@ -196,6 +196,11 @@ test("gating: a regressing change is blocked before it saves", async () => {
     'Blocked by gating suite "Smoke"',
     { timeout: 30_000 },
   );
+  // The block spells out which case regressed and the judge's reasoning —
+  // enough to fix the change without hunting through the suite.
+  await expect(page.locator(".error-text")).toContainText(
+    "The reply ignores the deployment question.",
+  );
 
   // The change was NOT saved, and the block is on the audit trail
   const rows = await dbQuery<{ instructions: string }>(

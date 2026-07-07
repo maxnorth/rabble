@@ -39,6 +39,9 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** The full parsed error body — lets callers read structured detail
+     *  (e.g. a gating block's per-case failures) beyond the message. */
+    public body?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -52,13 +55,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let message = res.statusText;
+    let body: Record<string, unknown> | undefined;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) message = body.error;
+      body = (await res.json()) as Record<string, unknown>;
+      if (typeof body.error === "string") message = body.error;
     } catch {
       // non-JSON error body; keep statusText
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, body);
   }
   return (await res.json()) as T;
 }

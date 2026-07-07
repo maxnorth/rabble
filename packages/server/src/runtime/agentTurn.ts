@@ -332,41 +332,44 @@ async function buildSubAgentTools(
           };
           emit({ type: "tool-start", toolCall: call });
 
-          const childModel = await resolveAgentModel(child);
+          // Everything runs inside one guard so a tool-end with a concrete
+          // string output is ALWAYS emitted — the delegation call can never be
+          // left dangling with a null output (which the UI would flag as a
+          // failed/incomplete call).
           let output: string;
-          if (!childModel) {
-            output = `Error: ${child.name} has no model configured, so it can't run.`;
-          } else {
-            try {
-              let text = "";
-              for await (const ev of runAgentTurn({
-                agent: child,
-                model: childModel,
-                user: input.user,
-                sessionId: input.sessionId,
-                history: [],
-                userContent: task,
-                requireApproval: input.requireApproval,
-                sessionApproved: input.sessionApproved,
-                // A nested turn has no surface of its own to prompt on.
-                interactive: false,
-                delegationChain: [...chain, input.agent.id],
-              })) {
-                if (ev.type === "text") text += ev.text;
-              }
-              output = text || `${child.name} returned no reply.`;
-              await recordAudit({
-                orgId: input.agent.orgId,
-                actorUserId: input.user.id,
-                action: "agent.delegate",
-                targetType: "agent",
-                targetId: child.id,
-                summary: `${input.agent.name} delegated a task to ${child.name}`,
-                metadata: { parentAgentId: input.agent.id, sessionId: input.sessionId },
-              });
-            } catch (err) {
-              output = `Error: ${err instanceof Error ? err.message : "delegation failed"}`;
+          try {
+            const childModel = await resolveAgentModel(child);
+            if (!childModel) {
+              throw new Error(`${child.name} has no model configured, so it can't run.`);
             }
+            let text = "";
+            for await (const ev of runAgentTurn({
+              agent: child,
+              model: childModel,
+              user: input.user,
+              sessionId: input.sessionId,
+              history: [],
+              userContent: task,
+              requireApproval: input.requireApproval,
+              sessionApproved: input.sessionApproved,
+              // A nested turn has no surface of its own to prompt on.
+              interactive: false,
+              delegationChain: [...chain, input.agent.id],
+            })) {
+              if (ev.type === "text") text += ev.text;
+            }
+            output = text || `${child.name} returned no reply.`;
+            await recordAudit({
+              orgId: input.agent.orgId,
+              actorUserId: input.user.id,
+              action: "agent.delegate",
+              targetType: "agent",
+              targetId: child.id,
+              summary: `${input.agent.name} delegated a task to ${child.name}`,
+              metadata: { parentAgentId: input.agent.id, sessionId: input.sessionId },
+            });
+          } catch (err) {
+            output = `Error: ${err instanceof Error ? err.message : "delegation failed"}`;
           }
 
           emit({

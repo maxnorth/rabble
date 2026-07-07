@@ -311,20 +311,18 @@ test("sub-agent delegation: a linked agent runs as a governed tool", async () =>
       .fill("Ask docs helper about the runbook");
     await page.getByRole("button", { name: "Send" }).click();
 
-    // The delegation surfaces as an inline tool call; the child's reply is its
-    // output, folded back into the parent thread.
+    // The delegation surfaces as an inline tool call in the parent thread.
     const chip = page.locator(".tool-call", { hasText: "ask_docs_helper" }).first();
     await expect(chip).toBeVisible({ timeout: 15_000 });
-    await chip.click();
-    await expect(page.locator(".drawer")).toContainText(
+
+    // The transcript is the source of truth (the tool-call chip's output can
+    // still be catching up in the SSE stream): the persisted call carries the
+    // child's reply, folded back as the delegation tool's output.
+    const toolCall = await pollFirstToolCall("%Ask docs helper about the runbook%");
+    expect(toolCall).toMatchObject({ name: "ask_docs_helper" });
+    expect(String(toolCall.output)).toContain(
       "Mock reply to: Summarize the deploy runbook",
     );
-    await page.locator(".drawer-close").click();
-
-    // Transcript recorded the delegation as a tool call on the parent's session…
-    expect(await pollFirstToolCall("%Ask docs helper about the runbook%")).toMatchObject({
-      name: "ask_docs_helper",
-    });
     // …the edge is audited…
     const audit = await dbQuery<{ action: string }>(
       "SELECT action FROM audit_events WHERE action = 'agent.delegate'",

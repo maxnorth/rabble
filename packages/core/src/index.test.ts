@@ -153,6 +153,14 @@ describe("describeCron", () => {
     expect(describeCron("5 * * * *")).toBe("at :05 past every hour");
   });
 
+  it("describes hour lists and weekday lists in prose", () => {
+    expect(describeCron("0 9,17 * * *")).toBe("at 9:00 and 17:00 UTC");
+    expect(describeCron("30 8,12,18 * * *")).toBe("at 8:30, 12:30 and 18:30 UTC");
+    expect(describeCron("0 9 * * 1,3,5")).toBe(
+      "at 9:00 UTC on Monday, Wednesday and Friday",
+    );
+  });
+
   it("falls back to the raw expression when unsure", () => {
     expect(describeCron("0 0 1 * *")).toBe("0 0 1 * *"); // day-of-month
     expect(describeCron("0 9 * 3 *")).toBe("0 9 * 3 *"); // specific month

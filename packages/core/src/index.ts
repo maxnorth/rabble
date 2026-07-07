@@ -664,6 +664,12 @@ const CRON_DAY_NAMES = [
   "Saturday",
 ];
 
+/** Join a list the way prose does: "a", "a and b", "a, b and c". */
+function joinProse(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 /**
  * A plain-language summary of a cron expression for common patterns
  * (fixed daily time, weekday windows, hourly/every-N-minutes). Falls back to
@@ -685,10 +691,14 @@ export function describeCron(expr: string): string {
   const pad = (s: string) => s.padStart(2, "0");
   const stepMin = /^\*\/(\d+)$/.exec(min);
   const stepHr = /^\*\/(\d+)$/.exec(hr);
+  // A comma-list of whole hours, e.g. "9,17" (twice-daily). Single-minute only.
+  const hourList = /^\d+(,\d+)+$/.test(hr) ? hr.split(",") : null;
 
   let time: string | null = null;
   if (/^\d+$/.test(min) && /^\d+$/.test(hr)) {
     time = `at ${hr}:${pad(min)} UTC`;
+  } else if (/^\d+$/.test(min) && hourList) {
+    time = `at ${joinProse(hourList.map((h) => `${h}:${pad(min)}`))} UTC`;
   } else if (/^\d+$/.test(min) && hr === "*") {
     time = `at :${pad(min)} past every hour`;
   } else if (min === "*" && hr === "*") {
@@ -711,6 +721,8 @@ export function describeCron(expr: string): string {
     days = " on weekends";
   } else if (/^\d$/.test(dow)) {
     days = ` on ${CRON_DAY_NAMES[Number(dow) % 7]}`;
+  } else if (/^\d(,\d)+$/.test(dow)) {
+    days = ` on ${joinProse(dow.split(",").map((d) => CRON_DAY_NAMES[Number(d) % 7]!))}`;
   }
   if (days === null) return expr;
 

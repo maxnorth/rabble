@@ -27,6 +27,7 @@ import type {
   SessionEvalResult,
   SessionWithAgent,
   StreamEvent,
+  SurfaceResponseMode,
   Team,
   TeamMember,
   UpdateAgentRequest,
@@ -164,8 +165,12 @@ export const api = {
     patch<{ ok: true }>(`/api/agents/${id}/sub-agents/${subId}`, { note }),
   listSurfaces: (agentId: string) =>
     get<{ surfaces: AgentSurface[] }>(`/api/agents/${agentId}/surfaces`),
-  addSurface: (agentId: string, body: { connectionId: string; label: string }) =>
-    post<{ surface: { id: string } }>(`/api/agents/${agentId}/surfaces`, body),
+  addSurface: (
+    agentId: string,
+    body: { connectionId: string; label: string; responseMode?: SurfaceResponseMode },
+  ) => post<{ surface: { id: string } }>(`/api/agents/${agentId}/surfaces`, body),
+  updateSurface: (agentId: string, surfaceId: string, responseMode: SurfaceResponseMode) =>
+    patch<{ ok: true }>(`/api/agents/${agentId}/surfaces/${surfaceId}`, { responseMode }),
   removeSurface: (agentId: string, surfaceId: string) =>
     del<{ ok: true }>(`/api/agents/${agentId}/surfaces/${surfaceId}`),
   linkSubAgent: (id: string, subId: string) =>

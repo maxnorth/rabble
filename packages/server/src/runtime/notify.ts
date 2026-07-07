@@ -10,6 +10,7 @@ import { userPreferencesSchema } from "@rabblehq/core";
 import { db } from "../db/client.js";
 import { connections, type users } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
+import { slackClient } from "../surfaces/slackClient.js";
 
 /**
  * Deliver an approval ask as Slack DM buttons through the org's Slack
@@ -36,27 +37,17 @@ export async function sendSlackApprovalPrompt(input: {
       )
       .limit(1);
     if (!slack) return false;
-    const baseUrl = slack.baseUrl ?? "https://slack.com";
-    const token = decryptSecret(slack.encryptedToken!);
-    const call = async (method: string, body: Record<string, unknown>) => {
-      const res = await fetch(`${baseUrl}/api/${method}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      return (await res.json()) as Record<string, unknown>;
-    };
-    const lookup = await call("users.lookupByEmail", { email: input.user.email });
-    const dmUser = (lookup.user as { id?: string } | undefined)?.id;
-    if (!lookup.ok || !dmUser) return false;
+    const client = slackClient(slack.baseUrl, decryptSecret(slack.encryptedToken!));
+    const lookup = await client.users
+      .lookupByEmail({ email: input.user.email })
+      .catch(() => undefined);
+    const dmUser = lookup?.user?.id;
+    if (!dmUser) return false;
     const value = JSON.stringify({
       approvalId: input.ask.approvalId,
       sessionId: input.sessionId,
     });
-    await call("chat.postMessage", {
+    await client.chat.postMessage({
       channel: dmUser,
       text:
         `${input.agentName} wants to run ${input.ask.toolName}` +
@@ -125,29 +116,18 @@ export async function notifyBackgroundReply(input: {
       )
       .limit(1);
     if (!slack) return;
-    const baseUrl = slack.baseUrl ?? "https://slack.com";
-    const token = decryptSecret(slack.encryptedToken!);
-    const call = async (method: string, body: Record<string, unknown>) => {
-      const res = await fetch(`${baseUrl}/api/${method}`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(body),
-      });
-      return (await res.json()) as Record<string, unknown>;
-    };
-
-    const lookup = await call("users.lookupByEmail", { email: input.user.email });
-    const slackUserId = (lookup.user as { id?: string } | undefined)?.id;
-    if (!lookup.ok || !slackUserId) return;
+    const client = slackClient(slack.baseUrl, decryptSecret(slack.encryptedToken!));
+    const lookup = await client.users
+      .lookupByEmail({ email: input.user.email })
+      .catch(() => undefined);
+    const slackUserId = lookup?.user?.id;
+    if (!slackUserId) return;
 
     const preview =
       input.replyPreview.length > 140
         ? `${input.replyPreview.slice(0, 137)}…`
         : input.replyPreview;
-    await call("chat.postMessage", {
+    await client.chat.postMessage({
       channel: slackUserId,
       text: `${input.agentName} replied on ${input.surface}: "${preview}" — open the session in Rabble: /sessions/${input.sessionId}`,
     });

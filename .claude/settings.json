@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm *)",
+      "Bash(psql *)",
+      "Bash(mise *)",
+      "Bash(ls *)",
+      "Bash(echo *)",
+      "Bash(cd *)",
+      "Bash(tail *)",
+      "Bash(lsof *)",
+      "Bash(grep *)",
+      "Bash(curl *)",
+      "Bash(head *)",
+      "Bash(timeout *)",
+      "Bash(eval *)",
+      "Bash(node *)",
+      "Bash(sleep *)",
+      "Bash(tsx *)",
+      "Bash(node *)",
+      "Bash(cat *)"
+    ]
+  }
+}

@@ -23,6 +23,7 @@
     "@langchain/langgraph": "^1.4.7",
     "@langchain/openai": "^1.5.3",
     "@rabblehq/core": "workspace:*",
+    "@slack/web-api": "^7.19.0",
     "deepagents": "^1.10.5",
     "dotenv": "^16.5.0",
     "drizzle-orm": "^0.43.1",

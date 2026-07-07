@@ -66,14 +66,20 @@ test("surfaces: the Slack connection attaches to an agent as a delivery point", 
   await expect(page.locator(".row", { hasText: "Web sessions" })).toBeVisible();
   await page.locator("select").selectOption({ label: "Acme Slack (slack)" });
   await page.getByPlaceholder("#eng-oncall").fill("#eng-oncall");
+  // Respond to every message in this channel (not just @-mentions).
+  await page
+    .getByTitle("When this agent replies in the channel")
+    .selectOption({ label: "Every message in channel" });
   await page.getByRole("button", { name: "Attach surface" }).click();
 
   const row = page.locator(".row", { hasText: "#eng-oncall" });
   await expect(row).toBeVisible();
   await expect(row).toContainText("Acme Slack");
 
-  const surfaces = await dbQuery<{ label: string }>("SELECT label FROM agent_surfaces");
-  expect(surfaces).toEqual([{ label: "#eng-oncall" }]);
+  const surfaces = await dbQuery<{ label: string; response_mode: string }>(
+    "SELECT label, response_mode FROM agent_surfaces",
+  );
+  expect(surfaces).toEqual([{ label: "#eng-oncall", response_mode: "all" }]);
 
   // The connections list now attributes the agent to the connection
   await page.locator("nav a[title='Admin']").click();

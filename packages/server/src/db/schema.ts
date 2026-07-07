@@ -447,6 +447,8 @@ export const agentSurfaces = pgTable(
       .notNull()
       .references(() => connections.id, { onDelete: "cascade" }),
     label: text("label").notNull().default(""),
+    // Slack thread behavior: 'all' | 'thread' | 'mention' (see 0015 migration).
+    responseMode: text("response_mode").notNull().default("thread"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

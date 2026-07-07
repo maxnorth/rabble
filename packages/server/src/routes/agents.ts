@@ -657,6 +657,7 @@ export async function agentRoutes(app: FastifyInstance) {
         connectionName: r.connection.name,
         vendor: r.connection.vendor,
         label: r.surface.label,
+        responseMode: r.surface.responseMode,
         status: r.connection.status,
         createdAt: r.surface.createdAt.toISOString(),
       })),
@@ -682,7 +683,12 @@ export async function agentRoutes(app: FastifyInstance) {
     if (!connection) return reply.code(404).send({ error: "Connection not found" });
     const [row] = await db
       .insert(agentSurfaces)
-      .values({ agentId: id, connectionId: body.connectionId, label: body.label })
+      .values({
+        agentId: id,
+        connectionId: body.connectionId,
+        label: body.label,
+        responseMode: body.responseMode,
+      })
       .returning();
     await recordAudit({
       orgId: req.user!.orgId,
@@ -693,6 +699,32 @@ export async function agentRoutes(app: FastifyInstance) {
       summary: `Added surface ${connection.vendor}${body.label ? ` ${body.label}` : ""}`,
     });
     return { surface: { id: row!.id } };
+  });
+
+  app.patch("/api/agents/:id/surfaces/:surfaceId", async (req, reply) => {
+    const { id, surfaceId } = req.params as { id: string; surfaceId: string };
+    const { updateAgentSurfaceSchema } = await import("@rabblehq/core");
+    const body = updateAgentSurfaceSchema.parse(req.body);
+    const rights = await rightsForAllAgents(req.user!);
+    if (!hasRight(rights.get(id) ?? null, "edit")) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    const { agentSurfaces } = await import("../db/schema.js");
+    const [row] = await db
+      .update(agentSurfaces)
+      .set({ responseMode: body.responseMode })
+      .where(and(eq(agentSurfaces.id, surfaceId), eq(agentSurfaces.agentId, id)))
+      .returning();
+    if (!row) return reply.code(404).send({ error: "Surface not found" });
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "agent.surface.update",
+      targetType: "agent",
+      targetId: id,
+      summary: `Set surface response mode to ${body.responseMode}`,
+    });
+    return { ok: true };
   });
 
   app.delete("/api/agents/:id/surfaces/:surfaceId", async (req, reply) => {

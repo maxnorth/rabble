@@ -1,4 +1,8 @@
-import { agentCapabilitiesSchema, type AgentCapabilities } from "@rabblehq/core";
+import {
+  agentCapabilitiesSchema,
+  type AgentCapabilities,
+  type SurfaceResponseMode,
+} from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -776,6 +780,58 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
 // surfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * Two-level Slack response control: a top-level choice of "every message" vs
+ * "only when @mentioned", with an "auto-reply in thread" sub-option that only
+ * applies under @mentioned. Maps to the stored enum — all: every message;
+ * thread: mentioned + auto-reply to follow-ups; mention: mentioned every time.
+ */
+function ResponseModeControls({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: SurfaceResponseMode;
+  disabled?: boolean;
+  onChange: (mode: SurfaceResponseMode) => void;
+}) {
+  const mentionOnly = mode !== "all";
+  return (
+    <span style={{ display: "inline-flex", gap: 10, alignItems: "center" }}>
+      <select
+        value={mentionOnly ? "mention" : "all"}
+        disabled={disabled}
+        title="When this agent replies in the channel"
+        // Switching to @mentioned defaults the sub-option to auto-reply on.
+        onChange={(e) => onChange(e.target.value === "all" ? "all" : "thread")}
+      >
+        <option value="mention">Only when @mentioned</option>
+        <option value="all">Every message in channel</option>
+      </select>
+      {mentionOnly && (
+        <label
+          style={{
+            display: "inline-flex",
+            gap: 4,
+            alignItems: "center",
+            fontSize: 13,
+            color: "var(--text-dim)",
+          }}
+          title="After a tag, keep replying to follow-ups in that thread without re-tagging"
+        >
+          <input
+            type="checkbox"
+            disabled={disabled}
+            checked={mode === "thread"}
+            onChange={(e) => onChange(e.target.checked ? "thread" : "mention")}
+          />
+          Auto-reply in thread
+        </label>
+      )}
+    </span>
+  );
+}
+
 function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
@@ -785,16 +841,24 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
   });
   const [connectionId, setConnectionId] = useState("");
   const [label, setLabel] = useState("");
+  const [responseMode, setResponseMode] = useState<SurfaceResponseMode>("thread");
 
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["surfaces", agentId] });
   const add = useMutation({
-    mutationFn: () => api.addSurface(agentId, { connectionId, label: label.trim() }),
+    mutationFn: () =>
+      api.addSurface(agentId, { connectionId, label: label.trim(), responseMode }),
     onSuccess: () => {
       setConnectionId("");
       setLabel("");
+      setResponseMode("thread");
       void invalidate();
     },
+  });
+  const update = useMutation({
+    mutationFn: (vars: { surfaceId: string; responseMode: SurfaceResponseMode }) =>
+      api.updateSurface(agentId, vars.surfaceId, vars.responseMode),
+    onSuccess: () => void invalidate(),
   });
   const remove = useMutation({
     mutationFn: (surfaceId: string) => api.removeSurface(agentId, surfaceId),
@@ -843,6 +907,13 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
                 {s.vendor} · sessions started here land in the same audited timeline
               </div>
             </div>
+            {s.vendor === "slack" && (
+              <ResponseModeControls
+                mode={s.responseMode}
+                disabled={!canEdit || update.isPending}
+                onChange={(m) => update.mutate({ surfaceId: s.id, responseMode: m })}
+              />
+            )}
             <span className={`chip ${s.status === "connected" ? "green" : "amber"}`}>
               {s.status}
             </span>
@@ -880,6 +951,9 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
               onChange={(e) => setLabel(e.target.value)}
               style={{ width: 200 }}
             />
+            {selected?.vendor === "slack" && (
+              <ResponseModeControls mode={responseMode} onChange={setResponseMode} />
+            )}
             <button
               className="btn primary"
               disabled={!connectionId || add.isPending}

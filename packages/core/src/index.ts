@@ -697,6 +697,15 @@ export type OrgSettings = z.infer<typeof orgSettingsSchema>;
 // Surfaces
 // ---------------------------------------------------------------------------
 
+/**
+ * How a Slack surface reacts to messages in its channel:
+ *   all     – respond to every message (whole-channel monitoring)
+ *   thread  – tag to engage, then auto-respond to follow-ups in that thread
+ *   mention – tag-only; require a fresh @-mention for every reply
+ */
+export const surfaceResponseModeSchema = z.enum(["all", "thread", "mention"]);
+export type SurfaceResponseMode = z.infer<typeof surfaceResponseModeSchema>;
+
 export const agentSurfaceSchema = z.object({
   id: z.string().uuid(),
   agentId: z.string().uuid(),
@@ -704,6 +713,7 @@ export const agentSurfaceSchema = z.object({
   connectionName: z.string(),
   vendor: z.string(),
   label: z.string(),
+  responseMode: surfaceResponseModeSchema,
   status: z.enum(["connected", "needs-auth", "error"]),
   createdAt: z.string(),
 });
@@ -712,8 +722,14 @@ export type AgentSurface = z.infer<typeof agentSurfaceSchema>;
 export const createAgentSurfaceSchema = z.object({
   connectionId: z.string().uuid(),
   label: z.string().max(120).default(""),
+  responseMode: surfaceResponseModeSchema.default("thread"),
 });
 export type CreateAgentSurfaceRequest = z.infer<typeof createAgentSurfaceSchema>;
+
+export const updateAgentSurfaceSchema = z.object({
+  responseMode: surfaceResponseModeSchema,
+});
+export type UpdateAgentSurfaceRequest = z.infer<typeof updateAgentSurfaceSchema>;
 
 export const connectedAccountSchema = z.object({
   id: z.string().uuid(),

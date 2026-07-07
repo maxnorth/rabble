@@ -31,12 +31,21 @@ import { reset, state, type McpToolDef, type ScriptedReply } from "./state.js";
 export async function buildEmulator() {
   const app = Fastify({ logger: false });
   await app.register(websocket);
-  // Slack clients POST form-encoded (often empty) bodies; accept them like
-  // the real API instead of 415ing.
+  // The Slack Web API — and the @slack/web-api SDK the app uses — sends
+  // parameters form-encoded, reading them from the request body. Parse them
+  // into an object so the Slack mocks can read req.body.user/.channel/.email,
+  // mirroring real Slack instead of only accepting JSON (which the read
+  // methods like users.info silently ignore). Empty bodies parse to {}.
   app.addContentTypeParser(
     "application/x-www-form-urlencoded",
     { parseAs: "string" },
-    (_req, body, done) => done(null, body),
+    (_req, body, done) => {
+      try {
+        done(null, Object.fromEntries(new URLSearchParams(body as string)));
+      } catch (err) {
+        done(err as Error, undefined);
+      }
+    },
   );
 
   app.get("/health", async () => ({ ok: true, emulator: true }));

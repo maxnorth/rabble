@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, streamMessage } from "../api";
 import { relativeTime, count, AGENT_COLORS } from "../lib/time";
+import { sessionToMarkdown, exportFilename } from "../lib/sessionExport";
 
 interface PendingApproval {
   approvalId: string;
@@ -792,39 +793,17 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             onClick={() => {
               const data = session.data;
               if (!data) return;
-              const lines = [
-                `# ${data.session.title || "Session"}`,
-                "",
-                `Agent: ${data.session.agentName} · Surface: ${data.session.surface} · Exported ${new Date().toLocaleString()}`,
-                "",
-                ...messages.flatMap((m) => [
-                  `## ${m.role === "user" ? "User" : data.session.agentName}`,
-                  ...m.toolCalls.map(
-                    (tc) =>
-                      `> tool: \`${tc.name}\` (${tc.authType ?? "service"} auth${tc.approval ? `, ${tc.approval.status}` : ""})`,
-                  ),
-                  m.content,
-                  "",
-                ]),
-                // The transcript is only half the record — how it graded is
-                // the other half. Include the eval verdicts.
-                ...(evalResults.length > 0
-                  ? [
-                      `## Evals — ${passedCount}/${evalResults.length} criteria passed`,
-                      "",
-                      ...evalResults.map(
-                        (r) =>
-                          `- **${r.passed ? "PASS" : "FAIL"}** ${r.criterionName}: ${r.reasoning}`,
-                      ),
-                      "",
-                    ]
-                  : []),
-              ];
-              const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+              const md = sessionToMarkdown(
+                data.session,
+                messages,
+                evalResults,
+                new Date().toLocaleString(),
+              );
+              const blob = new Blob([md], { type: "text/markdown" });
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
-              a.download = `${(data.session.title || "session").replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}.md`;
+              a.download = exportFilename(data.session.title);
               a.click();
               URL.revokeObjectURL(url);
             }}

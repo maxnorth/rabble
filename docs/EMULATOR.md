@@ -26,9 +26,9 @@ No `if test_mode` branches exist in app code; keep it that way.
 | `POST /admin/llm/enqueue` | queue the next LLM reply: `{type:"text", text}` or `{type:"tool_call", toolName, toolArgs}`; accepts an array |
 | `PUT /admin/mcp/:serverKey` | replace an MCP server's tool catalog |
 | `PUT /admin/slack` | teach the workspace directory: `{users:{U1:"a@b.c"}, channels:{C1:"eng-oncall"}}` |
-| `POST /admin/slack/socket-event` | push a Socket Mode event to connected sockets: `{event:{type:"message",channel,user,text,ts}, eventId?}` (wrapped in an `events_api` envelope; returns `delivered` + `envelopeId`) |
-| `POST /admin/slack/socket-interaction` | push an interactivity payload as an `interactive` envelope: `{payload:{…block_actions…}}` |
-| `GET /admin/slack/socket` | live socket count + the sent/ack envelope log |
+| `POST /admin/slack/socket-event` | push a Socket Mode event to connected sockets: `{event:{type:"message",channel,user,text,ts}, eventId?, appToken?}` (wrapped in an `events_api` envelope; returns `delivered` + `envelopeId`). With `appToken`, only the socket that opened with that app-level token receives it — like real Slack scoping an event to its app; without one, it broadcasts |
+| `POST /admin/slack/socket-interaction` | push an interactivity payload as an `interactive` envelope: `{payload:{…block_actions…}, appToken?}` (same targeting) |
+| `GET /admin/slack/socket` | live socket count, the distinct `apps` (app tokens) currently connected, + the sent/ack envelope log |
 
 ## Default conventions (unscripted behavior)
 

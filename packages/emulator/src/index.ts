@@ -95,10 +95,11 @@ export async function buildEmulator() {
   // Wraps a bare Slack event in the envelopes the real socket would carry:
   // an event_callback payload inside an events_api Socket Mode envelope.
   app.post("/admin/slack/socket-event", async (req) => {
-    const { event, eventId, envelopeId } = (req.body ?? {}) as {
+    const { event, eventId, envelopeId, appToken } = (req.body ?? {}) as {
       event?: Record<string, unknown>;
       eventId?: string;
       envelopeId?: string;
+      appToken?: string;
     };
     if (!event) return { ok: false, error: "event required" };
     const envelope = {
@@ -114,14 +115,15 @@ export async function buildEmulator() {
         event,
       },
     };
-    const delivered = pushSlackSocketEnvelope(envelope);
+    const delivered = pushSlackSocketEnvelope(envelope, appToken);
     return { ok: true, delivered, envelopeId: envelope.envelope_id };
   });
 
   app.post("/admin/slack/socket-interaction", async (req) => {
-    const { payload, envelopeId } = (req.body ?? {}) as {
+    const { payload, envelopeId, appToken } = (req.body ?? {}) as {
       payload?: Record<string, unknown>;
       envelopeId?: string;
+      appToken?: string;
     };
     if (!payload) return { ok: false, error: "payload required" };
     const envelope = {
@@ -130,12 +132,13 @@ export async function buildEmulator() {
       accepts_response_payload: false,
       payload,
     };
-    const delivered = pushSlackSocketEnvelope(envelope);
+    const delivered = pushSlackSocketEnvelope(envelope, appToken);
     return { ok: true, delivered, envelopeId: envelope.envelope_id };
   });
 
   app.get("/admin/slack/socket", async () => ({
     connections: state.slackSockets.size,
+    apps: [...new Set(state.slackSocketApp.values())],
     log: state.slackSocketLog,
   }));
 

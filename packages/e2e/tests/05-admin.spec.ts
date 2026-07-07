@@ -1295,6 +1295,106 @@ test("socket mode interactivity: DM buttons resolve approvals over the WebSocket
     .toBe(true);
 });
 
+test("two Socket Mode workspaces stay isolated — events reach only their app", async () => {
+  // A second workspace's app, alongside the existing Acme socket. Each app
+  // gets its own socket; an event in one must not leak into (or be swallowed
+  // by) the other — which is exactly what shared event-id dedupe would do if
+  // the emulator broadcast to every socket.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+  await page.getByRole("button", { name: "+ Add connection" }).click();
+  await page.getByPlaceholder("Acme Slack").fill("Beta Slack (socket)");
+  await page.getByPlaceholder("https://slack.com").fill(`${EMULATOR}/mock/slack.com`);
+  await page.locator(".modal input[type=password]").first().fill("xoxb-beta");
+  await page.getByPlaceholder("xapp-…").fill("xapp-beta");
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  await expect(
+    page.locator(".row", { hasText: "Beta Slack (socket)" }),
+  ).toBeVisible();
+
+  // Both apps hold their own tagged socket.
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { apps: string[] };
+      return status.apps.includes("xapp-emulated") && status.apps.includes("xapp-beta");
+    })
+    .toBe(true);
+
+  // Beta maps its own channel to the on-call agent.
+  await fetch(`${EMULATOR}/admin/slack`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ channels: { C999: "beta-ops" } }),
+  });
+  await dbQuery(
+    `INSERT INTO agent_surfaces (agent_id, connection_id, label)
+     SELECT a.id, c.id, '#beta-ops' FROM agents a, connections c
+     WHERE a.name = 'Eng On-Call' AND c.name = 'Beta Slack (socket)'`,
+  );
+
+  // An event in Beta's channel, delivered only to Beta's socket. Under the
+  // old broadcast behavior Acme's socket would have seen this event_id first
+  // and (no #beta-ops mapping there) marked it delivered, starving Beta —
+  // so a session appearing at all is the isolation proof.
+  const push = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        appToken: "xapp-beta",
+        eventId: "EvBetaIso1",
+        event: {
+          type: "message",
+          channel: "C999",
+          user: "U777",
+          text: "Beta workspace deploy status?",
+          ts: "1850.001",
+        },
+      }),
+    })
+  ).json()) as { delivered: number };
+  expect(push.delivered).toBe(1); // exactly one socket, not both
+
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ surface: string }>(
+        "SELECT surface FROM sessions WHERE surface_key = 'slack:C999:1850.001'",
+      );
+      return rows[0]?.surface ?? "";
+    })
+    .toBe("Slack #beta-ops");
+
+  // Cross-check: the same channel event delivered to the WRONG app (Acme,
+  // which has no #beta-ops mapping) never becomes a session.
+  const wrong = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        appToken: "xapp-emulated",
+        eventId: "EvBetaIso2",
+        event: {
+          type: "message",
+          channel: "C999",
+          user: "U777",
+          text: "Wrong workspace, should be ignored",
+          ts: "1850.002",
+        },
+      }),
+    })
+  ).json()) as { delivered: number };
+  expect(wrong.delivered).toBe(1); // Acme's socket got it…
+  // …but Acme has no agent on C999, so no session is ever created.
+  await page.waitForTimeout(1500);
+  const leaked = await dbQuery(
+    "SELECT id FROM sessions WHERE surface_key = 'slack:C999:1850.002'",
+  );
+  expect(leaked).toHaveLength(0);
+});
+
 test("the Builder creates a measured draft agent conversationally", async () => {
   // The quiet affordance on the Sessions landing targets the Builder.
   await page.goto("/sessions");

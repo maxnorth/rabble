@@ -45,9 +45,13 @@ digests/alerts, and any queue-shaped workload. Rationale: Postgres-backed (no
 new datastore for self-hosters), self-hostable to match the open-source
 story, TypeScript SDK, and durable workflows fit the eval/automation roadmap.
 
-Nothing in the current slice schedules work yet; the first feature that does
-(automations or eval runs) introduces the Hatchet worker alongside the API
-server. Do not reach for node-cron/BullMQ/ad-hoc setIntervals.
+The worker is wired in `src/scheduling/hatchet.ts`, started at boot but
+**off unless `HATCHET_CLIENT_TOKEN` is set** — so a plain deploy and the e2e
+suite are unaffected (retention still sweeps once at boot). When a token is
+present it registers cron workflows that call the same job functions the app
+already runs on demand (retention today; automation schedules next, keyed on
+the tested `cronMatches`). Bring the engine up with `docker compose --profile
+hatchet up`. Do not reach for node-cron/BullMQ/ad-hoc setIntervals.
 
 ## Testing
 

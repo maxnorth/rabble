@@ -124,6 +124,11 @@ if (isMain) {
       startSlackSocketManager(app.log).catch((err) =>
         app.log.warn({ err }, "slack socket manager failed to start"),
       );
+      // Recurring background work via Hatchet (off unless configured).
+      const { startScheduler } = await import("./scheduling/hatchet.js");
+      startScheduler(app.log).catch((err) =>
+        app.log.warn({ err }, "scheduler failed to start"),
+      );
     })
     .catch((err) => {
       app.log.error(err);

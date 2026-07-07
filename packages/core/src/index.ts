@@ -547,6 +547,55 @@ export function isValidCron(expr: string): boolean {
   return fields.every((f, i) => validCronField(f, CRON_RANGES[i]![0], CRON_RANGES[i]![1]));
 }
 
+/** Does one already-validated cron field match a numeric time component? */
+function cronFieldMatches(field: string, value: number): boolean {
+  return field.split(",").some((part) => {
+    const slash = part.indexOf("/");
+    const rangePart = slash === -1 ? part : part.slice(0, slash);
+    const step = slash === -1 ? 1 : Number(part.slice(slash + 1));
+    let lo: number;
+    let hi: number;
+    if (rangePart === "*") {
+      // Any value; only the step constrains it (relative to 0).
+      return step === 1 || value % step === 0;
+    }
+    const dash = rangePart.indexOf("-");
+    lo = Number(dash === -1 ? rangePart : rangePart.slice(0, dash));
+    hi = dash === -1 ? lo : Number(rangePart.slice(dash + 1));
+    if (value < lo || value > hi) return false;
+    return (value - lo) % step === 0;
+  });
+}
+
+/**
+ * Whether a 5-field cron expression fires at the given instant (minute
+ * granularity, UTC). Standard Vixie semantics: when BOTH day-of-month and
+ * day-of-week are restricted, the schedule matches if EITHER does; if either
+ * is `*`, day matching is a plain AND. Returns false for an invalid cron.
+ */
+export function cronMatches(expr: string, date: Date): boolean {
+  if (!isValidCron(expr)) return false;
+  const [min, hr, dom, mon, dow] = expr.trim().split(/\s+/) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  if (!cronFieldMatches(min, date.getUTCMinutes())) return false;
+  if (!cronFieldMatches(hr, date.getUTCHours())) return false;
+  if (!cronFieldMatches(mon, date.getUTCMonth() + 1)) return false;
+
+  const jsDow = date.getUTCDay(); // 0=Sun..6=Sat
+  const domMatch = cronFieldMatches(dom, date.getUTCDate());
+  const dowMatch =
+    cronFieldMatches(dow, jsDow) || (jsDow === 0 && cronFieldMatches(dow, 7));
+  const domRestricted = dom !== "*";
+  const dowRestricted = dow !== "*";
+  if (domRestricted && dowRestricted) return domMatch || dowMatch;
+  return domMatch && dowMatch;
+}
+
 export const createAutomationSchema = z.object({
   name: z.string().min(1).max(120),
   schedule: z

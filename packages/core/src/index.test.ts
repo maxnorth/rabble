@@ -3,12 +3,56 @@ import {
   agentCapabilitiesSchema,
   createAutomationSchema,
   createGrantSchema,
+  cronMatches,
   isValidCron,
   slugify,
   streamEventSchema,
   toolCallSchema,
   userPreferencesSchema,
 } from "./index.js";
+
+describe("cronMatches", () => {
+  // UTC reference dates with known weekdays: 2021-01-01 = Friday.
+  const at = (m: number, d: number, hh: number, mm: number) =>
+    new Date(Date.UTC(2021, m, d, hh, mm));
+  const fri1 = at(0, 1, 9, 0); // Fri Jan 1
+  const sun3 = at(0, 3, 9, 0); // Sun Jan 3
+  const mon4 = at(0, 4, 9, 0); // Mon Jan 4
+  const tue5 = at(0, 5, 0, 0); // Tue Jan 5 midnight
+
+  it("matches minute/hour fields, including step", () => {
+    expect(cronMatches("0 9 * * *", mon4)).toBe(true);
+    expect(cronMatches("0 9 * * *", at(0, 4, 9, 1))).toBe(false); // minute off
+    expect(cronMatches("0 9 * * *", at(0, 4, 10, 0))).toBe(false); // hour off
+    expect(cronMatches("*/15 * * * *", at(0, 4, 3, 30))).toBe(true);
+    expect(cronMatches("*/15 * * * *", at(0, 4, 3, 7))).toBe(false);
+  });
+
+  it("matches weekday ranges, treating Sunday as 0 or 7", () => {
+    expect(cronMatches("0 9 * * 1-5", mon4)).toBe(true); // Mon in 1-5
+    expect(cronMatches("0 9 * * 1-5", sun3)).toBe(false); // Sun excluded
+    expect(cronMatches("0 9 * * 0", sun3)).toBe(true);
+    expect(cronMatches("0 9 * * 7", sun3)).toBe(true);
+  });
+
+  it("applies the day-of-month / day-of-week OR rule when both are set", () => {
+    // "1st of month OR Monday", at midnight.
+    const expr = "0 0 1 * 1";
+    expect(cronMatches(expr, at(0, 4, 0, 0))).toBe(true); // Mon (dow match)
+    expect(cronMatches(expr, at(0, 1, 0, 0))).toBe(true); // 1st (dom match)
+    expect(cronMatches(expr, tue5)).toBe(false); // neither
+  });
+
+  it("ANDs the day fields when one is a wildcard", () => {
+    expect(cronMatches("0 0 1 * *", at(0, 1, 0, 0))).toBe(true); // 1st
+    expect(cronMatches("0 0 1 * *", at(0, 2, 0, 0))).toBe(false); // 2nd
+  });
+
+  it("is false for an invalid expression", () => {
+    expect(cronMatches("not a cron", fri1)).toBe(false);
+    expect(cronMatches("0 9 * *", fri1)).toBe(false);
+  });
+});
 
 describe("isValidCron", () => {
   it("accepts standard 5-field expressions", () => {

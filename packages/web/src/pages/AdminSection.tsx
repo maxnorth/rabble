@@ -327,7 +327,7 @@ function ConnectionsPage() {
                   {c.vendor === "slack" && !c.hasAppToken && !c.hasSigningSecret && (
                     <span
                       className="chip amber"
-                      title="Slack has no way to deliver channel messages to Rabble. Re-add this connection with an app-level token (Socket Mode, easiest — no public URL) or a signing secret (Events API webhooks)."
+                      title="Slack has no way to deliver channel messages to Rabble. Edit this connection to add an app-level token (Socket Mode, easiest — no public URL) or a signing secret (Events API webhooks)."
                     >
                       no event delivery
                     </span>
@@ -335,7 +335,7 @@ function ConnectionsPage() {
                   {c.vendor === "github" && !c.hasSigningSecret && (
                     <span
                       className="chip amber"
-                      title="No webhook secret — GitHub deliveries can't be verified, so issue comments never reach agents. Re-add this connection with the webhook secret."
+                      title="No webhook secret — GitHub deliveries can't be verified, so issue comments never reach agents. Edit this connection to add the webhook secret."
                     >
                       no event delivery
                     </span>

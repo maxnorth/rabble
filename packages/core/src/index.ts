@@ -731,6 +731,27 @@ export const createAutomationSchema = z.object({
 });
 export type CreateAutomationRequest = z.infer<typeof createAutomationSchema>;
 
+/**
+ * Editing an existing automation. Every field is optional (a PATCH may just
+ * flip `enabled`, or just retune the schedule), but a provided schedule must
+ * still be a valid cron and a provided name non-empty.
+ */
+export const updateAutomationSchema = z
+  .object({
+    name: z.string().min(1).max(120),
+    schedule: z.string().min(1).max(100).refine(isValidCron, {
+      message:
+        "Schedule must be a valid 5-field cron expression (minute hour day-of-month month weekday).",
+    }),
+    prompt: z.string().max(10000),
+    enabled: z.boolean(),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, {
+    message: "Provide at least one field to update.",
+  });
+export type UpdateAutomationRequest = z.infer<typeof updateAutomationSchema>;
+
 // ---------------------------------------------------------------------------
 // Admin: connections, API keys, audit
 // ---------------------------------------------------------------------------

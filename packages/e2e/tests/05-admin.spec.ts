@@ -2029,6 +2029,22 @@ test("automations: Run now executes a governed session on the Automation surface
   });
   await expect(row).toContainText("last ran");
 
+  // Editing an automation in place: retune the schedule and the plain-language
+  // summary updates without a delete-and-recreate. Once in edit mode the name
+  // lives in an input value, so drive the form with page-level locators.
+  await row.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("Automation schedule").fill("0 * * * *");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(row).toContainText("at :00 past every hour");
+  const [edited] = await dbQuery<{ schedule: string }>(
+    "SELECT schedule FROM automations WHERE name = 'Morning digest'",
+  );
+  expect(edited!.schedule).toBe("0 * * * *");
+  const editAudit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'automation.update'",
+  );
+  expect(editAudit).toHaveLength(1);
+
   const [session] = await dbQuery<{ id: string; surface: string }>(
     "SELECT id, surface FROM sessions WHERE surface LIKE 'Automation%'",
   );

@@ -7,6 +7,7 @@ import {
   describeCron,
   isValidCron,
   nextCronRun,
+  updateAutomationSchema,
   slugify,
   streamEventSchema,
   toolCallSchema,
@@ -80,6 +81,21 @@ describe("isValidCron", () => {
       createAutomationSchema.parse({ name: "x", schedule: "0 9 * * 1-5", prompt: "" })
         .schedule,
     ).toBe("0 9 * * 1-5");
+  });
+});
+
+describe("updateAutomationSchema", () => {
+  it("accepts partial edits and keeps cron validation", () => {
+    expect(updateAutomationSchema.parse({ enabled: false })).toEqual({ enabled: false });
+    expect(updateAutomationSchema.parse({ schedule: "*/5 * * * *" }).schedule).toBe(
+      "*/5 * * * *",
+    );
+    expect(() => updateAutomationSchema.parse({ schedule: "nope" })).toThrow();
+    expect(() => updateAutomationSchema.parse({ name: "" })).toThrow();
+  });
+
+  it("rejects an empty patch", () => {
+    expect(() => updateAutomationSchema.parse({})).toThrow();
   });
 });
 

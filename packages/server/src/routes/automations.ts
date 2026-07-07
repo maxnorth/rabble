@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createAutomationSchema } from "@rabblehq/core";
+import { createAutomationSchema, updateAutomationSchema } from "@rabblehq/core";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { automations } from "../db/schema.js";
@@ -64,7 +64,7 @@ export async function automationRoutes(app: FastifyInstance) {
 
   app.patch("/api/automations/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { enabled } = req.body as { enabled: boolean };
+    const patch = updateAutomationSchema.parse(req.body);
     const [automation] = await db
       .select()
       .from(automations)
@@ -77,9 +77,22 @@ export async function automationRoutes(app: FastifyInstance) {
     }
     const [row] = await db
       .update(automations)
-      .set({ enabled })
+      .set(patch)
       .where(eq(automations.id, id))
       .returning();
+    // A schedule/prompt/name change is a config edit worth auditing; a bare
+    // enable/disable toggle is routine and stays quiet.
+    const changedConfig = Object.keys(patch).some((k) => k !== "enabled");
+    if (changedConfig) {
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "automation.update",
+        targetType: "agent",
+        targetId: automation.agentId,
+        summary: `Edited automation "${row!.name}" (${row!.schedule})`,
+      });
+    }
     return { automation: serialize(row!) };
   });
 

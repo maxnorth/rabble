@@ -334,6 +334,10 @@ export const api = {
     ),
   toggleAutomation: (id: string, enabled: boolean) =>
     patch<{ automation: Automation }>(`/api/automations/${id}`, { enabled }),
+  updateAutomation: (
+    id: string,
+    body: Partial<{ name: string; schedule: string; prompt: string }>,
+  ) => patch<{ automation: Automation }>(`/api/automations/${id}`, body),
   deleteAutomation: (id: string) => del<{ ok: true }>(`/api/automations/${id}`),
 
   // admin

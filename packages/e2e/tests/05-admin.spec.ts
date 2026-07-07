@@ -1957,16 +1957,21 @@ test("hitting an access limit becomes a request an admin approves", async ({
   await expect(page.locator(".row", { hasText: "Approved by Alex Lin" })).toBeVisible();
 
   // The grant materialized and Bea's effective right actually changed.
+  // Poll the DB: the grant row lands just after the "Approved" text renders
+  // (writes trail the UI — same reason the earlier assertions poll).
   const [engOnCall] = await dbQuery<{ id: string }>(
     "SELECT id FROM agents WHERE name = 'Eng On-Call'",
   );
-  const grantRows = await dbQuery<{ access_right: string; subject_type: string }>(
-    `SELECT g.access_right, g.subject_type FROM grants g
-     JOIN users u ON u.id = g.subject_id
-     WHERE u.email = 'bea@acme.com' AND g.target_type = 'agent' AND g.target_id = $1`,
-    [engOnCall!.id],
-  );
-  expect(grantRows).toEqual([{ access_right: "edit", subject_type: "user" }]);
+  await expect
+    .poll(async () =>
+      dbQuery<{ access_right: string; subject_type: string }>(
+        `SELECT g.access_right, g.subject_type FROM grants g
+         JOIN users u ON u.id = g.subject_id
+         WHERE u.email = 'bea@acme.com' AND g.target_type = 'agent' AND g.target_id = $1`,
+        [engOnCall!.id],
+      ),
+    )
+    .toEqual([{ access_right: "edit", subject_type: "user" }]);
   const me = await beaPage.request.get(`/api/agents/${engOnCall!.id}`);
   expect(((await me.json()) as { myRight: string }).myRight).toBe("edit");
 
@@ -2080,6 +2085,17 @@ test("audit log viewer shows the accumulated control-plane history", async () =>
   await expect(page.locator(".row", { hasText: "Created agent" }).first()).toBeVisible();
   await expect(page.locator(".row", { hasText: "Registered MCP server" })).toBeVisible();
   await expect(page.locator(".row", { hasText: "Created API key" })).toBeVisible();
+
+  // Rows with metadata expand to reveal the detail behind the summary — the
+  // gating block from 04 shows which case regressed and the judge's reasoning.
+  await page.locator("select").selectOption("eval");
+  const gateRow = page.locator(".row", { hasText: "blocked a change" }).first();
+  await expect(gateRow).toBeVisible();
+  await gateRow.click();
+  await expect(
+    page.getByText("The reply ignores the deployment question."),
+  ).toBeVisible();
+  await page.locator("select").selectOption("");
 
   // Filter by action prefix
   await page.locator("select").selectOption("grant");

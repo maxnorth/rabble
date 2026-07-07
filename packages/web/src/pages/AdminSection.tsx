@@ -1475,9 +1475,58 @@ function ApiKeysPage() {
 // Audit log
 // ---------------------------------------------------------------------------
 
+/** The expandable detail under an audit row — the metadata behind the
+ *  summary (e.g. a gating block's failing cases + the judge's reasoning). */
+function AuditDetail({ metadata }: { metadata: Record<string, unknown> }) {
+  const failures = Array.isArray(metadata.failures)
+    ? (metadata.failures as Array<{ case?: string; reasoning?: string }>)
+    : null;
+  return (
+    <div
+      className="row"
+      style={{
+        display: "block",
+        background: "var(--surface-group)",
+        padding: "8px 12px 10px 44px",
+      }}
+    >
+      {failures ? (
+        <>
+          <div className="sub" style={{ marginBottom: 4 }}>
+            Failing cases
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16 }}>
+            {failures.map((f, i) => (
+              <li key={i} style={{ fontSize: 12, marginBottom: 2 }}>
+                <strong>{f.case}</strong>: {f.reasoning}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        Object.entries(metadata).map(([k, v]) => (
+          <div key={k} style={{ fontSize: 12, wordBreak: "break-word" }}>
+            <span className="mono" style={{ color: "var(--text-muted)" }}>
+              {k}:
+            </span>{" "}
+            {typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function AuditPage() {
   const [filter, setFilter] = useState("");
   const [pages, setPages] = useState(1);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   const audit = useQuery({
     queryKey: ["audit", filter, pages],
     queryFn: async () => {
@@ -1539,41 +1588,55 @@ function AuditPage() {
                   : category === "org" || category === "api-key"
                     ? "amber"
                     : "";
+          const hasDetail = e.metadata && Object.keys(e.metadata).length > 0;
+          const isOpen = expanded.has(e.id);
           return (
-            <div className="row" key={e.id}>
-              <span
-                className="rail-logo"
-                title={e.actorName ?? "system"}
-                style={{
-                  width: 26,
-                  height: 26,
-                  fontSize: 10,
-                  marginBottom: 0,
-                  background: e.actorName ? "var(--surface-tool)" : "var(--purple)",
-                  color: "var(--text-2)",
-                  flexShrink: 0,
-                }}
+            <div key={e.id}>
+              <div
+                className="row"
+                style={{ cursor: hasDetail ? "pointer" : "default" }}
+                onClick={hasDetail ? () => toggle(e.id) : undefined}
               >
-                {(e.actorName ?? "sys")
-                  .split(/\s+/)
-                  .map((part) => part[0])
-                  .slice(0, 2)
-                  .join("")
-                  .toUpperCase()}
-              </span>
-              <div className="grow">
-                <div className="title" style={{ fontWeight: 400 }}>
-                  {e.summary}
+                <span
+                  className="rail-logo"
+                  title={e.actorName ?? "system"}
+                  style={{
+                    width: 26,
+                    height: 26,
+                    fontSize: 10,
+                    marginBottom: 0,
+                    background: e.actorName ? "var(--surface-tool)" : "var(--purple)",
+                    color: "var(--text-2)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {(e.actorName ?? "sys")
+                    .split(/\s+/)
+                    .map((part) => part[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase()}
+                </span>
+                <div className="grow">
+                  <div className="title" style={{ fontWeight: 400 }}>
+                    {hasDetail && (
+                      <span style={{ color: "var(--text-muted)", marginRight: 6 }}>
+                        {isOpen ? "▾" : "▸"}
+                      </span>
+                    )}
+                    {e.summary}
+                  </div>
+                  <div className="sub mono">{e.action}</div>
                 </div>
-                <div className="sub mono">{e.action}</div>
+                <span className={`chip ${chipColor}`}>{category}</span>
+                <span
+                  style={{ fontSize: 11.5, color: "var(--text-muted)", width: 84, textAlign: "right" }}
+                  title={new Date(e.createdAt).toLocaleString()}
+                >
+                  {relativeTime(e.createdAt)}
+                </span>
               </div>
-              <span className={`chip ${chipColor}`}>{category}</span>
-              <span
-                style={{ fontSize: 11.5, color: "var(--text-muted)", width: 84, textAlign: "right" }}
-                title={new Date(e.createdAt).toLocaleString()}
-              >
-                {relativeTime(e.createdAt)}
-              </span>
+              {isOpen && hasDetail && <AuditDetail metadata={e.metadata} />}
             </div>
           );
         })}

@@ -338,6 +338,7 @@ async function buildSubAgentTools(
           // left dangling with a null output (which the UI would flag as a
           // failed/incomplete call).
           let output: string;
+          let childSessionId: string | null = null;
           try {
             const childModel = await resolveAgentModel(child);
             if (!childModel) {
@@ -358,6 +359,7 @@ async function buildSubAgentTools(
                 surface: `Delegated by ${input.agent.name}`,
               })
               .returning();
+            childSessionId = childSession!.id;
             const { executeTurnAndPersist } = await import("./executeTurn.js");
             const result = await executeTurnAndPersist({
               sessionId: childSession!.id,
@@ -391,7 +393,12 @@ async function buildSubAgentTools(
 
           emit({
             type: "tool-end",
-            toolCall: { ...call, output, durationMs: Date.now() - startedAt },
+            toolCall: {
+              ...call,
+              output,
+              childSessionId,
+              durationMs: Date.now() - startedAt,
+            },
           });
           return output;
         },

@@ -1081,6 +1081,15 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                   ? drawer.toolCall.output
                   : JSON.stringify(drawer.toolCall.output, null, 2)}
               </pre>
+              {drawer.toolCall.childSessionId && (
+                <Link
+                  to={`/sessions/${drawer.toolCall.childSessionId}`}
+                  style={{ color: "var(--accent-text)", fontSize: 13 }}
+                  onClick={() => setDrawer(null)}
+                >
+                  view delegated session →
+                </Link>
+              )}
             </>
           ) : (
             <>

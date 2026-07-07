@@ -340,8 +340,8 @@ test("sub-agent delegation: a linked agent runs as a governed tool", async () =>
     // The delegated turn is a real, auditable session of the child agent —
     // delegated work lands on the sub-agent's own record, not just an
     // ephemeral tool call.
-    const [childSession] = await dbQuery<{ surface: string; content: string }>(
-      `SELECT s.surface, m.content
+    const [childSession] = await dbQuery<{ id: string; surface: string; content: string }>(
+      `SELECT s.id, s.surface, m.content
          FROM sessions s
          JOIN messages m ON m.session_id = s.id AND m.role = 'agent'
         WHERE s.agent_id = $1 AND s.surface = 'Delegated by Eng On-Call'`,
@@ -351,6 +351,13 @@ test("sub-agent delegation: a linked agent runs as a governed tool", async () =>
     expect(childSession!.content).toContain(
       "Mock reply to: Summarize the deploy runbook",
     );
+    // The delegation call links to that session for click-through tracing.
+    expect(toolCall.childSessionId).toBe(childSession!.id);
+    await chip.click();
+    await expect(
+      page.locator(".drawer").getByRole("link", { name: "view delegated session →" }),
+    ).toBeVisible();
+    await page.locator(".drawer-close").click();
   } finally {
     // Tidy up so a lingering agent can't skew later specs' routing. The child
     // now owns a delegated session, so clear those first (the delete route

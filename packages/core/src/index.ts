@@ -252,6 +252,11 @@ export const toolCallSchema = z.object({
   authType: z.enum(["service", "user"]).nullable(),
   approval: approvalOutcomeSchema.nullable().optional(),
   durationMs: z.number().int().nullable().optional(),
+  /**
+   * For a sub-agent delegation, the id of the child's session — lets the UI
+   * link straight from the delegation call to the delegated turn's transcript.
+   */
+  childSessionId: z.string().uuid().nullable().optional(),
 });
 export type ToolCall = z.infer<typeof toolCallSchema>;
 

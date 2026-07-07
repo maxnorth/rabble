@@ -368,6 +368,10 @@ function ToolCallChip({
   onClick: () => void;
 }) {
   const auth = toolCall.authType ?? "service";
+  // A sub-agent delegation (buildSubAgentTools names them ask_<slug>) is a
+  // governed agent-to-agent call, not an MCP tool — render it as such so the
+  // bounded-delegation story reads clearly in the transcript.
+  const isDelegation = toolCall.name.startsWith("ask_") && !!toolCall.serverName;
   return (
     <div className="tool-call" onClick={onClick}>
       {running ? (
@@ -386,8 +390,10 @@ function ToolCallChip({
       )}
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className="tool-name">{toolCall.name}</span>
-          {toolCall.serverName && (
+          <span className="tool-name">
+            {isDelegation ? `Delegated to ${toolCall.serverName}` : toolCall.name}
+          </span>
+          {!isDelegation && toolCall.serverName && (
             <span className="tool-server">{toolCall.serverName}</span>
           )}
           <span style={{ flex: 1 }} />
@@ -396,7 +402,11 @@ function ToolCallChip({
               {(toolCall.durationMs / 1000).toFixed(1)}s · details
             </span>
           )}
-          <span className={`chip ${auth === "service" ? "green" : "amber"}`}>{auth}</span>
+          {isDelegation ? (
+            <span className="chip purple">agent</span>
+          ) : (
+            <span className={`chip ${auth === "service" ? "green" : "amber"}`}>{auth}</span>
+          )}
         </span>
         {typeof toolCall.output === "string" && toolCall.output && (
           <span

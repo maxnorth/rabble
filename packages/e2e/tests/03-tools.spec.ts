@@ -311,8 +311,11 @@ test("sub-agent delegation: a linked agent runs as a governed tool", async () =>
       .fill("Ask docs helper about the runbook");
     await page.getByRole("button", { name: "Send" }).click();
 
-    // The delegation surfaces as an inline tool call in the parent thread.
-    const chip = page.locator(".tool-call", { hasText: "ask_docs_helper" }).first();
+    // The delegation surfaces as an inline call, rendered as an agent
+    // hand-off ("Delegated to Docs Helper") rather than a raw tool name.
+    const chip = page
+      .locator(".tool-call", { hasText: "Delegated to Docs Helper" })
+      .first();
     await expect(chip).toBeVisible({ timeout: 15_000 });
 
     // The transcript is the source of truth (the tool-call chip's output can

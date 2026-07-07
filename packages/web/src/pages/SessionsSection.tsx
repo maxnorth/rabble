@@ -806,6 +806,19 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                   m.content,
                   "",
                 ]),
+                // The transcript is only half the record — how it graded is
+                // the other half. Include the eval verdicts.
+                ...(evalResults.length > 0
+                  ? [
+                      `## Evals — ${passedCount}/${evalResults.length} criteria passed`,
+                      "",
+                      ...evalResults.map(
+                        (r) =>
+                          `- **${r.passed ? "PASS" : "FAIL"}** ${r.criterionName}: ${r.reasoning}`,
+                      ),
+                      "",
+                    ]
+                  : []),
               ];
               const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
               const url = URL.createObjectURL(blob);

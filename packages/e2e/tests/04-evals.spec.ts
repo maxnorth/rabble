@@ -72,6 +72,16 @@ test("a session gets judged and shows eval chips", async () => {
   await expect(page.locator(".drawer")).toContainText("Stays on topic");
   await expect(page.locator(".drawer")).toContainText("PASS");
 
+  // Exporting the transcript includes the eval verdicts — the record of how
+  // the session graded, not just what was said.
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("button[title='Export transcript (Markdown)']").click();
+  const download = await downloadPromise;
+  const { readFileSync } = await import("node:fs");
+  const exported = readFileSync((await download.path())!, "utf8");
+  expect(exported).toContain("## Evals — 1/1 criteria passed");
+  expect(exported).toMatch(/\*\*PASS\*\* Stays on topic/);
+
   // The directory eval-score chip carries the trust denominator (how many
   // results back the score) in its tooltip — 100% from one result reads
   // very differently from 100% from fifty.

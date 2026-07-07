@@ -347,6 +347,18 @@ export const api = {
     signingSecret?: string;
     appToken?: string;
   }) => post<{ connection: Connection }>("/api/connections", body),
+  updateConnection: (
+    id: string,
+    body: {
+      name?: string;
+      roles?: ConnectionRole[];
+      baseUrl?: string | null;
+      tunnel?: boolean;
+      token?: string | null;
+      signingSecret?: string | null;
+      appToken?: string | null;
+    },
+  ) => patch<{ connection: Connection }>(`/api/connections/${id}`, body),
   deleteConnection: (id: string) => del<{ ok: true }>(`/api/connections/${id}`),
   listApiKeys: () => get<{ keys: ApiKey[] }>("/api/api-keys"),
   createApiKey: (body: { name: string; scope: "read" | "write" | "admin" }) =>

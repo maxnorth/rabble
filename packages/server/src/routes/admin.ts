@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
   createApiKeySchema,
   createConnectionSchema,
+  updateConnectionSchema,
   type ConnectionRole,
 } from "@rabblehq/core";
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
@@ -128,6 +129,83 @@ export async function adminRoutes(app: FastifyInstance) {
       });
       if (body.vendor === "slack" && body.appToken) {
         // Socket Mode: dial out for this connection right away.
+        const { refreshSlackSockets } = await import("../surfaces/slackSocket.js");
+        refreshSlackSockets().catch(() => {});
+      }
+      return {
+        connection: {
+          id: row!.id,
+          orgId: row!.orgId,
+          vendor: row!.vendor,
+          name: row!.name,
+          roles: (row!.roles ?? []) as ConnectionRole[],
+          baseUrl: row!.baseUrl,
+          hasToken: row!.encryptedToken !== null,
+          hasAppToken: row!.encryptedAppToken !== null,
+          hasSigningSecret: row!.encryptedSigningSecret !== null,
+          status: row!.status,
+          tunnel: row!.tunnel,
+          createdAt: row!.createdAt.toISOString(),
+        },
+      };
+    },
+  );
+
+  app.patch(
+    "/api/connections/:id",
+    { preHandler: requireOrgAdmin },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = updateConnectionSchema.parse(req.body);
+
+      const [existing] = await db
+        .select()
+        .from(connections)
+        .where(and(eq(connections.id, id), eq(connections.orgId, req.user!.orgId)))
+        .limit(1);
+      if (!existing) {
+        return reply.code(404).send({ error: "Connection not found" });
+      }
+
+      // Tri-state secrets: undefined keeps, null clears, a string replaces.
+      // Editing lets an admin add Socket Mode (or rotate a key) in place —
+      // no delete + recreate that would cascade away surface mappings.
+      const secretUpdate = (
+        value: string | null | undefined,
+      ): string | null | undefined =>
+        value === undefined ? undefined : value ? encryptSecret(value) : null;
+
+      const updates: Partial<typeof connections.$inferInsert> = {};
+      if (body.name !== undefined) updates.name = body.name;
+      if (body.roles !== undefined) updates.roles = body.roles;
+      if (body.baseUrl !== undefined) updates.baseUrl = body.baseUrl;
+      if (body.tunnel !== undefined) updates.tunnel = body.tunnel;
+      const encToken = secretUpdate(body.token);
+      if (encToken !== undefined) updates.encryptedToken = encToken;
+      const encSigning = secretUpdate(body.signingSecret);
+      if (encSigning !== undefined) updates.encryptedSigningSecret = encSigning;
+      const encApp = secretUpdate(body.appToken);
+      if (encApp !== undefined) updates.encryptedAppToken = encApp;
+
+      const [row] = Object.keys(updates).length
+        ? await db
+            .update(connections)
+            .set(updates)
+            .where(eq(connections.id, id))
+            .returning()
+        : [existing];
+
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "connection.edit",
+        targetType: "connection",
+        targetId: id,
+        summary: `Edited ${row!.vendor} connection "${row!.name}"`,
+      });
+      // App token may have been added, rotated, or cleared — reconcile the
+      // Socket Mode manager either way.
+      if (row!.vendor === "slack") {
         const { refreshSlackSockets } = await import("../surfaces/slackSocket.js");
         refreshSlackSockets().catch(() => {});
       }

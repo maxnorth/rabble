@@ -545,6 +545,23 @@ export const createConnectionSchema = z.object({
 });
 export type CreateConnectionRequest = z.infer<typeof createConnectionSchema>;
 
+// Editing an existing connection. Secrets follow tri-state semantics so an
+// admin can add Socket Mode (or rotate a key) without deleting the
+// connection and cascade-losing its channel/repo surface mappings:
+//   - omitted (undefined) → keep the stored secret
+//   - a non-empty string   → replace it
+//   - null                 → clear it (e.g. turn Socket Mode back off)
+export const updateConnectionSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  roles: z.array(connectionRoleSchema).min(1).optional(),
+  baseUrl: z.string().url().nullable().optional(),
+  tunnel: z.boolean().optional(),
+  token: z.string().max(500).nullable().optional(),
+  signingSecret: z.string().max(500).nullable().optional(),
+  appToken: z.string().max(500).nullable().optional(),
+});
+export type UpdateConnectionRequest = z.infer<typeof updateConnectionSchema>;
+
 export const apiKeyScopeSchema = z.enum(["read", "write", "admin"]);
 export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>;
 

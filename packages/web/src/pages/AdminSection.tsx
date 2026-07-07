@@ -224,10 +224,15 @@ function VendorTile({ vendor }: { vendor: string }) {
   );
 }
 
+type ConnectionRow = NonNullable<
+  Awaited<ReturnType<typeof api.listConnections>>
+>["connections"][number];
+
 function ConnectionsPage() {
   const queryClient = useQueryClient();
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState<ConnectionRow | null>(null);
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteConnection(id),
@@ -338,6 +343,9 @@ function ConnectionsPage() {
                   <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
                     {c.status}
                   </span>
+                  <button className="btn" onClick={() => setEditing(c)}>
+                    Edit
+                  </button>
                   <button
                     className="btn danger"
                     onClick={() => {
@@ -360,6 +368,12 @@ function ConnectionsPage() {
         </div>
       )}
       {showAdd && <AddConnectionModal onClose={() => setShowAdd(false)} />}
+      {editing && (
+        <EditConnectionModal
+          connection={editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -527,6 +541,200 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
             </button>
             <button className="btn primary" disabled={create.isPending}>
               + Add
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function EditConnectionModal({
+  connection,
+  onClose,
+}: {
+  connection: ConnectionRow;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    name: connection.name,
+    roles: connection.roles,
+    baseUrl: connection.baseUrl ?? "",
+    tunnel: connection.tunnel,
+    token: "",
+    clearToken: false,
+    signingSecret: "",
+    clearSigningSecret: false,
+    appToken: "",
+    clearAppToken: false,
+  });
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateConnection(connection.id, {
+        name: form.name,
+        roles: form.roles,
+        baseUrl: form.baseUrl.trim() || null,
+        tunnel: form.tunnel,
+        token: form.clearToken ? null : form.token || undefined,
+        signingSecret: form.clearSigningSecret
+          ? null
+          : form.signingSecret || undefined,
+        appToken: form.clearAppToken ? null : form.appToken || undefined,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["connections"] });
+      onClose();
+    },
+  });
+
+  const toggleRole = (role: ConnectionRole) =>
+    setForm((f) => ({
+      ...f,
+      roles: f.roles.includes(role)
+        ? f.roles.filter((r) => r !== role)
+        : [...f.roles, role],
+    }));
+
+  // Empty = keep the stored secret; type to replace; "Remove" clears it.
+  const secretHint = (isSet: boolean | undefined) =>
+    isSet ? "A value is set — leave blank to keep it." : "Not set.";
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Edit {connection.vendor} connection</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (form.name.trim() && form.roles.length > 0) save.mutate();
+          }}
+        >
+          <div className="field">
+            <label>Name</label>
+            <input
+              required
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Roles</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["Interface", "Automation", "Tools"] as const).map((r) => (
+                <button
+                  type="button"
+                  key={r}
+                  className={`chip ${form.roles.includes(r) ? "blue" : ""}`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => toggleRole(r)}
+                >
+                  {form.roles.includes(r) ? "✓ " : ""}
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label>API base URL (optional)</label>
+            <input
+              value={form.baseUrl}
+              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              placeholder="https://slack.com"
+            />
+          </div>
+          <div className="field">
+            <label>Token</label>
+            <input
+              type="password"
+              placeholder="Leave blank to keep"
+              disabled={form.clearToken}
+              value={form.token}
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+            <span className="hint">{secretHint(connection.hasToken)}</span>
+            {connection.hasToken && (
+              <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={form.clearToken}
+                  onChange={(e) => setForm({ ...form, clearToken: e.target.checked })}
+                />
+                Remove token
+              </label>
+            )}
+          </div>
+          {(connection.vendor === "slack" || connection.vendor === "github") && (
+            <div className="field">
+              <label>
+                {connection.vendor === "slack" ? "Signing secret" : "Webhook secret"}
+              </label>
+              <input
+                type="password"
+                placeholder="Leave blank to keep"
+                disabled={form.clearSigningSecret}
+                value={form.signingSecret}
+                onChange={(e) => setForm({ ...form, signingSecret: e.target.value })}
+              />
+              <span className="hint">{secretHint(connection.hasSigningSecret)}</span>
+              {connection.hasSigningSecret && (
+                <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.clearSigningSecret}
+                    onChange={(e) =>
+                      setForm({ ...form, clearSigningSecret: e.target.checked })
+                    }
+                  />
+                  Remove secret
+                </label>
+              )}
+            </div>
+          )}
+          {connection.vendor === "slack" && (
+            <div className="field">
+              <label>App-level token — Socket Mode</label>
+              <input
+                type="password"
+                placeholder="xapp-… (leave blank to keep)"
+                disabled={form.clearAppToken}
+                value={form.appToken}
+                onChange={(e) => setForm({ ...form, appToken: e.target.value })}
+              />
+              <span className="hint">
+                {connection.hasAppToken
+                  ? "Socket Mode is on. Leave blank to keep, type to rotate, or remove to switch back to webhooks."
+                  : "Add an app-level token to stream events over a WebSocket — no public URL needed."}
+              </span>
+              {connection.hasAppToken && (
+                <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.clearAppToken}
+                    onChange={(e) => setForm({ ...form, clearAppToken: e.target.checked })}
+                  />
+                  Turn off Socket Mode (remove app token)
+                </label>
+              )}
+            </div>
+          )}
+          <div className="field">
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={form.tunnel}
+                onChange={(e) => setForm({ ...form, tunnel: e.target.checked })}
+              />
+              Reached through a private tunnel
+            </label>
+          </div>
+          {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={save.isPending}>
+              Save changes
             </button>
           </div>
         </form>

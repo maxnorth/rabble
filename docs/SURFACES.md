@@ -49,7 +49,9 @@ firewall, on localhost, or anywhere without a public HTTPS endpoint.
   event `message.channels` (no Request URL is needed in Socket Mode, but
   the subscription itself still is — without it Slack sends nothing)
 - Paste the token into the connection's **App-level token (Socket Mode)**
-  field when registering it in Rabble
+  field when registering it in Rabble — or **Edit** an existing Slack
+  connection to add it later (surface mappings are preserved; removing the
+  token switches back to webhooks)
 
 Events and the Approve/Deny interactivity payloads stream over the
 socket. Rabble acks each envelope immediately, reconnects with backoff,

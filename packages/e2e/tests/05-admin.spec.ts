@@ -1107,6 +1107,91 @@ test("a threaded DM follow-up stays on the session's agent — no re-route", asy
     .toBe(true);
 });
 
+test("editing a connection adds Socket Mode in place — surfaces survive", async () => {
+  // The original webhook Slack connection carries the #eng-oncall surface.
+  // Enabling Socket Mode must NOT mean delete + recreate (which would
+  // cascade that mapping away) — an in-place edit keeps it.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+
+  const webhookRow = page.locator(".row", {
+    has: page.getByText("Acme Slack", { exact: true }),
+  });
+  await expect(webhookRow).toBeVisible();
+  await expect(webhookRow.locator(".chip", { hasText: "1 agent" })).toBeVisible();
+  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toHaveCount(0);
+
+  const surfacesBefore = await dbQuery<{ n: string }>(
+    `SELECT count(*)::text AS n FROM agent_surfaces
+     WHERE connection_id = (SELECT id FROM connections WHERE name = 'Acme Slack')`,
+  );
+  expect(Number(surfacesBefore[0]!.n)).toBe(1);
+
+  const socketsBefore = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket`)
+  ).json()) as { connections: number };
+
+  // --- Add Socket Mode in place ---
+  await webhookRow.getByRole("button", { name: "Edit" }).click();
+  await page
+    .getByPlaceholder("xapp-… (leave blank to keep)")
+    .fill("xapp-emulated-edit");
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  // Socket Mode chip now shows, and the agent mapping is intact.
+  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toBeVisible();
+  await expect(webhookRow.locator(".chip", { hasText: "1 agent" })).toBeVisible();
+
+  const surfacesAfter = await dbQuery<{ n: string }>(
+    `SELECT count(*)::text AS n FROM agent_surfaces
+     WHERE connection_id = (SELECT id FROM connections WHERE name = 'Acme Slack')`,
+  );
+  expect(Number(surfacesAfter[0]!.n)).toBe(1);
+  const [conn] = await dbQuery<{ has_app: boolean }>(
+    `SELECT (encrypted_app_token IS NOT NULL) AS has_app
+     FROM connections WHERE name = 'Acme Slack'`,
+  );
+  expect(conn!.has_app).toBe(true);
+
+  // The server actually dialed out and a new socket came up.
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { connections: number };
+      return status.connections;
+    })
+    .toBe(socketsBefore.connections + 1);
+
+  // Audit recorded the edit (not an add/remove).
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'connection.edit'",
+  );
+  expect(audit.length).toBeGreaterThan(0);
+
+  // --- Turn Socket Mode back off — the mapping still survives, and the
+  // socket is reclaimed (keeping the one-socket invariant for later tests). ---
+  await webhookRow.getByRole("button", { name: "Edit" }).click();
+  await page.getByText("Turn off Socket Mode (remove app token)").click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toHaveCount(0);
+  await expect(webhookRow.locator(".chip", { hasText: "1 agent" })).toBeVisible();
+  const [conn2] = await dbQuery<{ has_app: boolean }>(
+    `SELECT (encrypted_app_token IS NOT NULL) AS has_app
+     FROM connections WHERE name = 'Acme Slack'`,
+  );
+  expect(conn2!.has_app).toBe(false);
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { connections: number };
+      return status.connections;
+    })
+    .toBe(socketsBefore.connections);
+});
+
 test("socket mode interactivity: DM buttons resolve approvals over the WebSocket", async () => {
   // A user-auth tool raised from the socket channel pends on a DM ask…
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {

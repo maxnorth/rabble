@@ -1,10 +1,16 @@
-import { agentCapabilitiesSchema, isValidCron, type AgentCapabilities } from "@rabblehq/core";
+import {
+  agentCapabilitiesSchema,
+  describeCron,
+  isValidCron,
+  nextCronRun,
+  type AgentCapabilities,
+} from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api";
 import { GrantEditor } from "./AgentsSection";
-import { AGENT_COLORS, AGENT_GLYPHS, count, relativeTime } from "../lib/time";
+import { AGENT_COLORS, AGENT_GLYPHS, count, relativeFuture, relativeTime } from "../lib/time";
 
 const AGENT_TABS = [
   "identity",
@@ -1232,8 +1238,17 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
             />
             <div className="grow">
               <div className="title">{a.name}</div>
-              <div className="sub mono">
-                {a.schedule}
+              <div className="sub">
+                <span title={a.schedule}>{describeCron(a.schedule)}</span>
+                {a.enabled && (() => {
+                  const next = nextCronRun(a.schedule);
+                  return next ? (
+                    <>
+                      {" · next "}
+                      {relativeFuture(next.toISOString())}
+                    </>
+                  ) : null;
+                })()}
                 {a.lastRunAt && (
                   <>
                     {" · last ran "}
@@ -1292,7 +1307,15 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
               value={form.schedule}
               onChange={(e) => setForm({ ...form, schedule: e.target.value })}
             />
-            {!isValidCron(form.schedule) && (
+            {isValidCron(form.schedule) ? (
+              <span className="hint">
+                {describeCron(form.schedule)}
+                {(() => {
+                  const next = nextCronRun(form.schedule);
+                  return next ? ` · next occurrence ${relativeFuture(next.toISOString())}` : "";
+                })()}
+              </span>
+            ) : (
               <span className="hint" style={{ color: "var(--amber)" }}>
                 Not a valid 5-field cron (minute hour day-of-month month weekday).
               </span>

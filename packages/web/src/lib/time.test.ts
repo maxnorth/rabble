@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { relativeTime, count, AGENT_COLORS, AGENT_GLYPHS } from "./time";
+import { relativeTime, relativeFuture, count, AGENT_COLORS, AGENT_GLYPHS } from "./time";
 
 describe("count", () => {
   it("pluralizes on everything but one", () => {
@@ -28,6 +28,23 @@ describe("relativeTime", () => {
   it("reads 'never' for null-ish input", () => {
     expect(relativeTime(null)).toBe("never");
     expect(relativeTime(undefined)).toBe("never");
+  });
+});
+
+describe("relativeFuture", () => {
+  const inMs = (ms: number) => new Date(Date.now() + ms).toISOString();
+
+  it("covers the ladder from minutes to days", () => {
+    expect(relativeFuture(inMs(2 * 60_000))).toBe("in 2m");
+    expect(relativeFuture(inMs(3 * 3_600_000))).toBe("in 3h");
+    expect(relativeFuture(inMs(26 * 3_600_000))).toBe("tomorrow");
+    expect(relativeFuture(inMs(4 * 86_400_000))).toBe("in 4d");
+  });
+
+  it("reads 'now' for past/immediate and '—' for null-ish", () => {
+    expect(relativeFuture(inMs(-5_000))).toBe("now");
+    expect(relativeFuture(null)).toBe("—");
+    expect(relativeFuture(undefined)).toBe("—");
   });
 });
 

@@ -2015,6 +2015,13 @@ test("automations: Run now executes a governed session on the Automation surface
   await page.getByRole("button", { name: "+ Add automation" }).click();
   const row = page.locator(".row", { hasText: "Morning digest" });
   await expect(row).toBeVisible();
+  // The cron is rendered in plain language, not a bare "0 9 * * 1-5".
+  await expect(row).toContainText("at 9:00 UTC on weekdays");
+  // A new automation is disabled by default, so no next-run is projected.
+  await expect(row).not.toContainText("next");
+  // Enabling it surfaces the projected next run.
+  await row.locator(".toggle").click();
+  await expect(row).toContainText("next");
 
   await row.getByRole("button", { name: "Run now" }).click();
   await expect(row.getByRole("link", { name: "view session →" })).toBeVisible({

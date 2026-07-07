@@ -4,7 +4,9 @@ import {
   createAutomationSchema,
   createGrantSchema,
   cronMatches,
+  describeCron,
   isValidCron,
+  nextCronRun,
   slugify,
   streamEventSchema,
   toolCallSchema,
@@ -78,6 +80,67 @@ describe("isValidCron", () => {
       createAutomationSchema.parse({ name: "x", schedule: "0 9 * * 1-5", prompt: "" })
         .schedule,
     ).toBe("0 9 * * 1-5");
+  });
+});
+
+describe("nextCronRun", () => {
+  // 2021-01-04 09:00 UTC is a Monday.
+  const mon9 = new Date(Date.UTC(2021, 0, 4, 9, 0));
+
+  it("returns the next matching minute strictly after `after`", () => {
+    // At exactly 09:00 the daily 9am fire is now — next is tomorrow's.
+    expect(nextCronRun("0 9 * * *", mon9)?.toISOString()).toBe(
+      "2021-01-05T09:00:00.000Z",
+    );
+    // A minute before, the next fire is today's 09:00.
+    const before = new Date(Date.UTC(2021, 0, 4, 8, 59));
+    expect(nextCronRun("0 9 * * *", before)?.toISOString()).toBe(
+      "2021-01-04T09:00:00.000Z",
+    );
+  });
+
+  it("skips to the next weekday for a weekday-only schedule", () => {
+    // Friday Jan 1 2021 09:00 → next weekday fire is Monday Jan 4.
+    const fri = new Date(Date.UTC(2021, 0, 1, 9, 0));
+    expect(nextCronRun("0 9 * * 1-5", fri)?.toISOString()).toBe(
+      "2021-01-04T09:00:00.000Z",
+    );
+  });
+
+  it("advances by the step within the hour", () => {
+    const t = new Date(Date.UTC(2021, 0, 4, 3, 7));
+    expect(nextCronRun("*/15 * * * *", t)?.toISOString()).toBe(
+      "2021-01-04T03:15:00.000Z",
+    );
+  });
+
+  it("resolves a rare Feb-29 schedule to the next leap year", () => {
+    const start = new Date(Date.UTC(2021, 5, 1, 0, 0)); // mid-2021
+    expect(nextCronRun("0 0 29 2 *", start)?.toISOString()).toBe(
+      "2024-02-29T00:00:00.000Z",
+    );
+  });
+
+  it("is null for an invalid cron or one that never runs", () => {
+    expect(nextCronRun("not a cron", mon9)).toBeNull();
+    expect(nextCronRun("0 0 30 2 *", mon9)).toBeNull(); // Feb 30 never
+  });
+});
+
+describe("describeCron", () => {
+  it("describes common daily and windowed schedules", () => {
+    expect(describeCron("0 9 * * 1-5")).toBe("at 9:00 UTC on weekdays");
+    expect(describeCron("0 9 * * *")).toBe("at 9:00 UTC");
+    expect(describeCron("30 14 * * 0")).toBe("at 14:30 UTC on Sunday");
+    expect(describeCron("0 0 * * 0,6")).toBe("at 0:00 UTC on weekends");
+    expect(describeCron("*/15 * * * *")).toBe("every 15 minutes");
+    expect(describeCron("5 * * * *")).toBe("at :05 past every hour");
+  });
+
+  it("falls back to the raw expression when unsure", () => {
+    expect(describeCron("0 0 1 * *")).toBe("0 0 1 * *"); // day-of-month
+    expect(describeCron("0 9 * 3 *")).toBe("0 9 * 3 *"); // specific month
+    expect(describeCron("bad")).toBe("bad");
   });
 });
 

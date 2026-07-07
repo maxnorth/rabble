@@ -568,6 +568,24 @@ function cronFieldMatches(field: string, value: number): boolean {
 }
 
 /**
+ * Whether a cron's date fields (month + the day-of-month/day-of-week pair)
+ * match `date`. Standard Vixie semantics: when BOTH day fields are
+ * restricted, the day matches if EITHER does; if either is `*`, it's a plain
+ * AND. Split out so nextCronRun can skip whole non-matching days cheaply.
+ */
+function cronDayMatches(mon: string, dom: string, dow: string, date: Date): boolean {
+  if (!cronFieldMatches(mon, date.getUTCMonth() + 1)) return false;
+  const jsDow = date.getUTCDay(); // 0=Sun..6=Sat
+  const domMatch = cronFieldMatches(dom, date.getUTCDate());
+  const dowMatch =
+    cronFieldMatches(dow, jsDow) || (jsDow === 0 && cronFieldMatches(dow, 7));
+  const domRestricted = dom !== "*";
+  const dowRestricted = dow !== "*";
+  if (domRestricted && dowRestricted) return domMatch || dowMatch;
+  return domMatch && dowMatch;
+}
+
+/**
  * Whether a 5-field cron expression fires at the given instant (minute
  * granularity, UTC). Standard Vixie semantics: when BOTH day-of-month and
  * day-of-week are restricted, the schedule matches if EITHER does; if either
@@ -584,16 +602,119 @@ export function cronMatches(expr: string, date: Date): boolean {
   ];
   if (!cronFieldMatches(min, date.getUTCMinutes())) return false;
   if (!cronFieldMatches(hr, date.getUTCHours())) return false;
-  if (!cronFieldMatches(mon, date.getUTCMonth() + 1)) return false;
+  return cronDayMatches(mon, dom, dow, date);
+}
 
-  const jsDow = date.getUTCDay(); // 0=Sun..6=Sat
-  const domMatch = cronFieldMatches(dom, date.getUTCDate());
-  const dowMatch =
-    cronFieldMatches(dow, jsDow) || (jsDow === 0 && cronFieldMatches(dow, 7));
-  const domRestricted = dom !== "*";
-  const dowRestricted = dow !== "*";
-  if (domRestricted && dowRestricted) return domMatch || dowMatch;
-  return domMatch && dowMatch;
+/**
+ * The next UTC instant strictly after `after` at which the cron fires, or
+ * null for an invalid cron or one that never runs within a ~4-year horizon
+ * (e.g. a Feb-30 schedule). Walks day-by-day using cronDayMatches — cheap
+ * enough to call from the UI to show "next run in …".
+ */
+export function nextCronRun(expr: string, after: Date = new Date()): Date | null {
+  if (!isValidCron(expr)) return null;
+  const [min, hr, dom, mon, dow] = expr.trim().split(/\s+/) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  // First whole minute strictly after `after`.
+  const startMs = Math.floor(after.getTime() / 60000) * 60000 + 60000;
+  let day = new Date(
+    Date.UTC(
+      new Date(startMs).getUTCFullYear(),
+      new Date(startMs).getUTCMonth(),
+      new Date(startMs).getUTCDate(),
+    ),
+  );
+  // 1500 days covers a full leap cycle, so Feb-29 schedules resolve.
+  for (let d = 0; d < 1500; d++) {
+    if (cronDayMatches(mon, dom, dow, day)) {
+      for (let h = 0; h < 24; h++) {
+        if (!cronFieldMatches(hr, h)) continue;
+        for (let m = 0; m < 60; m++) {
+          if (!cronFieldMatches(min, m)) continue;
+          const cand = Date.UTC(
+            day.getUTCFullYear(),
+            day.getUTCMonth(),
+            day.getUTCDate(),
+            h,
+            m,
+          );
+          if (cand >= startMs) return new Date(cand);
+        }
+      }
+    }
+    day = new Date(
+      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + 1),
+    );
+  }
+  return null;
+}
+
+const CRON_DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+/**
+ * A plain-language summary of a cron expression for common patterns
+ * (fixed daily time, weekday windows, hourly/every-N-minutes). Falls back to
+ * the raw expression for anything it doesn't confidently recognize — better a
+ * literal cron than a wrong English gloss. UTC, since the scheduler is UTC.
+ */
+export function describeCron(expr: string): string {
+  if (!isValidCron(expr)) return expr;
+  const [min, hr, dom, mon, dow] = expr.trim().split(/\s+/) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  // Only month="*" is described; specific months fall back to raw.
+  if (mon !== "*") return expr;
+
+  const pad = (s: string) => s.padStart(2, "0");
+  const stepMin = /^\*\/(\d+)$/.exec(min);
+  const stepHr = /^\*\/(\d+)$/.exec(hr);
+
+  let time: string | null = null;
+  if (/^\d+$/.test(min) && /^\d+$/.test(hr)) {
+    time = `at ${hr}:${pad(min)} UTC`;
+  } else if (/^\d+$/.test(min) && hr === "*") {
+    time = `at :${pad(min)} past every hour`;
+  } else if (min === "*" && hr === "*") {
+    time = "every minute";
+  } else if (stepMin && hr === "*") {
+    time = `every ${stepMin[1]} minutes`;
+  } else if (/^\d+$/.test(min) && stepHr) {
+    time = `at :${pad(min)} every ${stepHr[1]} hours`;
+  }
+  if (time === null) return expr;
+
+  // Day window: only describe when day-of-month is unrestricted.
+  if (dom !== "*") return expr;
+  let days: string | null = null;
+  if (dow === "*") {
+    days = ""; // every day
+  } else if (dow === "1-5") {
+    days = " on weekdays";
+  } else if (dow === "0,6" || dow === "6,0" || dow === "0,7" || dow === "7,0") {
+    days = " on weekends";
+  } else if (/^\d$/.test(dow)) {
+    days = ` on ${CRON_DAY_NAMES[Number(dow) % 7]}`;
+  }
+  if (days === null) return expr;
+
+  return time + days;
 }
 
 export const createAutomationSchema = z.object({

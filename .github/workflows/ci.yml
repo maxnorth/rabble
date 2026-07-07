@@ -33,12 +33,15 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      # --with-deps runs apt-get, whose mirrors (packages.microsoft.com)
-      # intermittently serve a bad InRelease and fail the whole build. Retry
-      # a few times so a transient mirror hiccup doesn't red an otherwise
-      # green commit.
-      - name: Install Playwright chromium (retry on flaky apt mirrors)
+      # --with-deps runs apt-get update, which fails whenever the pre-
+      # provisioned packages.microsoft.com repo serves a bad InRelease
+      # ('Clearsigned file isn't valid') — and it has reddened several
+      # otherwise-green commits. Playwright's deps come from the Ubuntu
+      # archive, not that repo, so drop it first, then retry for good measure.
+      - name: Install Playwright chromium (robust against flaky apt mirrors)
         run: |
+          sudo rm -f /etc/apt/sources.list.d/microsoft* \
+                     /etc/apt/sources.list.d/azure* 2>/dev/null || true
           for attempt in 1 2 3; do
             if pnpm --filter @rabblehq/e2e exec playwright install --with-deps chromium; then
               exit 0

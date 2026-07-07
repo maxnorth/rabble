@@ -63,10 +63,17 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   directory (user id → email, channel id → name) via `PUT /admin/slack`.
 - Slack has two transports sharing one pipeline (`surfaces/slack.ts`):
   Events webhooks and Socket Mode (connection stores an encrypted app
-  token → server dials `apps.connections.open` and acks envelopes by id).
-  Emulator: `POST /admin/slack/socket-event` pushes an event to connected
-  sockets; `GET /admin/slack/socket` shows socket count + sent/ack log.
-  Event-id dedupe spans both transports.
+  token → `surfaces/slackSocket.ts` dials `apps.connections.open` and acks
+  envelopes by id; rotating the app token via edit reconnects immediately).
+  A mapped channel routes to its surface's agent; a 1:1 DM (`channel_type
+  im`) auto-routes by intent (`runtime/router.js`, Builder included), and a
+  threaded reply continues under the session's agent — no re-route.
+  Emulator: `POST /admin/slack/socket-event` (optional `appToken` targets
+  one workspace's socket, else broadcasts); `GET /admin/slack/socket` shows
+  socket count, connected `apps`, sent/ack log. Event-id dedupe spans both
+  transports. Connections are editable in place (`PATCH /api/connections/:id`,
+  tri-state secrets: omit=keep, string=set, null=clear) so enabling Socket
+  Mode never deletes surface mappings.
 - The Builder: agents with `builtin = 'builder'` (seeded per org at setup)
   get platform tools (runtime/platformTools.ts) — create_agent_draft,
   add_eval_criterion, attach_mcp_server, request_access — user-auth,

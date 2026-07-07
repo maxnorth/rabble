@@ -417,6 +417,15 @@ async function buildSubAgentTools(
             });
           } catch (err) {
             output = `Error: ${err instanceof Error ? err.message : "delegation failed"}`;
+            // A turn that threw left a child session with only the prompt and
+            // no reply — never judged. The attempt is already recorded on the
+            // parent tool call (input + this error) and audit, so drop the
+            // partial session rather than leave a dangling stub in the sidebar.
+            if (childSessionId) {
+              const dead = childSessionId;
+              childSessionId = null;
+              await db.delete(sessions).where(eq(sessions.id, dead)).catch(() => {});
+            }
           }
 
           emit({

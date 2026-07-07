@@ -1017,6 +1017,96 @@ test("a 1:1 DM to the bot becomes an auto-routed personal session", async () => 
     .toBe(true);
 });
 
+test("a threaded DM follow-up stays on the session's agent — no re-route", async () => {
+  // First message opens a thread that routes to Eng On-Call.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "text", text: "eng-on-call" }),
+  });
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "D9003",
+        channel_type: "im",
+        user: "U777",
+        text: "What's our deploy status?",
+        ts: "1810.001",
+      },
+    }),
+  });
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ slug: string }>(
+        `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+         WHERE s.surface_key = 'slack:D9003:1810.001'`,
+      );
+      return rows[0]?.slug ?? null;
+    })
+    .toBe("eng-on-call");
+
+  // A follow-up IN THAT THREAD whose text reads like "make me an agent" —
+  // which, as a fresh DM, would route to the Builder. No router verdict is
+  // enqueued: the fix means routeByIntent is never called for a continuing
+  // thread, so the reply below is the agent's own turn, not a route.
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "D9003",
+        channel_type: "im",
+        user: "U777",
+        text: "Actually, can you build me an agent for onboarding docs?",
+        thread_ts: "1810.001",
+        ts: "1810.002",
+      },
+    }),
+  });
+
+  // The follow-up ran (a second user+agent pair) and the session is STILL
+  // Eng On-Call — a re-route would have flipped it to the Builder.
+  const [session] = await dbQuery<{ id: string; slug: string }>(
+    `SELECT s.id, a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+     WHERE s.surface_key = 'slack:D9003:1810.001'`,
+  );
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ n: string }>(
+        "SELECT count(*)::text AS n FROM messages WHERE session_id = $1",
+        [session!.id],
+      );
+      return Number(rows[0]!.n);
+    })
+    .toBe(4);
+  const [after] = await dbQuery<{ slug: string }>(
+    `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+     WHERE s.surface_key = 'slack:D9003:1810.001'`,
+  );
+  expect(after!.slug).toBe("eng-on-call");
+
+  // And the follow-up reply threaded back under the same root.
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.thread_ts === "1810.001" &&
+          r.body.text?.includes("Mock reply to: Actually, can you build me an agent"),
+      );
+    })
+    .toBe(true);
+});
+
 test("socket mode interactivity: DM buttons resolve approvals over the WebSocket", async () => {
   // A user-auth tool raised from the socket channel pends on a DM ask…
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {

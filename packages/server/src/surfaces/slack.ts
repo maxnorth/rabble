@@ -145,87 +145,108 @@ export async function processSlackEvent(
         .limit(1)
     : [];
 
-  // Which agent answers? A mapped channel goes to its surface's agent; a
-  // 1:1 DM needs no mapping — it routes by intent across the agents the
-  // sender can actually use, like an "Auto" web session.
-  const isDm = event.channel_type === "im" || event.channel.startsWith("D");
-  let agent: typeof agents.$inferSelect | undefined;
-  let surfaceName: string;
-  if (isDm) {
-    if (!platformUser) {
-      await slackApi(baseUrl, token, "chat.postMessage", {
-        channel: event.channel,
-        thread_ts: threadTs,
-        text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
-      });
-      return { ok: true, ignored: "no matching platform user" };
-    }
-    const { rightsForAllAgents, hasRight } = await import("../rights.js");
-    const rights = await rightsForAllAgents({
-      id: platformUser.id,
-      orgId: platformUser.orgId,
-      role: platformUser.role,
-    } as Parameters<typeof rightsForAllAgents>[0]);
-    // Unlike web Auto (which has an explicit Builder affordance), DMs have
-    // no chrome — so the Builder IS a routing candidate here, and "make me
-    // an agent that…" works straight from Slack.
-    const candidates = await db
-      .select()
-      .from(agents)
-      .where(
-        and(eq(agents.orgId, connection.orgId), eq(agents.status, "active")),
-      )
-      .orderBy(agents.name);
-    const usable = candidates.filter((c) => hasRight(rights.get(c.id) ?? null, "use"));
-    if (usable.length === 0) {
-      await slackApi(baseUrl, token, "chat.postMessage", {
-        channel: event.channel,
-        thread_ts: threadTs,
-        text: "No agents are shared with you yet — ask an org admin for access.",
-      });
-      return { ok: true, ignored: "no usable agents for DM sender" };
-    }
-    const { routeByIntent } = await import("../runtime/router.js");
-    const agentId = await routeByIntent(connection.orgId, event.text, usable);
-    agent = usable.find((c) => c.id === agentId) ?? usable[0]!;
-    surfaceName = "Slack DM";
-  } else {
-    const channelInfo = await slackApi(baseUrl, token, "conversations.info", {
-      channel: event.channel,
-    });
-    const channelName = (
-      (channelInfo.channel as { name?: string } | undefined)?.name ?? ""
-    ).replace(/^#/, "");
-    const surfaceRows = await db
-      .select({ surface: agentSurfaces, agent: agents })
-      .from(agentSurfaces)
-      .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
-      .where(eq(agentSurfaces.connectionId, connection.id));
-    const matched = surfaceRows.find((r) => {
-      const label = r.surface.label.replace(/^#/, "");
-      return label === channelName || label === event.channel;
-    });
-    if (!matched) return { ok: true, ignored: "no agent on this channel" };
-    if (!platformUser) {
-      await slackApi(baseUrl, token, "chat.postMessage", {
-        channel: event.channel,
-        thread_ts: threadTs,
-        text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
-      });
-      return { ok: true, ignored: "no matching platform user" };
-    }
-    agent = matched.agent;
-    surfaceName = `Slack #${channelName || event.channel}`;
-  }
-
-  // One Slack thread = one session.
+  // One Slack thread = one session. A thread that already has a session
+  // continues under the agent it belongs to — we never re-route a
+  // follow-up, so a DM conversation stays coherent (and skips the router
+  // call) even if a later message reads like a different intent.
   const surfaceKey = `slack:${event.channel}:${threadTs}`;
   let [session] = await db
     .select()
     .from(sessions)
     .where(eq(sessions.surfaceKey, surfaceKey))
     .limit(1);
-  if (!session) {
+
+  let agent: typeof agents.$inferSelect | undefined;
+  let surfaceName: string;
+  if (session) {
+    // Continuing thread: honor the session's agent, whoever is replying.
+    if (!platformUser) {
+      await slackApi(baseUrl, token, "chat.postMessage", {
+        channel: event.channel,
+        thread_ts: threadTs,
+        text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
+      });
+      return { ok: true, ignored: "no matching platform user" };
+    }
+    [agent] = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, session.agentId))
+      .limit(1);
+    if (!agent) return { ok: true, ignored: "session agent missing" };
+    surfaceName = session.surface;
+  } else {
+    // New thread: pick the agent. A mapped channel goes to its surface's
+    // agent; a 1:1 DM needs no mapping — it routes by intent across the
+    // agents the sender can actually use, like an "Auto" web session.
+    const isDm = event.channel_type === "im" || event.channel.startsWith("D");
+    if (isDm) {
+      if (!platformUser) {
+        await slackApi(baseUrl, token, "chat.postMessage", {
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
+        });
+        return { ok: true, ignored: "no matching platform user" };
+      }
+      const { rightsForAllAgents, hasRight } = await import("../rights.js");
+      const rights = await rightsForAllAgents({
+        id: platformUser.id,
+        orgId: platformUser.orgId,
+        role: platformUser.role,
+      } as Parameters<typeof rightsForAllAgents>[0]);
+      // Unlike web Auto (which has an explicit Builder affordance), DMs have
+      // no chrome — so the Builder IS a routing candidate here, and "make me
+      // an agent that…" works straight from Slack.
+      const candidates = await db
+        .select()
+        .from(agents)
+        .where(
+          and(eq(agents.orgId, connection.orgId), eq(agents.status, "active")),
+        )
+        .orderBy(agents.name);
+      const usable = candidates.filter((c) => hasRight(rights.get(c.id) ?? null, "use"));
+      if (usable.length === 0) {
+        await slackApi(baseUrl, token, "chat.postMessage", {
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: "No agents are shared with you yet — ask an org admin for access.",
+        });
+        return { ok: true, ignored: "no usable agents for DM sender" };
+      }
+      const { routeByIntent } = await import("../runtime/router.js");
+      const agentId = await routeByIntent(connection.orgId, event.text, usable);
+      agent = usable.find((c) => c.id === agentId) ?? usable[0]!;
+      surfaceName = "Slack DM";
+    } else {
+      const channelInfo = await slackApi(baseUrl, token, "conversations.info", {
+        channel: event.channel,
+      });
+      const channelName = (
+        (channelInfo.channel as { name?: string } | undefined)?.name ?? ""
+      ).replace(/^#/, "");
+      const surfaceRows = await db
+        .select({ surface: agentSurfaces, agent: agents })
+        .from(agentSurfaces)
+        .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
+        .where(eq(agentSurfaces.connectionId, connection.id));
+      const matched = surfaceRows.find((r) => {
+        const label = r.surface.label.replace(/^#/, "");
+        return label === channelName || label === event.channel;
+      });
+      if (!matched) return { ok: true, ignored: "no agent on this channel" };
+      if (!platformUser) {
+        await slackApi(baseUrl, token, "chat.postMessage", {
+          channel: event.channel,
+          thread_ts: threadTs,
+          text: "Sorry — I can only act for Rabble users. Ask an org admin to invite you.",
+        });
+        return { ok: true, ignored: "no matching platform user" };
+      }
+      agent = matched.agent;
+      surfaceName = `Slack #${channelName || event.channel}`;
+    }
+
     const title =
       event.text.length > 60 ? `${event.text.slice(0, 57)}…` : event.text;
     [session] = await db

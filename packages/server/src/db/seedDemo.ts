@@ -14,6 +14,7 @@ import { db, pool } from "./client.js";
 import { hashPassword, encryptSecret, hashAuthToken } from "../crypto.js";
 import {
   agents,
+  agentLinks,
   agentMcpServers,
   agentSurfaces,
   agentToolConfigs,
@@ -247,6 +248,21 @@ export async function seedDemo(): Promise<void> {
     )
     .returning();
   const byName = new Map(seededAgents.map((a) => [a.name, a]));
+
+  // Bounded delegation: Eng On-Call is wired to call two specialists as tools
+  // (the "Agents" tab). The edge notes tell the model when to hand off.
+  await db.insert(agentLinks).values([
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      subAgentId: byName.get("PR Summarizer")!.id,
+      note: "When a change needs its PR summarized before triage",
+    },
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      subAgentId: byName.get("Docs Writer")!.id,
+      note: "For runbook and documentation lookups",
+    },
+  ]);
 
   // Grants: domains to teams, one org-wide agent, one personal draft feel
   await db.insert(grants).values([

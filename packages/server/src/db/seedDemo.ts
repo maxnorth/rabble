@@ -596,6 +596,28 @@ export async function seedDemo(): Promise<void> {
       createdAt: daysAgo(day as number),
     })),
   );
+  // A blocked change carries structured detail (the failing case + the
+  // judge's reasoning) — expandable in the Audit log viewer.
+  await db.insert(auditEvents).values({
+    orgId,
+    actorUserId: teammates[0]!.id, // Priya tried to loosen the checklist
+    action: "eval.gate.block",
+    targetType: "agent",
+    targetId: byName.get("Deploy Gate")!.id,
+    summary:
+      'Gating suite "Release checklist" blocked a change to "Deploy Gate" (1/2 cases failed)',
+    metadata: {
+      suiteName: "Release checklist",
+      failures: [
+        {
+          case: "Blocks a deploy with an open Sev-1",
+          reasoning:
+            "The revised checklist approved the deploy despite an open Sev-1 incident.",
+        },
+      ],
+    },
+    createdAt: daysAgo(6),
+  });
 
   // Connections + surfaces: the delivery story. A Slack workspace on Socket
   // Mode and a GitHub app, each mapped to an agent, so Admin › Connections

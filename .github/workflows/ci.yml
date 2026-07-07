@@ -33,7 +33,20 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
-      - run: pnpm --filter @rabblehq/e2e exec playwright install --with-deps chromium
+      # --with-deps runs apt-get, whose mirrors (packages.microsoft.com)
+      # intermittently serve a bad InRelease and fail the whole build. Retry
+      # a few times so a transient mirror hiccup doesn't red an otherwise
+      # green commit.
+      - name: Install Playwright chromium (retry on flaky apt mirrors)
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm --filter @rabblehq/e2e exec playwright install --with-deps chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install failed (attempt $attempt); retrying in 15s"
+            sleep 15
+          done
+          exit 1
       - run: pnpm --filter @rabblehq/e2e e2e
       - name: Upload Playwright artifacts on failure
         if: failure()

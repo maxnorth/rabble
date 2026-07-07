@@ -83,6 +83,7 @@ export function serializeMessage(
     role: row.role,
     content: row.content,
     toolCalls: (row.toolCalls ?? []) as ToolCall[],
+    error: row.error ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }

@@ -278,7 +278,26 @@ test("a model outage surfaces in the thread and the session recovers", async () 
 
   await page.locator(".thread-composer textarea").fill("Will this survive an outage?");
   await page.locator(".thread-composer button", { hasText: "Send" }).click();
-  await expect(page.locator(".error-text")).toBeVisible({ timeout: 20_000 });
+
+  // The failure surfaces in the thread, and — unlike a transient banner — it's
+  // part of the record: it persists as an agent message carrying the error, so
+  // a reload shows the failure inline, not a dangling question with no reply.
+  await expect(
+    page.locator(".msg-agent .error-text", { hasText: "couldn't finish this turn" }),
+  ).toBeVisible({ timeout: 20_000 });
+  await page.reload();
+  await page
+    .locator(".sidebar-item", { hasText: "What is the deploy status?" })
+    .click();
+  await expect(
+    page.locator(".msg-agent .error-text", { hasText: "upstream rejected the request" }),
+  ).toBeVisible();
+  const failed = await dbQuery<{ role: string; error: string | null; content: string }>(
+    `SELECT role, error, content FROM messages
+     WHERE error IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+  );
+  expect(failed[0]!.role).toBe("agent");
+  expect(failed[0]!.error).toContain("upstream rejected the request");
 
   // The next turn works — the thread recovers cleanly
   await page.locator(".thread-composer textarea").fill("Trying again after the outage");

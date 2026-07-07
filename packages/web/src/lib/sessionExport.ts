@@ -13,6 +13,7 @@ export interface ExportSession {
 export interface ExportMessage {
   role: string;
   content: string;
+  error?: string | null;
   toolCalls: Array<{
     name: string;
     authType?: string | null;
@@ -46,6 +47,7 @@ export function sessionToMarkdown(
           })`,
       ),
       m.content,
+      ...(m.error ? [`> ⚠ turn failed: ${m.error}`] : []),
       "",
     ]),
     ...(evalResults.length > 0

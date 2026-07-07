@@ -169,6 +169,9 @@ export const messages = pgTable("messages", {
     .references(() => sessions.id, { onDelete: "cascade" }),
   role: text("role", { enum: ["user", "agent"] }).notNull(),
   content: text("content").notNull(),
+  // Set on an agent message when its turn failed — the record keeps the error
+  // rather than dropping the turn, so a reload shows the failure inline.
+  error: text("error"),
   toolCalls: jsonb("tool_calls").notNull().default([]),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),

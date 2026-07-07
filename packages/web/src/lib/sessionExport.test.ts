@@ -57,6 +57,19 @@ describe("sessionToMarkdown", () => {
     expect(md).toContain("- **FAIL** Cites a runbook: No link provided.");
   });
 
+  it("keeps a failed turn in the record", () => {
+    const md = sessionToMarkdown(
+      session,
+      [
+        { role: "user", content: "Will this survive an outage?", toolCalls: [] },
+        { role: "agent", content: "", error: "upstream rejected the request", toolCalls: [] },
+      ],
+      [],
+      "t",
+    );
+    expect(md).toContain("> ⚠ turn failed: upstream rejected the request");
+  });
+
   it("falls back to 'Session' for an empty title", () => {
     expect(sessionToMarkdown({ ...session, title: "" }, [], [], "t")).toContain("# Session");
   });

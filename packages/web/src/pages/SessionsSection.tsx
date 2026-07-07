@@ -668,6 +668,11 @@ function SessionThread({ sessionId }: { sessionId: string }) {
         } else if (event.type === "error") {
           setError(event.error);
           setStreamingText(null);
+          setLiveTools([]);
+          setApprovals([]);
+          // The failed turn was persisted — refetch so it renders inline in
+          // the thread (and survives the next reload), not just as a banner.
+          void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
       });
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
@@ -959,6 +964,14 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                         ),
                       )}
                     {m.content}
+                    {m.error && (
+                      <div
+                        className="error-text"
+                        style={{ marginTop: m.content ? 6 : 0 }}
+                      >
+                        ⚠ The agent couldn't finish this turn: {m.error}
+                      </div>
+                    )}
                   </div>
                 </div>
               ),

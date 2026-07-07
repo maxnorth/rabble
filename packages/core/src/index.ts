@@ -268,6 +268,8 @@ export const messageSchema = z.object({
   authorName: z.string().nullable().default(null),
   content: z.string(),
   toolCalls: z.array(toolCallSchema),
+  /** Set when this agent turn failed; the failure is kept as part of the record. */
+  error: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type Message = z.infer<typeof messageSchema>;

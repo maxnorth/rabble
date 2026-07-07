@@ -265,6 +265,12 @@ export async function sessionRoutes(app: FastifyInstance) {
       connection: "keep-alive",
     });
 
+    // Hoisted so a failed turn can persist whatever streamed before it broke.
+    let fullText = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+    const toolCalls: ToolCall[] = [];
+
     try {
       const history = await db
         .select()
@@ -308,10 +314,6 @@ export async function sessionRoutes(app: FastifyInstance) {
         await db.update(sessions).set({ title }).where(eq(sessions.id, id));
       }
 
-      let fullText = "";
-      let inputTokens = 0;
-      let outputTokens = 0;
-      const toolCalls: ToolCall[] = [];
       for await (const event of runAgentTurn({
         agent: row.agent,
         model,
@@ -377,10 +379,29 @@ export async function sessionRoutes(app: FastifyInstance) {
       // Operational, not a server bug: the failure is surfaced to the user
       // in the thread. warn keeps the log-cleanliness gate meaningful.
       req.log.warn({ err }, "agent turn failed");
-      sendEvent(reply, {
-        type: "error",
-        error: err instanceof Error ? err.message : "Agent turn failed",
-      });
+      const message = err instanceof Error ? err.message : "Agent turn failed";
+      // Persist the failed turn so the session stays a complete record: a
+      // reload should show the failure inline, not a dangling user question
+      // with no reply. Best-effort — never let audit-of-failure mask the error.
+      try {
+        await db.insert(messages).values({
+          sessionId: id,
+          role: "agent",
+          content: fullText,
+          error: message,
+          toolCalls,
+          inputTokens,
+          outputTokens,
+          modelId: model?.id ?? null,
+        });
+        await db
+          .update(sessions)
+          .set({ updatedAt: new Date() })
+          .where(eq(sessions.id, id));
+      } catch (persistErr) {
+        req.log.warn({ err: persistErr }, "failed to persist errored turn");
+      }
+      sendEvent(reply, { type: "error", error: message });
     } finally {
       reply.raw.end();
     }

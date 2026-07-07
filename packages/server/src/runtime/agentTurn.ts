@@ -260,8 +260,25 @@ async function buildGovernedTools(
 }
 
 /** Sanitize an agent slug into a valid, prefixed tool name. */
-function subAgentToolName(slug: string): string {
+export function subAgentToolName(slug: string): string {
   return `ask_${slug}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 64);
+}
+
+/**
+ * Which linked children may be offered as delegation tools given the current
+ * call stack. The safety guard for agents-calling-agents: nothing is offered
+ * once the chain has reached MAX_DELEGATION_DEPTH, and a child already
+ * somewhere above us in the stack is dropped so A→B→A can't loop. Pure so the
+ * bound is unit-tested rather than only exercised through a live turn.
+ */
+export function delegableChildIds(
+  childIds: string[],
+  chain: string[],
+  maxDepth: number = MAX_DELEGATION_DEPTH,
+): string[] {
+  if (chain.length >= maxDepth) return [];
+  const onStack = new Set(chain);
+  return childIds.filter((id) => !onStack.has(id));
 }
 
 /**
@@ -286,10 +303,16 @@ async function buildSubAgentTools(
     .innerJoin(agentsTable, eq(agentLinks.subAgentId, agentsTable.id))
     .where(eq(agentLinks.agentId, input.agent.id));
 
+  const offerable = new Set(
+    delegableChildIds(
+      links.map((l) => l.child.id),
+      chain,
+    ),
+  );
   const tools = [];
   for (const { child, note } of links) {
-    // Refuse a cycle: a child already somewhere above us in the call stack.
-    if (chain.includes(child.id)) continue;
+    // Depth cap + cycle guard (see delegableChildIds).
+    if (!offerable.has(child.id)) continue;
 
     const toolName = subAgentToolName(child.slug);
     tools.push(

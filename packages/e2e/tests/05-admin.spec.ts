@@ -1395,6 +1395,69 @@ test("two Socket Mode workspaces stay isolated — events reach only their app",
   expect(leaked).toHaveLength(0);
 });
 
+test("rotating an app token reconnects the socket with the new one", async () => {
+  const opensBefore = await (async () => {
+    const log = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+    ).json()) as { requests: Array<{ path: string }> };
+    return log.requests.filter((r) => r.path === "/api/apps.connections.open").length;
+  })();
+
+  // Edit the Beta socket connection to a fresh app-level token.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+  const betaRow = page.locator(".row", {
+    has: page.getByText("Beta Slack (socket)", { exact: true }),
+  });
+  await betaRow.getByRole("button", { name: "Edit" }).click();
+  await page
+    .getByPlaceholder("xapp-… (leave blank to keep)")
+    .fill("xapp-beta-rotated");
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  // The manager tears the old socket down and redials with the new token —
+  // the emulator sees another apps.connections.open and re-tags the socket.
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { apps: string[] };
+      return status.apps.includes("xapp-beta-rotated") && !status.apps.includes("xapp-beta");
+    })
+    .toBe(true);
+  const opensAfter = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as { requests: Array<{ path: string }> };
+  expect(
+    opensAfter.requests.filter((r) => r.path === "/api/apps.connections.open").length,
+  ).toBeGreaterThan(opensBefore);
+
+  // The rotated socket still delivers: an event on Beta's channel lands.
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      appToken: "xapp-beta-rotated",
+      eventId: "EvBetaRot1",
+      event: {
+        type: "message",
+        channel: "C999",
+        user: "U777",
+        text: "Still listening after rotation?",
+        ts: "1860.001",
+      },
+    }),
+  });
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ surface: string }>(
+        "SELECT surface FROM sessions WHERE surface_key = 'slack:C999:1860.001'",
+      );
+      return rows[0]?.surface ?? "";
+    })
+    .toBe("Slack #beta-ops");
+});
+
 test("the Builder creates a measured draft agent conversationally", async () => {
   // The quiet affordance on the Sessions landing targets the Builder.
   await page.goto("/sessions");

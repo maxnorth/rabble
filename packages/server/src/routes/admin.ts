@@ -359,17 +359,19 @@ export async function adminRoutes(app: FastifyInstance) {
     if (format === "csv") {
       const escape = (v: string) => `"${v.replaceAll('"', '""')}"`;
       const csv = [
-        "timestamp,actor,action,target_type,target_id,summary",
-        ...rows.map((r) =>
-          [
+        "timestamp,actor,action,target_type,target_id,summary,metadata",
+        ...rows.map((r) => {
+          const meta = r.event.metadata as Record<string, unknown>;
+          return [
             r.event.createdAt.toISOString(),
             escape(r.actorName ?? "system"),
             r.event.action,
             r.event.targetType,
             r.event.targetId ?? "",
             escape(r.event.summary),
-          ].join(","),
-        ),
+            escape(Object.keys(meta ?? {}).length ? JSON.stringify(meta) : ""),
+          ].join(",");
+        }),
       ].join("\n");
       return reply
         .header("content-type", "text/csv")

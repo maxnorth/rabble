@@ -2519,6 +2519,10 @@ test("audit log exports as CSV", async () => {
   expect(res.headers()["content-type"]).toContain("text/csv");
   const body = await res.text();
   expect(body).toContain("agent.surface.add");
+  // The export carries the metadata column so a records copy is as complete
+  // as the viewer — the gating block's failing case travels with it.
+  expect(body.split("\n")[0]).toContain("metadata");
+  expect(body).toContain("ignores the deployment question");
 });
 
 test("server log contains no errors across the whole suite", async () => {

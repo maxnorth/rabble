@@ -2017,11 +2017,16 @@ test("automations: Run now executes a governed session on the Automation surface
   await expect(row).toBeVisible();
   // The cron is rendered in plain language, not a bare "0 9 * * 1-5".
   await expect(row).toContainText("at 9:00 UTC on weekdays");
-  // A new automation is disabled by default, so no next-run is projected.
+  // A new automation is disabled by default, so no next-run is projected,
+  // and the scheduler-off notice stays hidden (nothing is scheduled yet).
   await expect(row).not.toContainText("next");
-  // Enabling it surfaces the projected next run.
+  await expect(page.getByText("The platform scheduler")).toBeHidden();
+  // Enabling it surfaces the projected next run. Since e2e runs without a
+  // configured scheduler, the honest "won't fire on schedule yet" notice
+  // now appears.
   await row.locator(".toggle").click();
   await expect(row).toContainText("next");
+  await expect(page.getByText("The platform scheduler")).toBeVisible();
 
   await row.getByRole("button", { name: "Run now" }).click();
   await expect(row.getByRole("link", { name: "view session →" })).toBeVisible({

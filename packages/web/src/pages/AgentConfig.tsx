@@ -1193,6 +1193,10 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
     queryKey: ["automations", agentId],
     queryFn: () => api.listAutomations(agentId),
   });
+  const scheduler = useQuery({
+    queryKey: ["scheduler"],
+    queryFn: () => api.schedulerStatus(),
+  });
   const [form, setForm] = useState({ name: "", schedule: "0 9 * * 1-5", prompt: "" });
   const [editing, setEditing] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: "", schedule: "", prompt: "" });
@@ -1234,6 +1238,26 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
         the Automation surface. Enable an automation to run it on its schedule;
         Run now executes it immediately either way.
       </p>
+      {scheduler.data?.active === false &&
+        automations.data?.automations.some((a) => a.enabled) && (
+          <div
+            role="status"
+            style={{
+              border: "1px solid var(--border-2)",
+              borderLeft: "3px solid var(--amber)",
+              background: "var(--surface-2)",
+              borderRadius: 8,
+              padding: "10px 12px",
+              margin: "0 0 16px",
+              fontSize: 13,
+              color: "var(--text-2)",
+            }}
+          >
+            The platform scheduler isn't running, so enabled automations won't
+            fire on their schedule yet — use Run now until it's configured.
+            Schedules resume automatically once the scheduler is live.
+          </div>
+        )}
       {run.isError && (
         <p className="error-text">{(run.error as Error).message}</p>
       )}

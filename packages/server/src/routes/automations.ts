@@ -6,6 +6,7 @@ import { automations } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { recordAudit } from "../audit.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
+import { isSchedulerActive } from "../scheduling/hatchet.js";
 
 function serialize(row: typeof automations.$inferSelect) {
   return {
@@ -29,6 +30,10 @@ function serialize(row: typeof automations.$inferSelect) {
  */
 export async function automationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
+
+  // Whether the platform scheduler is live. When it isn't, an enabled
+  // automation only fires via "Run now" — the UI says so plainly.
+  app.get("/api/scheduler", async () => ({ active: isSchedulerActive() }));
 
   app.get("/api/agents/:agentId/automations", async (req) => {
     const { agentId } = req.params as { agentId: string };

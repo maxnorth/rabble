@@ -14,6 +14,15 @@ import type { FastifyBaseLogger } from "fastify";
 import { applyRetentionForAllOrgs } from "../retention.js";
 import { runDueAutomations } from "./automations.js";
 
+// Whether recurring jobs are actually running. The UI reads this (via
+// GET /api/scheduler) to tell a user honestly whether an enabled automation
+// will fire on its schedule, or only via "Run now" until the scheduler is
+// configured. Set true only once the worker has really started.
+let schedulerActive = false;
+export function isSchedulerActive(): boolean {
+  return schedulerActive;
+}
+
 export async function startScheduler(log: FastifyBaseLogger): Promise<void> {
   if (!process.env.HATCHET_CLIENT_TOKEN) {
     log.info(
@@ -50,6 +59,7 @@ export async function startScheduler(log: FastifyBaseLogger): Promise<void> {
     const worker = await hatchet.worker("rabble-scheduler");
     await worker.registerWorkflows([retentionSweep, automationTick]);
     void worker.start();
+    schedulerActive = true;
     log.info("scheduler: Hatchet worker started (retention sweep + automation tick)");
   } catch (err) {
     // A scheduler that can't reach its engine must never take the API down.

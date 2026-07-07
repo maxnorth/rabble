@@ -324,6 +324,7 @@ export const api = {
     }>(`/api/suites/${suiteId}/run`),
 
   // automations
+  schedulerStatus: () => get<{ active: boolean }>("/api/scheduler"),
   listAutomations: (agentId: string) =>
     get<{ automations: Automation[] }>(`/api/agents/${agentId}/automations`),
   createAutomation: (agentId: string, body: { name: string; schedule: string; prompt: string }) =>

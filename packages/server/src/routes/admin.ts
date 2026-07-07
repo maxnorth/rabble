@@ -22,7 +22,7 @@ import {
   users,
 } from "../db/schema.js";
 import { requireUser } from "../auth.js";
-import { recordAudit } from "../audit.js";
+import { recordAudit, toAuditCsv } from "../audit.js";
 import { encryptSecret, hashAuthToken, hashPassword } from "../crypto.js";
 
 async function requireOrgAdmin(req: FastifyRequest, reply: FastifyReply) {
@@ -357,26 +357,10 @@ export async function adminRoutes(app: FastifyInstance) {
       .limit(format === "csv" ? 500 : pageSize);
 
     if (format === "csv") {
-      const escape = (v: string) => `"${v.replaceAll('"', '""')}"`;
-      const csv = [
-        "timestamp,actor,action,target_type,target_id,summary,metadata",
-        ...rows.map((r) => {
-          const meta = r.event.metadata as Record<string, unknown>;
-          return [
-            r.event.createdAt.toISOString(),
-            escape(r.actorName ?? "system"),
-            r.event.action,
-            r.event.targetType,
-            r.event.targetId ?? "",
-            escape(r.event.summary),
-            escape(Object.keys(meta ?? {}).length ? JSON.stringify(meta) : ""),
-          ].join(",");
-        }),
-      ].join("\n");
       return reply
         .header("content-type", "text/csv")
         .header("content-disposition", "attachment; filename=rabble-audit.csv")
-        .send(csv);
+        .send(toAuditCsv(rows));
     }
     return {
       events: rows.map((r) => ({

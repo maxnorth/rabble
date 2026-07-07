@@ -1231,8 +1231,8 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
     <>
       <p className="page-subtitle">
         Scheduled runs of this agent. Each run is a real governed session on
-        the Automation surface — Run now executes immediately; recurring
-        schedules land with the platform's scheduling engine.
+        the Automation surface. Enable an automation to run it on its schedule;
+        Run now executes it immediately either way.
       </p>
       {run.isError && (
         <p className="error-text">{(run.error as Error).message}</p>

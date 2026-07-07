@@ -1,4 +1,4 @@
-import { agentCapabilitiesSchema, type AgentCapabilities } from "@rabblehq/core";
+import { agentCapabilitiesSchema, isValidCron, type AgentCapabilities } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -1292,6 +1292,11 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
               value={form.schedule}
               onChange={(e) => setForm({ ...form, schedule: e.target.value })}
             />
+            {!isValidCron(form.schedule) && (
+              <span className="hint" style={{ color: "var(--amber)" }}>
+                Not a valid 5-field cron (minute hour day-of-month month weekday).
+              </span>
+            )}
           </div>
           <div className="field">
             <label>Prompt</label>
@@ -1304,7 +1309,7 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
           </div>
           <button
             className="btn primary"
-            disabled={!form.name.trim() || create.isPending}
+            disabled={!form.name.trim() || !isValidCron(form.schedule) || create.isPending}
             onClick={() => create.mutate()}
           >
             + Add automation

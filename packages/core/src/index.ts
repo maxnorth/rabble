@@ -505,9 +505,58 @@ export const automationSchema = z.object({
 });
 export type Automation = z.infer<typeof automationSchema>;
 
+// Standard 5-field cron ranges: minute, hour, day-of-month, month, weekday
+// (0 and 7 both mean Sunday). Validated at creation so a typo can't sit
+// silently until the scheduler tries to run it.
+const CRON_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0, 59],
+  [0, 23],
+  [1, 31],
+  [1, 12],
+  [0, 7],
+];
+
+function validCronField(field: string, min: number, max: number): boolean {
+  return field.split(",").every((part) => {
+    const slash = part.indexOf("/");
+    const rangePart = slash === -1 ? part : part.slice(0, slash);
+    const stepPart = slash === -1 ? undefined : part.slice(slash + 1);
+    if (stepPart !== undefined && (!/^\d+$/.test(stepPart) || Number(stepPart) < 1)) {
+      return false;
+    }
+    if (rangePart === "*") return true;
+    const dash = rangePart.indexOf("-");
+    const a = dash === -1 ? rangePart : rangePart.slice(0, dash);
+    const b = dash === -1 ? undefined : rangePart.slice(dash + 1);
+    if (!/^\d+$/.test(a)) return false;
+    const lo = Number(a);
+    if (lo < min || lo > max) return false;
+    if (b !== undefined) {
+      if (!/^\d+$/.test(b)) return false;
+      const hi = Number(b);
+      if (hi < min || hi > max || hi < lo) return false;
+    }
+    return true;
+  });
+}
+
+/** True for a well-formed standard 5-field cron expression. */
+export function isValidCron(expr: string): boolean {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length !== 5) return false;
+  return fields.every((f, i) => validCronField(f, CRON_RANGES[i]![0], CRON_RANGES[i]![1]));
+}
+
 export const createAutomationSchema = z.object({
   name: z.string().min(1).max(120),
-  schedule: z.string().min(1).max(100),
+  schedule: z
+    .string()
+    .min(1)
+    .max(100)
+    .refine(isValidCron, {
+      message:
+        "Schedule must be a valid 5-field cron expression (minute hour day-of-month month weekday).",
+    }),
   prompt: z.string().max(10000).default(""),
 });
 export type CreateAutomationRequest = z.infer<typeof createAutomationSchema>;

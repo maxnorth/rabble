@@ -1,12 +1,41 @@
 import { describe, expect, it } from "vitest";
 import {
   agentCapabilitiesSchema,
+  createAutomationSchema,
   createGrantSchema,
+  isValidCron,
   slugify,
   streamEventSchema,
   toolCallSchema,
   userPreferencesSchema,
 } from "./index.js";
+
+describe("isValidCron", () => {
+  it("accepts standard 5-field expressions", () => {
+    expect(isValidCron("0 9 * * 1-5")).toBe(true); // weekdays at 9am
+    expect(isValidCron("*/15 * * * *")).toBe(true); // every 15 min
+    expect(isValidCron("0 0,12 1 */2 *")).toBe(true); // lists + steps
+    expect(isValidCron("30 6 * * 0")).toBe(true); // Sunday
+  });
+  it("rejects malformed or out-of-range expressions", () => {
+    expect(isValidCron("0 9 * *")).toBe(false); // 4 fields
+    expect(isValidCron("60 9 * * 1-5")).toBe(false); // minute > 59
+    expect(isValidCron("0 24 * * *")).toBe(false); // hour > 23
+    expect(isValidCron("0 9 * * 8")).toBe(false); // weekday > 7
+    expect(isValidCron("0 9 * * mon")).toBe(false); // names unsupported
+    expect(isValidCron("0 9 5-1 * *")).toBe(false); // inverted range
+    expect(isValidCron("every day")).toBe(false);
+  });
+  it("gates createAutomationSchema", () => {
+    expect(() =>
+      createAutomationSchema.parse({ name: "x", schedule: "nope", prompt: "" }),
+    ).toThrow();
+    expect(
+      createAutomationSchema.parse({ name: "x", schedule: "0 9 * * 1-5", prompt: "" })
+        .schedule,
+    ).toBe("0 9 * * 1-5");
+  });
+});
 
 describe("slugify", () => {
   it("derives internal slugs from natural-cased names", () => {

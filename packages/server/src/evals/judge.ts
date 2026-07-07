@@ -25,6 +25,21 @@ export interface Verdict {
   reasoning: string;
 }
 
+/**
+ * Parse a judge reply into a verdict. Pass only when the first line asserts
+ * PASS and not FAIL — FAIL wins any ambiguous line, a conservative default
+ * (a graded miss should never read as a pass). Everything after the first
+ * line is the reasoning, falling back to the line itself when it's the only
+ * one; capped so a runaway judge can't bloat the row.
+ */
+export function parseVerdict(text: string): Verdict {
+  const trimmed = text.trim();
+  const firstLine = trimmed.split("\n")[0] ?? "";
+  const passed = /\bPASS\b/i.test(firstLine) && !/\bFAIL\b/i.test(firstLine);
+  const reasoning = trimmed.split("\n").slice(1).join(" ").trim() || firstLine;
+  return { passed, reasoning: reasoning.slice(0, 500) };
+}
+
 export async function judgeText(
   model: typeof models.$inferSelect,
   criterion: string,
@@ -43,10 +58,7 @@ export async function judgeText(
       : reply.content
           .map((b) => (typeof b === "string" ? b : ((b as { text?: string }).text ?? "")))
           .join("");
-  const firstLine = text.trim().split("\n")[0] ?? "";
-  const passed = /\bPASS\b/i.test(firstLine) && !/\bFAIL\b/i.test(firstLine);
-  const reasoning = text.trim().split("\n").slice(1).join(" ").trim() || firstLine;
-  return { passed, reasoning: reasoning.slice(0, 500) };
+  return parseVerdict(text);
 }
 
 /** Evaluate a session against the agent's enabled live criteria. */

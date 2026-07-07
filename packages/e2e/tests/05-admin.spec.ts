@@ -681,6 +681,8 @@ test("PR review-comment threads become their own governed session", async () => 
       },
       comment: {
         id: 555,
+        path: "src/gateway/limits.ts",
+        line: 88,
         body: "Should this be behind a feature flag?",
         user: { login: "alexcodes", type: "User" },
       },
@@ -702,13 +704,14 @@ test("PR review-comment threads become their own governed session", async () => 
   const log = (await (
     await fetch(`${EMULATOR}/admin/requests?host=api.github.com`)
   ).json()) as { requests: Array<{ path: string; body: { body?: string } }> };
+  // The agent's turn carried the code location (file + line), so it comes
+  // back in the reply — the review agent knows which code it's discussing.
   expect(
     log.requests.some(
       (r) =>
         r.path === "/repos/acme/api/pulls/42/comments/555/replies" &&
-        r.body.body?.includes(
-          "Mock reply to: Should this be behind a feature flag?",
-        ),
+        r.body.body?.includes("On `src/gateway/limits.ts` line 88") &&
+        r.body.body?.includes("Should this be behind a feature flag?"),
     ),
   ).toBe(true);
 });

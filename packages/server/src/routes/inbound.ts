@@ -117,6 +117,8 @@ export async function inboundRoutes(app: FastifyInstance) {
           id?: number;
           in_reply_to_id?: number;
           body?: string;
+          path?: string;
+          line?: number;
           user?: { login?: string; type?: string };
         };
       };
@@ -145,6 +147,14 @@ export async function inboundRoutes(app: FastifyInstance) {
       ) {
         return { ok: true, ignored: "not a user comment" };
       }
+      // A review comment is anchored to a file/line — hand that context to
+      // the agent so it can answer about the actual code, not just the text.
+      const agentContent =
+        isReviewComment && payload.comment?.path
+          ? `On \`${payload.comment.path}\`` +
+            (payload.comment.line ? ` line ${payload.comment.line}` : "") +
+            `:\n\n${body}`
+          : body;
       // A review thread is one conversation: key it on the thread's root
       // comment so every reply continues the same session.
       const threadRootId =
@@ -257,7 +267,7 @@ export async function inboundRoutes(app: FastifyInstance) {
           agent: matched.agent,
           model,
           user: platformUser.user,
-          content: body,
+          content: agentContent,
           requireApproval: orgSettings.requireApprovalForUserTools,
           sessionApproved: false,
           interactive: false,

@@ -34,11 +34,14 @@ describe("relativeTime", () => {
 describe("relativeFuture", () => {
   const inMs = (ms: number) => new Date(Date.now() + ms).toISOString();
 
-  it("covers the ladder from minutes to days", () => {
+  it("covers the ladder from minutes to years", () => {
     expect(relativeFuture(inMs(2 * 60_000))).toBe("in 2m");
     expect(relativeFuture(inMs(3 * 3_600_000))).toBe("in 3h");
     expect(relativeFuture(inMs(26 * 3_600_000))).toBe("tomorrow");
     expect(relativeFuture(inMs(4 * 86_400_000))).toBe("in 4d");
+    expect(relativeFuture(inMs(21 * 86_400_000))).toBe("in 3w");
+    expect(relativeFuture(inMs(90 * 86_400_000))).toBe("in 3mo");
+    expect(relativeFuture(inMs(400 * 86_400_000))).toBe("in 1y");
   });
 
   it("reads 'now' for past/immediate and '—' for null-ish", () => {

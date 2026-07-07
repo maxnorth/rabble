@@ -83,6 +83,22 @@ of a session. Unattended surfaces cannot host approval prompts, so
 user-auth tools auto-deny with a pointer to the web app (the org approval
 floor is honored). Redeliveries are deduped by event id and retry header.
 
+## Sub-agent delegation
+
+Agents linked on the "Agents" tab (`agent_links`, gated on `use` of the
+target) are exposed to the model as governed tools (`ask_<slug>`). A call
+runs the child as a **real, persisted, judged session** (surface
+`Delegated by <parent>`) via the same `executeTurnAndPersist` used by every
+surface — under the SAME user, so the child's model, MCP tools, and auth
+gates apply and governance composes. Delegated work therefore lands on the
+child's own track record and stays auditable; the tool call carries
+`childSessionId` for click-through, and each call audits `agent.delegate`.
+Depth and cycles are bounded by a `delegationChain` threaded through
+`executeTurn` (a child already on the stack is never offered, so A→B→A
+can't loop). Nested turns are non-interactive — a delegated child has no
+surface to host an approval, so user-auth tools there auto-deny, same as
+any unattended surface.
+
 ## Cost accounting
 
 Models carry optional USD prices per million tokens (catalog defaults for

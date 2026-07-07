@@ -135,6 +135,9 @@ test("agents: create, configure, and activate an agent", async () => {
     .getByPlaceholder("System instructions that define how this agent behaves")
     .fill("You triage CI failures. Be concise.");
   await page.locator("select").first().selectOption({ label: "Mock Model" });
+  // Identity's visual fields persist too: pick a distinct glyph and color.
+  await page.getByRole("button", { name: "⬢", exact: true }).click();
+  await page.locator("button[title='amber']").click();
   await page.locator(".segmented button", { hasText: "active" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
@@ -150,12 +153,19 @@ test("agents: create, configure, and activate an agent", async () => {
     status: string;
     model_id: string | null;
     instructions: string;
-  }>("SELECT slug, status, model_id, instructions FROM agents WHERE builtin IS NULL");
+    icon: string;
+    color: string;
+  }>(
+    "SELECT slug, status, model_id, instructions, icon, color FROM agents WHERE builtin IS NULL",
+  );
   expect(agents).toHaveLength(1);
   expect(agents[0]!.slug).toBe("eng-on-call");
   expect(agents[0]!.status).toBe("active");
   expect(agents[0]!.model_id).not.toBeNull();
   expect(agents[0]!.instructions).toContain("triage CI failures");
+  // The picked logo glyph and color round-tripped through save.
+  expect(agents[0]!.icon).toBe("⬢");
+  expect(agents[0]!.color).toBe("amber");
 });
 
 test("sessions: targeted chat streams a reply and persists the transcript", async () => {

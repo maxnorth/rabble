@@ -357,6 +357,9 @@ async function buildSubAgentTools(
               delegationChain: [...chain, input.agent.id],
             })) {
               if (ev.type === "text") text += ev.text;
+              // A delegated turn burns real tokens — fold the child's usage
+              // into this session's totals so cost accounting stays honest.
+              else if (ev.type === "usage") emit(ev);
             }
             output = text || `${child.name} returned no reply.`;
             await recordAudit({

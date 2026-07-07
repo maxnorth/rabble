@@ -22,8 +22,10 @@ import {
 } from "@rabblehq/core";
 import { db } from "../db/client.js";
 import {
+  agentLinks,
   agentMcpServers,
   agentToolConfigs,
+  agents as agentsTable,
   mcpServers,
   type agents,
   type messages,
@@ -32,10 +34,17 @@ import {
 } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
 import { chatModelFor } from "../models/chat.js";
+import { resolveAgentModel } from "../models/resolve.js";
 import { mcpCallTool } from "../mcp/client.js";
+import { recordAudit } from "../audit.js";
 import { Channel } from "./channel.js";
 import { gateUserAuth, type GateContext } from "./userAuthGate.js";
 import { buildPlatformTools } from "./platformTools.js";
+
+// How deep a chain of agents-calling-agents may go. Bounded delegation is a
+// product pillar, not open-ended recursion — a parent may delegate, and its
+// sub-agent may delegate once more, but the chain stops there.
+const MAX_DELEGATION_DEPTH = 3;
 
 export interface AgentTurnInput {
   agent: typeof agents.$inferSelect;
@@ -61,6 +70,12 @@ export interface AgentTurnInput {
     serverName: string | null;
     input: unknown;
   }) => Promise<void>;
+  /**
+   * Delegation bookkeeping for agents-calling-agents. `delegationChain` is
+   * the agent ids already on the call stack (root first), used to bound depth
+   * and refuse cycles; absent/empty for a top-level turn.
+   */
+  delegationChain?: string[];
 }
 
 export type AgentTurnEvent =
@@ -244,6 +259,123 @@ async function buildGovernedTools(
   return tools;
 }
 
+/** Sanitize an agent slug into a valid, prefixed tool name. */
+function subAgentToolName(slug: string): string {
+  return `ask_${slug}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 64);
+}
+
+/**
+ * Build governed tools for the agents this one is wired to call (the "Agents"
+ * config tab). Each linked sub-agent becomes a callable tool whose body runs
+ * that agent as a nested, non-interactive turn under the SAME user — so the
+ * child's own model, MCP tools, and auth gates apply and governance composes.
+ * The edge's note becomes the tool description, telling the model when to
+ * delegate. Depth and cycles are bounded: a sub-agent already on the call
+ * stack, or one past MAX_DELEGATION_DEPTH, is not offered.
+ */
+async function buildSubAgentTools(
+  input: AgentTurnInput,
+  emit: (event: AgentTurnEvent) => void,
+) {
+  const chain = input.delegationChain ?? [];
+  if (chain.length >= MAX_DELEGATION_DEPTH) return [];
+
+  const links = await db
+    .select({ child: agentsTable, note: agentLinks.note })
+    .from(agentLinks)
+    .innerJoin(agentsTable, eq(agentLinks.subAgentId, agentsTable.id))
+    .where(eq(agentLinks.agentId, input.agent.id));
+
+  const tools = [];
+  for (const { child, note } of links) {
+    // Refuse a cycle: a child already somewhere above us in the call stack.
+    if (chain.includes(child.id)) continue;
+
+    const toolName = subAgentToolName(child.slug);
+    tools.push(
+      tool(
+        async (args: Record<string, unknown>) => {
+          const task = String(args.task ?? "");
+          const callId = randomUUID();
+          const startedAt = Date.now();
+          const call: ToolCall = {
+            id: callId,
+            name: toolName,
+            serverName: child.name,
+            input: args,
+            output: null,
+            authType: "service",
+            approval: null,
+          };
+          emit({ type: "tool-start", toolCall: call });
+
+          const childModel = await resolveAgentModel(child);
+          let output: string;
+          if (!childModel) {
+            output = `Error: ${child.name} has no model configured, so it can't run.`;
+          } else {
+            try {
+              let text = "";
+              for await (const ev of runAgentTurn({
+                agent: child,
+                model: childModel,
+                user: input.user,
+                sessionId: input.sessionId,
+                history: [],
+                userContent: task,
+                requireApproval: input.requireApproval,
+                sessionApproved: input.sessionApproved,
+                // A nested turn has no surface of its own to prompt on.
+                interactive: false,
+                delegationChain: [...chain, input.agent.id],
+              })) {
+                if (ev.type === "text") text += ev.text;
+              }
+              output = text || `${child.name} returned no reply.`;
+              await recordAudit({
+                orgId: input.agent.orgId,
+                actorUserId: input.user.id,
+                action: "agent.delegate",
+                targetType: "agent",
+                targetId: child.id,
+                summary: `${input.agent.name} delegated a task to ${child.name}`,
+                metadata: { parentAgentId: input.agent.id, sessionId: input.sessionId },
+              });
+            } catch (err) {
+              output = `Error: ${err instanceof Error ? err.message : "delegation failed"}`;
+            }
+          }
+
+          emit({
+            type: "tool-end",
+            toolCall: { ...call, output, durationMs: Date.now() - startedAt },
+          });
+          return output;
+        },
+        {
+          name: toolName,
+          description:
+            (note?.trim() ? `${note.trim()} ` : "") +
+            `Delegate a task to ${child.name}` +
+            (child.description ? ` (${child.description})` : "") +
+            `. Pass the full task as "task"; the agent runs and returns its reply.`,
+          schema: {
+            type: "object",
+            properties: {
+              task: {
+                type: "string",
+                description: "The task or question to hand to this agent.",
+              },
+            },
+            required: ["task"],
+          },
+        },
+      ),
+    );
+  }
+  return tools;
+}
+
 export async function* runAgentTurn(
   input: AgentTurnInput,
 ): AsyncGenerator<AgentTurnEvent> {
@@ -268,6 +400,12 @@ export async function* runAgentTurn(
       ...buildPlatformTools(input, (event) => channel.push(event)),
     );
   }
+  // Agents this one is wired to call become governed, callable tools — the
+  // "bounded delegation" pillar. Included in the tool set below, so a
+  // delegation is never misread as a scope violation.
+  governedTools.push(
+    ...(await buildSubAgentTools(input, (event) => channel.push(event))),
+  );
 
   // Anything the model tries to call outside this set is a scope violation:
   // the governed tools it was given, plus the runtime's own built-ins.

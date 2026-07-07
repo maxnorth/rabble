@@ -262,6 +262,85 @@ test("an unanswered approval times out and the tool is not run", async () => {
   });
 });
 
+test("sub-agent delegation: a linked agent runs as a governed tool", async () => {
+  // A child agent with a model — created via API for brevity.
+  const modelsRes = (await (await page.request.get("/api/models")).json()) as {
+    models: Array<{ id: string; enabled: boolean }>;
+  };
+  const modelId = (modelsRes.models.find((m) => m.enabled) ?? modelsRes.models[0]!).id;
+  const created = (await (
+    await page.request.post("/api/agents", {
+      data: {
+        name: "Docs Helper",
+        description: "Answers questions about the docs",
+        instructions: "Help with documentation.",
+        modelId,
+        status: "active",
+      },
+    })
+  ).json()) as { agent: { id: string; slug: string } };
+  const childId = created.agent.id;
+
+  try {
+    // Wire it under Eng On-Call through the governed attach UI, note the edge.
+    await page.locator("nav a[title='Agents']").click();
+    await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+    await page.locator(".tabs button", { hasText: "Agents" }).click();
+    await page
+      .locator(".row", { hasText: "Docs Helper" })
+      .getByRole("button", { name: "Attach" })
+      .click();
+    const linkedRow = page
+      .locator(".row", { hasText: "Docs Helper" })
+      .filter({ has: page.locator(".chip.purple") });
+    await expect(linkedRow).toBeVisible();
+    const note = page.locator("input[placeholder*='When is it called']");
+    await note.fill("For anything about the docs");
+    await note.blur();
+
+    // The parent's model delegates on its next call.
+    await enqueueToolCall("ask_docs_helper", { task: "Summarize the deploy runbook" });
+
+    // Start a session targeted at Eng On-Call.
+    await page.locator("nav a[title='Sessions']").click();
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Ask docs helper about the runbook");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    // The delegation surfaces as an inline tool call; the child's reply is its
+    // output, folded back into the parent thread.
+    const chip = page.locator(".tool-call", { hasText: "ask_docs_helper" }).first();
+    await expect(chip).toBeVisible({ timeout: 15_000 });
+    await chip.click();
+    await expect(page.locator(".drawer")).toContainText(
+      "Mock reply to: Summarize the deploy runbook",
+    );
+    await page.locator(".drawer-close").click();
+
+    // Transcript recorded the delegation as a tool call on the parent's session…
+    expect(await pollFirstToolCall("%Ask docs helper about the runbook%")).toMatchObject({
+      name: "ask_docs_helper",
+    });
+    // …the edge is audited…
+    const audit = await dbQuery<{ action: string }>(
+      "SELECT action FROM audit_events WHERE action = 'agent.delegate'",
+    );
+    expect(audit.length).toBeGreaterThanOrEqual(1);
+    // …and a legitimate delegation is NOT logged as a scope violation.
+    const violations = await dbQuery<{ tool_name: string }>(
+      "SELECT tool_name FROM scope_violations WHERE tool_name = 'ask_docs_helper'",
+    );
+    expect(violations).toHaveLength(0);
+  } finally {
+    // Always tidy up so a lingering agent can't skew later specs' routing.
+    await page.request.delete(`/api/agents/${childId}`);
+  }
+});
+
 test("an out-of-scope tool attempt is recorded as a violation", async () => {
   // The model goes rogue: it calls a tool the agent was never given.
   await enqueueToolCall("drop_database", { reason: "cleanup" });

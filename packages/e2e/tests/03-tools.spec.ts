@@ -336,8 +336,26 @@ test("sub-agent delegation: a linked agent runs as a governed tool", async () =>
       "SELECT tool_name FROM scope_violations WHERE tool_name = 'ask_docs_helper'",
     );
     expect(violations).toHaveLength(0);
+
+    // The delegated turn is a real, auditable session of the child agent —
+    // delegated work lands on the sub-agent's own record, not just an
+    // ephemeral tool call.
+    const [childSession] = await dbQuery<{ surface: string; content: string }>(
+      `SELECT s.surface, m.content
+         FROM sessions s
+         JOIN messages m ON m.session_id = s.id AND m.role = 'agent'
+        WHERE s.agent_id = $1 AND s.surface = 'Delegated by Eng On-Call'`,
+      [childId],
+    );
+    expect(childSession).toBeDefined();
+    expect(childSession!.content).toContain(
+      "Mock reply to: Summarize the deploy runbook",
+    );
   } finally {
-    // Always tidy up so a lingering agent can't skew later specs' routing.
+    // Tidy up so a lingering agent can't skew later specs' routing. The child
+    // now owns a delegated session, so clear those first (the delete route
+    // refuses an agent with sessions).
+    await dbQuery("DELETE FROM sessions WHERE agent_id = $1", [childId]);
     await page.request.delete(`/api/agents/${childId}`);
   }
 });

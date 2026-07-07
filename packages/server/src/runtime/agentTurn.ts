@@ -27,6 +27,7 @@ import {
   agentToolConfigs,
   agents as agentsTable,
   mcpServers,
+  sessions,
   type agents,
   type messages,
   type models,
@@ -342,26 +343,35 @@ async function buildSubAgentTools(
             if (!childModel) {
               throw new Error(`${child.name} has no model configured, so it can't run.`);
             }
-            let text = "";
-            for await (const ev of runAgentTurn({
+            // The delegated turn is a real, governed session of the child —
+            // persisted, judged, and viewable — so delegated work lands on the
+            // child's own track record and the edge is fully auditable (not
+            // just an ephemeral tool call). It runs as the same user, with the
+            // call stack threaded so nested delegation stays bounded.
+            const [childSession] = await db
+              .insert(sessions)
+              .values({
+                orgId: child.orgId,
+                userId: input.user.id,
+                agentId: child.id,
+                title: task.length > 60 ? `${task.slice(0, 57)}…` : task,
+                surface: `Delegated by ${input.agent.name}`,
+              })
+              .returning();
+            const { executeTurnAndPersist } = await import("./executeTurn.js");
+            const result = await executeTurnAndPersist({
+              sessionId: childSession!.id,
               agent: child,
               model: childModel,
               user: input.user,
-              sessionId: input.sessionId,
-              history: [],
-              userContent: task,
+              content: task,
               requireApproval: input.requireApproval,
               sessionApproved: input.sessionApproved,
               // A nested turn has no surface of its own to prompt on.
               interactive: false,
               delegationChain: [...chain, input.agent.id],
-            })) {
-              if (ev.type === "text") text += ev.text;
-              // A delegated turn burns real tokens — fold the child's usage
-              // into this session's totals so cost accounting stays honest.
-              else if (ev.type === "usage") emit(ev);
-            }
-            output = text || `${child.name} returned no reply.`;
+            });
+            output = result.fullText || `${child.name} returned no reply.`;
             await recordAudit({
               orgId: input.agent.orgId,
               actorUserId: input.user.id,
@@ -369,7 +379,11 @@ async function buildSubAgentTools(
               targetType: "agent",
               targetId: child.id,
               summary: `${input.agent.name} delegated a task to ${child.name}`,
-              metadata: { parentAgentId: input.agent.id, sessionId: input.sessionId },
+              metadata: {
+                parentAgentId: input.agent.id,
+                sessionId: input.sessionId,
+                childSessionId: childSession!.id,
+              },
             });
           } catch (err) {
             output = `Error: ${err instanceof Error ? err.message : "delegation failed"}`;

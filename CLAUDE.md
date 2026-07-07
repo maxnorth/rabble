@@ -99,13 +99,16 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   set + runtime built-ins (see RUNTIME_BUILTINS in agentTurn.ts).
 - Sub-agent delegation (bounded delegation pillar): agents linked via the
   "Agents" tab (`agent_links`; attach needs `use` on the target) become
-  callable tools (`ask_<slug>`) in `buildSubAgentTools` — each runs the
-  child as a nested, non-interactive turn under the SAME user, so the
-  child's model/MCP tools/auth gates apply and governance composes. The edge
-  note is the tool description; the child's reply folds back as the tool
-  output; each call audits `agent.delegate`. Depth/cycles are bounded
-  (MAX_DELEGATION_DEPTH via `delegationChain`), and delegation tool names
-  join `allowedTools` so a legitimate call isn't a false scope violation.
+  callable tools (`ask_<slug>`) in `buildSubAgentTools`. Each call runs the
+  child as a real, persisted, judged session (surface `Delegated by
+  <parent>`) via `executeTurnAndPersist` under the SAME user — so delegated
+  work lands on the child's own track record and stays fully auditable, and
+  the child's model/MCP tools/auth gates apply so governance composes. The
+  edge note is the tool description; the child's reply folds back as the tool
+  output; each call audits `agent.delegate` (metadata carries the
+  `childSessionId`). Depth/cycles are bounded (MAX_DELEGATION_DEPTH threaded
+  as `delegationChain` through executeTurn), and delegation tool names join
+  `allowedTools` so a legitimate call isn't a false scope violation.
 - e2e global-setup refuses to start if :4100/:3178 are already bound —
   kill stale processes (`fuser -k 4100/tcp 3178/tcp`) instead of letting
   tests hit an old build.

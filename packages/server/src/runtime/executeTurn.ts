@@ -27,6 +27,8 @@ export interface ExecuteTurnInput {
   sessionApproved: boolean;
   interactive: boolean;
   approvalPrompt?: Parameters<typeof runAgentTurn>[0]["approvalPrompt"];
+  /** Delegation call stack, when this turn is itself a delegated sub-agent. */
+  delegationChain?: string[];
 }
 
 export interface ExecuteTurnResult {
@@ -66,6 +68,7 @@ export async function executeTurnAndPersist(
     sessionApproved: input.sessionApproved,
     interactive: input.interactive,
     approvalPrompt: input.approvalPrompt,
+    delegationChain: input.delegationChain,
   })) {
     if (event.type === "text") fullText += event.text;
     else if (event.type === "usage") {

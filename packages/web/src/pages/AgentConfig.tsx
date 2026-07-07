@@ -1466,7 +1466,7 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
                 <span
                   className={`chip ${c.passRate >= 90 ? "green" : c.passRate >= 70 ? "blue" : "amber"}`}
                 >
-                  {c.passRate}% · {c.sessionCount} sessions
+                  {c.passRate}% · {count(c.sessionCount, "session")}
                 </span>
                 {c.trendDelta !== null && c.trendDelta !== 0 && (
                   <span
@@ -1576,7 +1576,7 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
                 {s.name} {s.gating && <span className="chip amber">gating</span>}
               </div>
               <div className="sub">
-                {s.caseCount} cases
+                {count(s.caseCount, "case")}
                 {s.lastRun
                   ? ` · last run ${s.lastRun.passed}/${s.lastRun.total} passed`
                   : " · never run"}

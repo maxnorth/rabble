@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
+import { count } from "../lib/time";
 
 export function TeamsSection() {
   const { teamId } = useParams();
@@ -131,7 +132,7 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
                 )}
               </div>
               <div className="sub">
-                {t.memberCount} member{t.memberCount === 1 ? "" : "s"}
+                {count(t.memberCount, "member")}
                 {t.domainGrantCount > 0 &&
                   ` · ${t.domainGrantCount} domain grant${t.domainGrantCount === 1 ? "" : "s"}`}
                 {t.agentGrantCount > 0 &&
@@ -258,7 +259,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
       <p className="page-subtitle">
         {team.isEveryone
           ? "The pinned org-wide team. Every member of the org belongs here automatically."
-          : `${team.memberCount} members · grants cascade to sub-teams and members`}
+          : `${count(team.memberCount, "member")} · grants cascade to sub-teams and members`}
       </p>
 
       <div className="tabs">
@@ -335,7 +336,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
             >
               <div className="grow">
                 <div className="title">{t.name}</div>
-                <div className="sub">{t.memberCount} members</div>
+                <div className="sub">{count(t.memberCount, "member")}</div>
               </div>
             </div>
           ))}

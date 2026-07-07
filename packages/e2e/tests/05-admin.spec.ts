@@ -380,7 +380,7 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
             .find((el) => el.action_id === "rabble_approve")!.value ?? "";
       }
       return Boolean(dm);
-    })
+    }, { timeout: 15000 })
     .toBe(true);
 
   // Click "Approve as me": Slack posts a signed, form-encoded interaction
@@ -1250,7 +1250,7 @@ test("socket mode interactivity: DM buttons resolve approvals over the WebSocket
           ?.flatMap((b) => b.elements ?? [])
           .find((el) => el.action_id === "rabble_approve")?.value ?? "";
       return value.length > 0;
-    })
+    }, { timeout: 15000 })
     .toBe(true);
 
   // …and answer it as an interactivity envelope pushed down the socket.

@@ -43,9 +43,9 @@ export function deriveEncryptionKey(secret: string): Buffer {
 
 const encryptionKey = deriveEncryptionKey(env.encryptionSecret);
 
-export function encryptSecret(plaintext: string): string {
+export function encryptSecret(plaintext: string, key: Buffer = encryptionKey): string {
   const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", encryptionKey, iv);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return `v1:${iv.toString("hex")}:${tag.toString("hex")}:${encrypted.toString("hex")}`;

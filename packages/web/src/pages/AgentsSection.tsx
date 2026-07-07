@@ -5,6 +5,11 @@ import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { AgentConfig } from "./AgentConfig";
 import { relativeTime, count, AGENT_COLORS } from "../lib/time";
+import {
+  filterAndSortAgents,
+  type SortKey,
+  type DirectoryFilters,
+} from "../lib/directory";
 
 export function AgentsSection() {
   const { agentId, domainId } = useParams();
@@ -157,14 +162,7 @@ function SidebarStar({ agent }: { agent: AgentDirectoryRow }) {
   );
 }
 
-type SortKey = "name" | "domainName" | "evalScore" | "updatedAt" | "toolCount" | "scope";
-
-interface Filters {
-  domain?: string | "none";
-  starred?: boolean;
-  youOwn?: boolean;
-  evalAbove90?: boolean;
-}
+type Filters = DirectoryFilters;
 
 function AgentDirectory() {
   const navigate = useNavigate();
@@ -177,27 +175,16 @@ function AgentDirectory() {
   const [filters, setFilters] = useState<Filters>({});
   const [filterOpen, setFilterOpen] = useState<false | "root" | "domain">(false);
 
-  const rows = useMemo(() => {
-    let list = agents.data?.agents ?? [];
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (a) => a.name.toLowerCase().includes(q) || a.slug.includes(q),
-      );
-    }
-    if (filters.domain === "none") list = list.filter((a) => !a.domainName);
-    else if (filters.domain) list = list.filter((a) => a.domainName === filters.domain);
-    if (filters.starred) list = list.filter((a) => a.starred);
-    if (filters.youOwn) list = list.filter((a) => a.myRight === "admin");
-    if (filters.evalAbove90) list = list.filter((a) => (a.evalScore ?? 0) >= 90);
-
-    const dir = sortAsc ? 1 : -1;
-    return [...list].sort((a, b) => {
-      const va = a[sortKey] ?? "";
-      const vb = b[sortKey] ?? "";
-      return va < vb ? -dir : va > vb ? dir : 0;
-    });
-  }, [agents.data, search, sortKey, sortAsc, filters]);
+  const rows = useMemo(
+    () =>
+      filterAndSortAgents(agents.data?.agents ?? [], {
+        search,
+        filters,
+        sortKey,
+        sortAsc,
+      }),
+    [agents.data, search, sortKey, sortAsc, filters],
+  );
 
   const toggleStar = useMutation({
     mutationFn: async (agent: AgentDirectoryRow) =>

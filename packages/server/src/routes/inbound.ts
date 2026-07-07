@@ -141,7 +141,12 @@ export async function inboundRoutes(app: FastifyInstance) {
         payload.action !== "created" ||
         payload.comment?.user?.type === "Bot" ||
         !fullName ||
-        !number ||
+        // The number flows into the reply URL path — require a real positive
+        // integer, never a coincidentally-truthy string, even from a signed
+        // payload (defense in depth for a governed surface).
+        typeof number !== "number" ||
+        !Number.isInteger(number) ||
+        number <= 0 ||
         !body ||
         !login
       ) {
@@ -156,9 +161,13 @@ export async function inboundRoutes(app: FastifyInstance) {
             `:\n\n${body}`
           : body;
       // A review thread is one conversation: key it on the thread's root
-      // comment so every reply continues the same session.
+      // comment so every reply continues the same session. Coerce to a safe
+      // non-negative integer since it also lands in the reply URL path.
+      const rawRoot = payload.comment?.in_reply_to_id ?? payload.comment?.id ?? 0;
       const threadRootId =
-        payload.comment?.in_reply_to_id ?? payload.comment?.id ?? 0;
+        typeof rawRoot === "number" && Number.isInteger(rawRoot) && rawRoot > 0
+          ? rawRoot
+          : 0;
 
       // Which agent listens on this repo?
       const surfaceRows = await db

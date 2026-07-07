@@ -49,7 +49,7 @@ export async function automationRoutes(app: FastifyInstance) {
     const body = createAutomationSchema.parse(req.body);
     const [row] = await db
       .insert(automations)
-      .values({ agentId, ...body })
+      .values({ agentId, ...body, createdBy: req.user!.id })
       .returning();
     await recordAudit({
       orgId: req.user!.orgId,

@@ -405,6 +405,8 @@ export const automations = pgTable("automations", {
   lastSessionId: uuid("last_session_id").references((): AnyPgColumn => sessions.id, {
     onDelete: "set null",
   }),
+  /** Who a scheduler-fired run acts as (the creator); null = won't auto-fire. */
+  createdBy: uuid("created_by").references((): AnyPgColumn => users.id),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

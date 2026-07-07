@@ -2038,6 +2038,14 @@ test("automations: Run now executes a governed session on the Automation surface
   );
   expect(audit).toHaveLength(1);
 
+  // The automation records its creator — the identity a scheduled (Hatchet)
+  // run acts as, since a cron tick has no request user.
+  const [owner] = await dbQuery<{ email: string }>(
+    `SELECT u.email FROM automations a JOIN users u ON u.id = a.created_by
+     WHERE a.name = 'Morning digest'`,
+  );
+  expect(owner!.email).toBe("alex@acme.com");
+
   // The run's session opens like any other, on its surface
   await row.getByRole("link", { name: "view session →" }).click();
   await expect(page.locator(".chip", { hasText: "Automation · Morning digest" })).toBeVisible();

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { GrantEditor } from "./AgentsSection";
-import { AGENT_COLORS, AGENT_GLYPHS, relativeTime } from "../lib/time";
+import { AGENT_COLORS, AGENT_GLYPHS, count, relativeTime } from "../lib/time";
 
 const AGENT_TABS = [
   "identity",
@@ -1047,7 +1047,7 @@ function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
                 <div className="grow">
                   <div className="title">{s.name}</div>
                   <div className="sub">
-                    {s.category} · {s.tools.length} tools
+                    {s.category} · {count(s.tools.length, "tool")}
                   </div>
                 </div>
                 <button className="btn" onClick={() => attach.mutate(s.id)}>

@@ -97,6 +97,15 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   model) comes from GET /api/agents/:id/trust; scope violations are
   recorded by the runtime when the model calls a tool outside its governed
   set + runtime built-ins (see RUNTIME_BUILTINS in agentTurn.ts).
+- Sub-agent delegation (bounded delegation pillar): agents linked via the
+  "Agents" tab (`agent_links`; attach needs `use` on the target) become
+  callable tools (`ask_<slug>`) in `buildSubAgentTools` — each runs the
+  child as a nested, non-interactive turn under the SAME user, so the
+  child's model/MCP tools/auth gates apply and governance composes. The edge
+  note is the tool description; the child's reply folds back as the tool
+  output; each call audits `agent.delegate`. Depth/cycles are bounded
+  (MAX_DELEGATION_DEPTH via `delegationChain`), and delegation tool names
+  join `allowedTools` so a legitimate call isn't a false scope violation.
 - e2e global-setup refuses to start if :4100/:3178 are already bound —
   kill stale processes (`fuser -k 4100/tcp 3178/tcp`) instead of letting
   tests hit an old build.

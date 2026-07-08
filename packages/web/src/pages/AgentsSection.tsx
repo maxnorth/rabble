@@ -236,6 +236,13 @@ function AgentDirectory() {
       clear: () => setFilters((f) => ({ ...f, evalAbove90: undefined })),
     });
   }
+  if (filters.needsAttention) {
+    activeChips.push({
+      key: "needsAttention",
+      label: "Needs attention",
+      clear: () => setFilters((f) => ({ ...f, needsAttention: undefined })),
+    });
+  }
 
   return (
     <div className="content-col" style={{ maxWidth: 980 }}>
@@ -286,6 +293,14 @@ function AgentDirectory() {
                 }}
               >
                 Eval ≥ 90%
+              </button>
+              <button
+                onClick={() => {
+                  setFilters((f) => ({ ...f, needsAttention: true }));
+                  setFilterOpen(false);
+                }}
+              >
+                Needs attention
               </button>
             </div>
           )}

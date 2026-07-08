@@ -13,6 +13,8 @@ export interface DirectoryFilters {
   starred?: boolean;
   youOwn?: boolean;
   evalAbove90?: boolean;
+  /** Agents flagged for governance: an open dispute or a recent scope violation. */
+  needsAttention?: boolean;
 }
 
 export interface DirectoryView {
@@ -46,6 +48,7 @@ export function filterAndSortAgents(
   if (filters.starred) list = list.filter((a) => a.starred);
   if (filters.youOwn) list = list.filter((a) => a.myRight === "admin");
   if (filters.evalAbove90) list = list.filter((a) => (a.evalScore ?? 0) >= 90);
+  if (filters.needsAttention) list = list.filter((a) => a.needsAttention);
 
   const dir = sortAsc ? 1 : -1;
   return [...list].sort((a, b) => {

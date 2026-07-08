@@ -400,6 +400,17 @@ test("an out-of-scope tool attempt is recorded as a violation", async () => {
       .locator(".dir-table tbody tr", { hasText: "Eng On-Call" })
       .locator(".chip", { hasText: "needs attention" }),
   ).toBeVisible();
+
+  // The governance champion can filter the directory down to flagged agents.
+  await page.getByRole("button", { name: "+ Filter" }).click();
+  await page.getByRole("button", { name: "Needs attention" }).click();
+  await expect(
+    page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".dir-table tbody tr", { hasText: "Builder" }),
+  ).toHaveCount(0);
+
   await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
   await page.getByRole("button", { name: "evals" }).click();
   await expect(

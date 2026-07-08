@@ -46,6 +46,13 @@ describe("filterAndSortAgents", () => {
     expect(names(filterAndSortAgents(all, { filters: { evalAbove90: true } }))).toEqual(["Deploy Gate"]);
   });
 
+  it("needs-attention filter surfaces only flagged agents", () => {
+    const flagged = agent({ name: "Risky Bot", slug: "risky-bot", needsAttention: true });
+    expect(
+      names(filterAndSortAgents([...all, flagged], { filters: { needsAttention: true } })),
+    ).toEqual(["Risky Bot"]);
+  });
+
   it("sorts by a key, reversible, and doesn't mutate the input", () => {
     const asc = names(filterAndSortAgents(all, { sortKey: "name", sortAsc: true }));
     expect(asc).toEqual(["Deploy Gate", "Docs Writer", "Eng On-Call"]);

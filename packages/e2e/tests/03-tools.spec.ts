@@ -488,6 +488,48 @@ test("outbound web access: fetch obeys the network allowlist", async () => {
       await fetch(`${EMULATOR}/admin/requests?host=evil.example.com`)
     ).json()) as { requests: unknown[] };
     expect(evilLog.requests).toHaveLength(0);
+
+    // 3) A redirect within the allowlist is followed (localhost -> localhost).
+    await enqueueToolCall("fetch_url", {
+      url: `${EMULATOR}/mock/web/redirect?to=/mock/web/landed`,
+    });
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Follow the good redirect");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+      timeout: 15_000,
+    });
+    const followed = await pollFirstToolCall("%Follow the good redirect%");
+    expect(String(followed.output)).toContain("path: landed");
+
+    // 4) The security-critical case: a redirect that tries to escape the
+    // allowlist is re-checked per hop and refused at the second hop, even
+    // though the first hop (localhost) is allowed.
+    await enqueueToolCall("fetch_url", {
+      url: `${EMULATOR}/mock/web/redirect?to=https://evil.example.com/pwn`,
+    });
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Follow the escaping redirect");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+      timeout: 15_000,
+    });
+    const escaped = await pollFirstToolCall("%Follow the escaping redirect%");
+    expect(String(escaped.output)).toContain("Refused:");
+    expect(String(escaped.output)).toContain("not in this agent's network allowlist");
+    // The redirect target was never actually fetched.
+    const evilAfter = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=evil.example.com`)
+    ).json()) as { requests: unknown[] };
+    expect(evilAfter.requests).toHaveLength(0);
   } finally {
     await dbQuery("DELETE FROM sessions WHERE agent_id = $1", [agentId]);
     await page.request.delete(`/api/agents/${agentId}`);

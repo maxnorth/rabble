@@ -444,12 +444,14 @@ export async function streamMessage(
   sessionId: string,
   content: string,
   onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`/api/sessions/${sessionId}/messages`, {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ content }),
+    signal,
   });
   if (!res.ok || !res.body) {
     let message = res.statusText;
@@ -465,6 +467,7 @@ export async function streamMessage(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawTerminal = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -475,11 +478,20 @@ export async function streamMessage(
       for (const line of chunk.split("\n")) {
         if (!line.startsWith("data:")) continue;
         try {
-          onEvent(JSON.parse(line.slice(5).trim()) as StreamEvent);
+          const event = JSON.parse(line.slice(5).trim()) as StreamEvent;
+          if (event.type === "done" || event.type === "error") sawTerminal = true;
+          onEvent(event);
         } catch {
           // skip malformed event
         }
       }
     }
+  }
+  // The server always ends a turn with a done/error event before closing. A
+  // clean close without one means the stream dropped mid-reply (proxy/idle
+  // timeout, server restart, network blip) — surface it so the caller resets
+  // its streaming state instead of showing a forever-typing bubble.
+  if (!sawTerminal) {
+    throw new ApiError(0, "The connection closed before the reply finished.");
   }
 }

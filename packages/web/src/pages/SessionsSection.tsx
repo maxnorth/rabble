@@ -594,6 +594,19 @@ function SessionThread({ sessionId }: { sessionId: string }) {
   const [drawer, setDrawer] = useState<DrawerContent | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentInitial = useRef(false);
+  const streamAbort = useRef<AbortController | null>(null);
+  const judgeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Abandon any in-flight stream and pending judge-refetch timers when the
+  // session changes or the thread unmounts — the POST is cancelled (no wasted
+  // turn) and no timer fires an invalidate against a session that's gone.
+  useEffect(() => {
+    return () => {
+      streamAbort.current?.abort();
+      for (const t of judgeTimers.current) clearTimeout(t);
+      judgeTimers.current = [];
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     // Merge instead of overwrite: the query snapshot may be stale if a reply
@@ -618,6 +631,8 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     setStreamingText("");
     setLiveTools([]);
     setApprovals([]);
+    const abort = new AbortController();
+    streamAbort.current = abort;
     try {
       await streamMessage(sessionId, content, (event) => {
         if (event.type === "user-message") {
@@ -660,10 +675,13 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
           // Live judging lands a few seconds AFTER the turn — refetch so the
           // criteria chip reflects the fresh verdict, not the previous one.
+          // Tracked so they're cancelled if the session changes/unmounts.
           for (const delay of [2500, 7000]) {
-            setTimeout(() => {
-              void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-            }, delay);
+            judgeTimers.current.push(
+              setTimeout(() => {
+                void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+              }, delay),
+            );
           }
         } else if (event.type === "error") {
           setError(event.error);
@@ -674,12 +692,25 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           // the thread (and survives the next reload), not just as a banner.
           void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
-      });
+      }, abort.signal);
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Message failed");
-      setStreamingText(null);
+      // A user-initiated abort (navigated away / switched session) isn't an
+      // error to surface — the thread is unmounting anyway.
+      if (!abort.signal.aborted) {
+        setError(err instanceof Error ? err.message : "Message failed");
+        // The stream dropped with no terminal event — reconcile with whatever
+        // the server persisted (a completed reply, or a failed-turn record).
+        void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+      }
     } finally {
+      // Always clear streaming state — a stream that closes without a
+      // done/error event must not leave a permanent typing indicator or
+      // spinning tool chips.
+      setStreamingText(null);
+      setLiveTools([]);
+      setApprovals([]);
+      if (streamAbort.current === abort) streamAbort.current = null;
       setBusy(false);
     }
   };

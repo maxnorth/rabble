@@ -1147,6 +1147,22 @@ function SubAgentsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean 
               <div className="title">{a.name}</div>
               <div className="sub mono">{a.slug}</div>
             </div>
+            <span
+              className={`chip ${
+                a.evalScore === null
+                  ? ""
+                  : a.evalScore >= 90
+                    ? "green"
+                    : a.evalScore >= 70
+                      ? "blue"
+                      : "amber"
+              }`}
+              title="The callee's measured track record — evidence for wiring it in as a tool"
+            >
+              {a.evalScore === null
+                ? "no track record"
+                : `${a.evalScore}% · ${count(a.evalCount, "graded")}`}
+            </span>
             <input
               placeholder="When is it called? e.g. Before any deploy action"
               defaultValue={a.note}

@@ -530,10 +530,16 @@ export async function agentRoutes(app: FastifyInstance) {
     const rows = ids.length
       ? await db.select().from(agents).where(inArray(agents.id, ids))
       : [];
+    // A callee runs as a judged session, so it carries a track record —
+    // surface it: wiring an agent as a callable tool is itself an access
+    // decision, and it should be evidence-informed like every other.
+    const scores = await evalScores(req.user!.orgId);
     return {
       subAgents: rows.map((r) => ({
         ...serializeAgent(r),
         note: notes.get(r.id) ?? "",
+        evalScore: scores.get(r.id)?.score ?? null,
+        evalCount: scores.get(r.id)?.count ?? 0,
       })),
     };
   });

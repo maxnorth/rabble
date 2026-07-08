@@ -383,6 +383,9 @@ test("sub-agents: link an agent and annotate the edge", async () => {
   await linkable.getByRole("button", { name: "Attach" }).click();
   const linked = page.locator(".row", { hasText: "claude-agent" });
   await expect(linked.locator(".chip", { hasText: "agent" })).toBeVisible();
+  // The callee's track record shows on the wiring — evidence for the edge.
+  // Claude Agent hasn't been judged yet, so it reads "no track record".
+  await expect(linked.locator(".chip", { hasText: "no track record" })).toBeVisible();
 
   await linked
     .getByPlaceholder("When is it called? e.g. Before any deploy action")

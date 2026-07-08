@@ -163,7 +163,11 @@ export const api = {
   detachMcpServer: (agentId: string, serverId: string) =>
     del<{ ok: true }>(`/api/agents/${agentId}/mcp-servers/${serverId}`),
   subAgents: (id: string) =>
-    get<{ subAgents: Array<Agent & { note: string }> }>(`/api/agents/${id}/sub-agents`),
+    get<{
+      subAgents: Array<
+        Agent & { note: string; evalScore: number | null; evalCount: number }
+      >;
+    }>(`/api/agents/${id}/sub-agents`),
   setSubAgentNote: (id: string, subId: string, note: string) =>
     patch<{ ok: true }>(`/api/agents/${id}/sub-agents/${subId}`, { note }),
   listSurfaces: (agentId: string) =>

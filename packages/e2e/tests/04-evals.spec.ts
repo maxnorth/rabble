@@ -37,7 +37,19 @@ test("add a live criterion to the agent", async () => {
     .getByPlaceholder("What the judge should check (optional)")
     .fill("The reply addresses the user's question directly");
   await page.getByRole("button", { name: "+ Add", exact: true }).first().click();
-  await expect(page.locator(".row", { hasText: "Stays on topic" })).toBeVisible();
+  await expect(page.locator(".row .title", { hasText: "Stays on topic" })).toBeVisible();
+
+  // "Born measured": a starter template fills the form for review (not a silent
+  // add) — the manual path toward measuring an agent. Adding is the same
+  // (already-tested) path, so just prove the starter populates both fields; we
+  // don't persist a second criterion onto the shared agent here.
+  await page.getByRole("button", { name: "+ Cites its source" }).click();
+  await expect(
+    page.getByPlaceholder("Criterion, e.g. Cites a runbook link"),
+  ).toHaveValue("Cites its source");
+  await expect(
+    page.getByPlaceholder("What the judge should check (optional)"),
+  ).toHaveValue(/points to where/);
 });
 
 test("a session gets judged and shows eval chips", async () => {

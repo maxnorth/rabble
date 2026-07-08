@@ -1474,6 +1474,37 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
 // evals
 // ---------------------------------------------------------------------------
 
+// "Agents are born measured" — starter criteria for the manual path (the
+// Builder drafts these conversationally, but a hand-made agent starts blank).
+// Clicking one fills the form for review, not a silent add — human in the loop.
+const CRITERION_STARTERS: Array<{ name: string; description: string }> = [
+  {
+    name: "Stays on topic",
+    description:
+      "The reply addresses what was asked and doesn't wander into unrelated areas.",
+  },
+  {
+    name: "Grounded, not fabricated",
+    description:
+      "Claims are supported by the tools or context; it never invents facts, names, or numbers.",
+  },
+  {
+    name: "Cites its source",
+    description:
+      "When it states a fact or makes a recommendation, it points to where that came from.",
+  },
+  {
+    name: "Respects its scope",
+    description:
+      "It declines requests outside its stated job instead of attempting them.",
+  },
+  {
+    name: "Gives a next step",
+    description:
+      "The reply ends with a concrete action, not just a restatement of the problem.",
+  },
+];
+
 function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
   const criteria = useQuery({
@@ -1691,6 +1722,36 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
             </button>
           </div>
         )}
+        {canEdit &&
+          (() => {
+            const have = new Set(
+              (criteria.data?.criteria ?? []).map((c) => c.name.toLowerCase()),
+            );
+            const starters = CRITERION_STARTERS.filter(
+              (s) => !have.has(s.name.toLowerCase()),
+            );
+            if (starters.length === 0) return null;
+            return (
+              <div
+                className="row"
+                style={{ flexWrap: "wrap", gap: 6, alignItems: "center" }}
+              >
+                <span className="sub" style={{ marginRight: 2 }}>
+                  Starters
+                </span>
+                {starters.map((s) => (
+                  <button
+                    key={s.name}
+                    className="chip"
+                    title={`${s.description} — fills the form; review, then Add`}
+                    onClick={() => setCriterionForm({ ...s })}
+                  >
+                    + {s.name}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
       </div>
 
       {(trust.data?.openReviews.length ?? 0) > 0 && (

@@ -278,13 +278,10 @@ export async function processSlackEvent(
     .select()
     .from(messages)
     .where(eq(messages.sessionId, session!.id));
-  const sessionApproved = priorMessages.some((m) =>
-    ((m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>).some(
-      (tc) =>
-        tc.approval?.status === "approved" ||
-        tc.approval?.status === "auto-approved",
-    ),
+  const { sessionApprovedForUser } = await import(
+    "../runtime/sessionApproval.js"
   );
+  const sessionApproved = sessionApprovedForUser(priorMessages, platformUser.id);
 
   let fullText = "";
   try {

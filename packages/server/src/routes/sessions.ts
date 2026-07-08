@@ -286,13 +286,10 @@ export async function sessionRoutes(app: FastifyInstance) {
         .where(eq(orgs.id, req.user!.orgId))
         .limit(1);
       const orgSettings = orgSettingsSchema.parse({ ...(org?.settings as object) });
-      const sessionApproved = history.some((m) =>
-        ((m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>).some(
-          (tc) =>
-            tc.approval?.status === "approved" ||
-            tc.approval?.status === "auto-approved",
-        ),
+      const { sessionApprovedForUser } = await import(
+        "../runtime/sessionApproval.js"
       );
+      const sessionApproved = sessionApprovedForUser(history, req.user!.id);
 
       const [userMessage] = await db
         .insert(messages)

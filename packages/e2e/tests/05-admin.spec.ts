@@ -1866,6 +1866,19 @@ test("share is one verb: audience, plain-language right, pause/unshare", async (
   await modal.getByRole("button", { name: "Done" }).click();
 });
 
+test("share evidence surfaces the safety half — recent scope violations", async () => {
+  // Eng On-Call recorded an out-of-scope tool attempt in the tools journey.
+  // The Share chip must show that safety signal (not just the eval score) and
+  // flag amber, the same evidence an approver sees in the access queue.
+  await page.goto("/agents");
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  const chip = page.locator(".modal h2 .chip");
+  await expect(chip).toContainText("scope violation");
+  await expect(chip).toHaveClass(/amber/);
+  await page.locator(".modal").getByRole("button", { name: "Done" }).click();
+});
+
 test("request access from the agent page (web-native loop)", async ({
   browser,
 }) => {

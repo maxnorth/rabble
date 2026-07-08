@@ -104,7 +104,7 @@ export async function inboundRoutes(app: FastifyInstance) {
       if (eventName !== "issue_comment" && !isReviewComment) {
         return { ok: true, ignored: "unsupported event" };
       }
-      if (alreadyDelivered(deliveryId ? `gh:${deliveryId}` : undefined)) {
+      if (await alreadyDelivered(deliveryId ? `gh:${deliveryId}` : undefined)) {
         return { ok: true, ignored: "duplicate delivery" };
       }
 

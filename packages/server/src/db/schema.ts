@@ -484,6 +484,16 @@ export const apiKeys = pgTable(
   (t) => [uniqueIndex("api_keys_hash_idx").on(t.keyHash)],
 );
 
+// Durable inbound-event dedup (Slack event_id or "gh:<deliveryId>"). Durability
+// is the point: it suppresses redeliveries across transports, processes, and
+// restarts where the old in-memory Set could not.
+export const deliveredEvents = pgTable("delivered_events", {
+  eventId: text("event_id").primaryKey(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const auditEvents = pgTable(
   "audit_events",
   {

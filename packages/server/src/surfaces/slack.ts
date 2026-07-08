@@ -19,6 +19,7 @@ import {
   agentSurfaces,
   agents,
   connections,
+  deliveredEvents,
   messages,
   sessions,
   users,
@@ -81,17 +82,21 @@ export async function slackApi(
  * reply. Shared across transports on purpose — Slack can retry a webhook
  * delivery over the socket and vice versa.
  */
-const seenEvents = new Set<string>();
-const SEEN_EVENTS_CAP = 5000;
-export function alreadyDelivered(eventId: string | undefined): boolean {
+export async function alreadyDelivered(
+  eventId: string | undefined,
+): Promise<boolean> {
   if (!eventId) return false;
-  if (seenEvents.has(eventId)) return true;
-  seenEvents.add(eventId);
-  if (seenEvents.size > SEEN_EVENTS_CAP) {
-    const oldest = seenEvents.values().next().value;
-    if (oldest) seenEvents.delete(oldest);
-  }
-  return false;
+  // Claim the id atomically: the PK conflict means a concurrent or repeat
+  // delivery (any transport, any process, even after a restart) inserts
+  // nothing and is treated as already delivered. Recording before processing
+  // matches the old Set's semantics — a redelivery after a failed turn is not
+  // reprocessed.
+  const inserted = await db
+    .insert(deliveredEvents)
+    .values({ eventId })
+    .onConflictDoNothing()
+    .returning({ eventId: deliveredEvents.eventId });
+  return inserted.length === 0;
 }
 
 /**
@@ -107,7 +112,7 @@ export async function processSlackEvent(
   if (envelope.type !== "event_callback" || !envelope.event) {
     return { ok: true, ignored: "unsupported envelope" };
   }
-  if (alreadyDelivered(envelope.event_id)) {
+  if (await alreadyDelivered(envelope.event_id)) {
     return { ok: true, ignored: "duplicate delivery" };
   }
 

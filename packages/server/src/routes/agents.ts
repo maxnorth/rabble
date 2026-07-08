@@ -384,6 +384,7 @@ export async function agentRoutes(app: FastifyInstance) {
               name: candidate.name,
               description: candidate.description,
               instructions: candidate.instructions,
+              tone: candidate.tone,
             },
             model,
           );

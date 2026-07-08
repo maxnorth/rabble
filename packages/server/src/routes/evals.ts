@@ -546,7 +546,12 @@ export async function evalRoutes(app: FastifyInstance) {
 
     const outcomes = await executeSuiteCases(
       suiteId,
-      { name: agent.name, description: agent.description, instructions: agent.instructions },
+      {
+        name: agent.name,
+        description: agent.description,
+        instructions: agent.instructions,
+        tone: agent.tone,
+      },
       model,
     );
     const runId = await recordSuiteRun(suiteId, outcomes);

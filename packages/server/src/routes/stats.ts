@@ -70,6 +70,13 @@ export async function statsRoutes(app: FastifyInstance) {
       ...(agentId ? [eq(sessions.agentId, agentId)] : []),
       ...(userId ? [eq(sessions.userId, userId)] : []),
     ];
+    // Raw-SQL equivalents (alias `s`) so every session-derived panel honours
+    // the same agent/user filter — otherwise the page mixes scoped KPIs with
+    // unscoped tables under one filter and reads as one coherent view.
+    const sAgent = agentId ? sql`AND s.agent_id = ${agentId}` : sql``;
+    const sUser = userId ? sql`AND s.user_id = ${userId}` : sql``;
+    // Evals have no user dimension; only the agent filter narrows them.
+    const evalAgentFilter = agentId ? [eq(evalCriteria.agentId, agentId)] : [];
 
     const [kpis] = await db
       .select({
@@ -171,7 +178,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .from(evalResults)
       .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
       .innerJoin(agents, eq(evalCriteria.agentId, agents.id))
-      .where(and(eq(agents.orgId, orgId), gte(evalResults.createdAt, since)));
+      .where(and(eq(agents.orgId, orgId), gte(evalResults.createdAt, since), ...evalAgentFilter));
 
     const evalByAgent = await db
       .select({
@@ -183,7 +190,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .from(evalResults)
       .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
       .innerJoin(agents, eq(evalCriteria.agentId, agents.id))
-      .where(and(eq(agents.orgId, orgId), gte(evalResults.createdAt, since)))
+      .where(and(eq(agents.orgId, orgId), gte(evalResults.createdAt, since), ...evalAgentFilter))
       .groupBy(agents.id, agents.name)
       .orderBy(sql`round(avg(CASE WHEN ${evalResults.passed} THEN 100.0 ELSE 0.0 END)) DESC`);
 
@@ -229,7 +236,7 @@ export async function statsRoutes(app: FastifyInstance) {
       FROM messages m
       JOIN sessions s ON s.id = m.session_id,
       LATERAL jsonb_array_elements(m.tool_calls) AS tc
-      WHERE s.org_id = ${orgId} AND m.created_at >= ${since}
+      WHERE s.org_id = ${orgId} AND m.created_at >= ${since} ${sAgent} ${sUser}
       GROUP BY tc->>'name', tc->>'serverName'
       ORDER BY count(*) DESC
       LIMIT 20
@@ -283,7 +290,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .innerJoin(sessions, eq(messages.sessionId, sessions.id))
       .innerJoin(agents, eq(sessions.agentId, agents.id))
       .leftJoin(sql`models mo`, sql`mo.id = coalesce(messages.model_id, agents.model_id)`)
-      .where(and(eq(sessions.orgId, orgId), gte(messages.createdAt, since)))
+      .where(and(eq(sessions.orgId, orgId), gte(messages.createdAt, since), ...agentFilter))
       .groupBy(sql`coalesce(mo.display_name, '(no model)')`)
       .orderBy(sql`count(*) DESC`);
 
@@ -299,7 +306,7 @@ export async function statsRoutes(app: FastifyInstance) {
       .from(evalResults)
       .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
       .innerJoin(agents, eq(evalCriteria.agentId, agents.id))
-      .where(and(eq(agents.orgId, orgId), gte(evalResults.createdAt, since)))
+      .where(and(eq(agents.orgId, orgId), gte(evalResults.createdAt, since), ...evalAgentFilter))
       .groupBy(evalCriteria.id, evalCriteria.name, agents.name)
       .orderBy(sql`round(avg(CASE WHEN ${evalResults.passed} THEN 100.0 ELSE 0.0 END)) ASC`);
 
@@ -308,7 +315,7 @@ export async function statsRoutes(app: FastifyInstance) {
       FROM messages m
       JOIN sessions s ON s.id = m.session_id,
       LATERAL jsonb_array_elements(m.tool_calls) AS tc
-      WHERE s.org_id = ${orgId} AND m.created_at >= ${since}
+      WHERE s.org_id = ${orgId} AND m.created_at >= ${since} ${sAgent} ${sUser}
       GROUP BY tc->>'authType'
     `);
     const authSplit = (authSplitResult.rows as Array<{

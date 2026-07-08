@@ -864,19 +864,26 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
       "agent:Mock reply to: Deploy status over the socket?",
     ]);
 
-  const log = (await (
-    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
-  ).json()) as {
-    requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
-  };
-  expect(
-    log.requests.some(
-      (r) =>
-        r.path === "/api/chat.postMessage" &&
-        r.body.thread_ts === "1799.001" &&
-        r.body.text?.includes("Mock reply to: Deploy status over the socket?"),
-    ),
-  ).toBe(true);
+  // The reply is posted to Slack AFTER the turn persists, so poll the emulator
+  // log rather than reading it once — the DB poll above can win the race.
+  await expect
+    .poll(
+      async () => {
+        const log = (await (
+          await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+        ).json()) as {
+          requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+        };
+        return log.requests.some(
+          (r) =>
+            r.path === "/api/chat.postMessage" &&
+            r.body.thread_ts === "1799.001" &&
+            r.body.text?.includes("Mock reply to: Deploy status over the socket?"),
+        );
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
 
   // A redelivered envelope (same event_id) never runs a second turn.
   await fetch(`${EMULATOR}/admin/slack/socket-event`, {

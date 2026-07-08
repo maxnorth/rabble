@@ -194,7 +194,10 @@ export const messages = pgTable("messages", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (t) => [
+  // Messages are loaded by session, ordered by time, on every turn and view.
+  index("messages_session_created_idx").on(t.sessionId, t.createdAt),
+]);
 
 // ---------------------------------------------------------------------------
 // Governance: teams, domains, grants

@@ -532,41 +532,52 @@ export async function* runAgentTurn(
 
   // Drive the graph in the background; all events flow through the channel.
   const run = (async () => {
-    const stream = await deepAgent.stream(
-      { messages: turnMessages },
-      { streamMode: "messages", recursionLimit: 50 },
-    );
     let inputTokens = 0;
     let outputTokens = 0;
-    for await (const item of stream) {
-      const [chunk] = item as [unknown, unknown];
-      if (isAIMessageChunk(chunk as AIMessageChunk)) {
-        const aiChunk = chunk as AIMessageChunk;
-        const text = chunkText(aiChunk.content);
-        if (text) channel.push({ type: "text", text });
-        for (const call of aiChunk.tool_call_chunks ?? []) {
-          if (call.name) attemptedTools.add(call.name);
-        }
-        if (aiChunk.usage_metadata) {
-          inputTokens += aiChunk.usage_metadata.input_tokens ?? 0;
-          outputTokens += aiChunk.usage_metadata.output_tokens ?? 0;
+    try {
+      const stream = await deepAgent.stream(
+        { messages: turnMessages },
+        { streamMode: "messages", recursionLimit: 50 },
+      );
+      for await (const item of stream) {
+        const [chunk] = item as [unknown, unknown];
+        if (isAIMessageChunk(chunk as AIMessageChunk)) {
+          const aiChunk = chunk as AIMessageChunk;
+          const text = chunkText(aiChunk.content);
+          if (text) channel.push({ type: "text", text });
+          for (const call of aiChunk.tool_call_chunks ?? []) {
+            if (call.name) attemptedTools.add(call.name);
+          }
+          if (aiChunk.usage_metadata) {
+            inputTokens += aiChunk.usage_metadata.input_tokens ?? 0;
+            outputTokens += aiChunk.usage_metadata.output_tokens ?? 0;
+          }
         }
       }
-    }
-    const violations = [...attemptedTools].filter((n) => !allowedTools.has(n));
-    if (violations.length > 0) {
-      const { scopeViolations } = await import("../db/schema.js");
-      for (const toolName of violations) {
-        await db.insert(scopeViolations).values({
-          orgId: input.agent.orgId,
-          agentId: input.agent.id,
-          sessionId: input.sessionId,
-          toolName,
-        });
+    } finally {
+      // Record out-of-scope attempts and usage even when the stream errors
+      // partway (recursion limit, model failure): the attempt is exactly the
+      // signal the trust surface must not lose, and partial spend is real.
+      // Best-effort so a bookkeeping failure never masks the turn's own error.
+      const violations = [...attemptedTools].filter((n) => !allowedTools.has(n));
+      if (violations.length > 0) {
+        try {
+          const { scopeViolations } = await import("../db/schema.js");
+          for (const toolName of violations) {
+            await db.insert(scopeViolations).values({
+              orgId: input.agent.orgId,
+              agentId: input.agent.id,
+              sessionId: input.sessionId,
+              toolName,
+            });
+          }
+        } catch {
+          /* bookkeeping only — swallow so the real turn error surfaces */
+        }
       }
-    }
-    if (inputTokens || outputTokens) {
-      channel.push({ type: "usage", inputTokens, outputTokens });
+      if (inputTokens || outputTokens) {
+        channel.push({ type: "usage", inputTokens, outputTokens });
+      }
     }
   })();
   void run.finally(() => channel.close()).catch(() => channel.close());

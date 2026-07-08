@@ -20,7 +20,7 @@ import {
 } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { recordAudit } from "../audit.js";
-import { agentInOrg, hasRight, rightsForAllAgents } from "../rights.js";
+import { hasRight, rightsForAllAgents } from "../rights.js";
 import { chatModelFor } from "../models/chat.js";
 import { judgeText } from "../evals/judge.js";
 import { executeSuiteCases, recordSuiteRun } from "../evals/suiteRunner.js";
@@ -30,6 +30,30 @@ async function requireEdit(req: { user: unknown }, agentId: string) {
   return hasRight(rights.get(agentId) ?? null, "edit");
 }
 
+/**
+ * Read gate for an agent's eval data — the same visibility rule the agent
+ * itself uses (routes/agents.ts): the agent must be in the caller's org, and
+ * a DRAFT is visible only to someone with edit on it. Without this a member
+ * could read a hidden draft's criteria, frozen case inputs, rubrics, and
+ * trust through the eval routes, which check only org membership.
+ */
+async function canReadAgentEvals(
+  req: { user: { orgId: string } | null },
+  agentId: string,
+): Promise<boolean> {
+  if (!req.user) return false;
+  const [agent] = await db
+    .select({ status: agents.status, orgId: agents.orgId })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  if (!agent || agent.orgId !== req.user.orgId) return false;
+  if (agent.status === "draft" && !(await requireEdit(req, agentId))) {
+    return false;
+  }
+  return true;
+}
+
 export async function evalRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
 
@@ -37,7 +61,7 @@ export async function evalRoutes(app: FastifyInstance) {
 
   app.get("/api/agents/:agentId/criteria", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
-    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+    if (!(await canReadAgentEvals(req, agentId))) {
       return reply.code(404).send({ error: "Agent not found" });
     }
     const rows = await db
@@ -125,7 +149,7 @@ export async function evalRoutes(app: FastifyInstance) {
 
   app.get("/api/agents/:agentId/suites", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
-    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+    if (!(await canReadAgentEvals(req, agentId))) {
       return reply.code(404).send({ error: "Agent not found" });
     }
     const rows = await db
@@ -278,7 +302,7 @@ export async function evalRoutes(app: FastifyInstance) {
   // Trust panel: review queue + scope violations + judge disclosure.
   app.get("/api/agents/:agentId/trust", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
-    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+    if (!(await canReadAgentEvals(req, agentId))) {
       return reply.code(404).send({ error: "Agent not found" });
     }
     const { scopeViolations } = await import("../db/schema.js");
@@ -392,7 +416,7 @@ export async function evalRoutes(app: FastifyInstance) {
       .from(evalSuites)
       .where(eq(evalSuites.id, suiteId))
       .limit(1);
-    if (!suite || !(await agentInOrg(req.user!.orgId, suite.agentId))) {
+    if (!suite || !(await canReadAgentEvals(req, suite.agentId))) {
       return reply.code(404).send({ error: "Suite not found" });
     }
     const rows = await db

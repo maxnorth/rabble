@@ -254,5 +254,15 @@ test("drafts are invisible to non-editors", async ({ browser }) => {
   await expect(
     memberPage.locator(".dir-table tbody tr", { hasText: "Secret Draft" }),
   ).toHaveCount(0);
+
+  // Invisible means invisible through the eval routes too — a draft's
+  // criteria/suites/trust must not leak to a member who can't see the agent.
+  const [draft] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Secret Draft' AND status = 'draft'",
+  );
+  for (const path of ["criteria", "suites", "trust"]) {
+    const res = await memberPage.request.get(`/api/agents/${draft!.id}/${path}`);
+    expect(res.status(), `GET /api/agents/:id/${path} on a hidden draft`).toBe(404);
+  }
   await memberPage.close();
 });

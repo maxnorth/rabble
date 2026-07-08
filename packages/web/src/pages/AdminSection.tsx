@@ -1550,7 +1550,9 @@ function AuditPage() {
           <option value="">All actions</option>
           {[
             "agent",
+            "automation",
             "grant",
+            "access",
             "team",
             "domain",
             "model",
@@ -1559,6 +1561,7 @@ function AuditPage() {
             "api-key",
             "eval",
             "member",
+            "profile",
             "org",
           ].map((a) => (
             <option key={a} value={a}>

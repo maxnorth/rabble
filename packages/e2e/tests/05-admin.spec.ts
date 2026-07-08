@@ -2253,6 +2253,22 @@ test("stats dashboards reflect real usage", async () => {
   await expect(
     page.locator(".chart-card", { hasText: "Token use by model" }),
   ).toContainText("Mock Model");
+
+  // Spend is priced at use time: each agent message snapshots its model's rate
+  // so deleting or re-pricing the model later can't rewrite history. Every
+  // priced agent message carries a snapshot equal to its model's live rate.
+  const snapshotMismatch = await dbQuery<{ n: string }>(
+    `SELECT count(*) AS n FROM messages m
+     JOIN models mo ON mo.id = m.model_id
+     WHERE m.role = 'agent' AND mo.price_input_per_mtok IS NOT NULL
+       AND (m.price_input_per_mtok IS DISTINCT FROM mo.price_input_per_mtok
+         OR m.price_output_per_mtok IS DISTINCT FROM mo.price_output_per_mtok)`,
+  );
+  expect(Number(snapshotMismatch[0]!.n)).toBe(0);
+  const snapshotCount = await dbQuery<{ n: string }>(
+    "SELECT count(*) AS n FROM messages WHERE role = 'agent' AND price_input_per_mtok IS NOT NULL",
+  );
+  expect(Number(snapshotCount[0]!.n)).toBeGreaterThan(0);
   await expect(
     page.locator(".chart-card", { hasText: "Turns per session" }).locator(".bar-row").first(),
   ).toBeVisible();

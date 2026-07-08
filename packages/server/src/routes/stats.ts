@@ -164,7 +164,9 @@ export async function statsRoutes(app: FastifyInstance) {
     const [evalKpis] = await db
       .select({
         passRate: sql<number | null>`round(avg(CASE WHEN ${evalResults.passed} THEN 100.0 ELSE 0.0 END))::int`,
-        evaluated: sql<number>`count(*)::int`,
+        // Distinct sessions, not verdict rows — eval_results has one row per
+        // (session, criterion), so count(*) would multiply by the criteria count.
+        evaluated: sql<number>`count(DISTINCT ${evalResults.sessionId})::int`,
       })
       .from(evalResults)
       .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
@@ -238,13 +240,15 @@ export async function statsRoutes(app: FastifyInstance) {
       count: number;
     }>).map((r) => ({ tool: r.tool ?? "unknown", server: r.server, count: Number(r.count) }));
 
-    // $ spend: message tokens priced at the agent's model rates. Unpriced
-    // models contribute nothing (pricedSessions tracks coverage).
+    // $ spend: message tokens priced by model rate. Unpriced models (null
+    // price) contribute $0 — the totals are a lower bound when any active
+    // model is unpriced. Group by agent id, not name: names aren't unique, so
+    // grouping by name would merge two distinct agents' cost into one row.
     const spendResult = await db.execute(sql`
-      SELECT a.name AS agent_name,
+      SELECT a.id AS agent_id, a.name AS agent_name,
              count(DISTINCT s.id)::int AS sessions,
-             sum(m.input_tokens  * coalesce(mo.price_input_per_mtok, 0)  / 1e6
-               + m.output_tokens * coalesce(mo.price_output_per_mtok, 0) / 1e6
+             sum(m.input_tokens  * coalesce(m.price_input_per_mtok,  mo.price_input_per_mtok,  0) / 1e6
+               + m.output_tokens * coalesce(m.price_output_per_mtok, mo.price_output_per_mtok, 0) / 1e6
              )::numeric(12,4) AS spend
       FROM messages m
       JOIN sessions s ON s.id = m.session_id
@@ -253,7 +257,7 @@ export async function statsRoutes(app: FastifyInstance) {
       WHERE s.org_id = ${orgId} AND m.created_at >= ${since}
         ${agentId ? sql`AND s.agent_id = ${agentId}` : sql``}
         ${userId ? sql`AND s.user_id = ${userId}` : sql``}
-      GROUP BY a.name
+      GROUP BY a.id, a.name
       ORDER BY spend DESC
     `);
     const spendByAgent = (spendResult.rows as Array<{

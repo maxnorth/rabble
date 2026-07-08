@@ -177,6 +177,10 @@ export const messages = pgTable("messages", {
   outputTokens: integer("output_tokens").notNull().default(0),
   // Which model produced this agent message (spend is priced at use time)
   modelId: uuid("model_id").references(() => models.id, { onDelete: "set null" }),
+  // The model's rate snapshotted at write time, so spend survives the model
+  // being deleted or re-priced later (model_id above is set null on delete).
+  priceInputPerMtok: numeric("price_input_per_mtok", { precision: 10, scale: 4 }),
+  priceOutputPerMtok: numeric("price_output_per_mtok", { precision: 10, scale: 4 }),
   // Who wrote this user message (multi-participant surface threads)
   authorUserId: uuid("author_user_id").references(() => users.id, {
     onDelete: "set null",

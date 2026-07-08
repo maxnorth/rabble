@@ -92,6 +92,8 @@ export async function executeTurnAndPersist(
       inputTokens,
       outputTokens,
       modelId: input.model?.id ?? null,
+      priceInputPerMtok: input.model?.priceInputPerMtok ?? null,
+      priceOutputPerMtok: input.model?.priceOutputPerMtok ?? null,
     });
     await db
       .update(sessions)
@@ -108,6 +110,8 @@ export async function executeTurnAndPersist(
     inputTokens,
     outputTokens,
     modelId: input.model?.id ?? null,
+    priceInputPerMtok: input.model?.priceInputPerMtok ?? null,
+    priceOutputPerMtok: input.model?.priceOutputPerMtok ?? null,
   });
   await db
     .update(sessions)

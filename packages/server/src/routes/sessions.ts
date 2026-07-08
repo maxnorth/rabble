@@ -354,6 +354,8 @@ export async function sessionRoutes(app: FastifyInstance) {
           inputTokens,
           outputTokens,
           modelId: model?.id ?? null,
+          priceInputPerMtok: model?.priceInputPerMtok ?? null,
+          priceOutputPerMtok: model?.priceOutputPerMtok ?? null,
         })
         .returning();
       await db
@@ -390,6 +392,8 @@ export async function sessionRoutes(app: FastifyInstance) {
           inputTokens,
           outputTokens,
           modelId: model?.id ?? null,
+          priceInputPerMtok: model?.priceInputPerMtok ?? null,
+          priceOutputPerMtok: model?.priceOutputPerMtok ?? null,
         });
         await db
           .update(sessions)

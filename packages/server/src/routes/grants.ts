@@ -162,6 +162,39 @@ export async function grantRoutes(app: FastifyInstance) {
         .send({ error: "You need admin access to manage grants here" });
     }
 
+    // The target must belong to this org — symmetry with the subject check
+    // below. Without it an admin could mint a grant referencing another org's
+    // domain or model id (agent targets are already covered by the admin-right
+    // check, which fails closed for a foreign agent).
+    const targetInOrg = await (async () => {
+      if (body.targetType === "agent") {
+        const [a] = await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(and(eq(agents.id, body.targetId), eq(agents.orgId, req.user!.orgId)))
+          .limit(1);
+        return Boolean(a);
+      }
+      if (body.targetType === "domain") {
+        const [d] = await db
+          .select({ id: domains.id })
+          .from(domains)
+          .where(and(eq(domains.id, body.targetId), eq(domains.orgId, req.user!.orgId)))
+          .limit(1);
+        return Boolean(d);
+      }
+      const { models } = await import("../db/schema.js");
+      const [m] = await db
+        .select({ id: models.id })
+        .from(models)
+        .where(and(eq(models.id, body.targetId), eq(models.orgId, req.user!.orgId)))
+        .limit(1);
+      return Boolean(m);
+    })();
+    if (!targetInOrg) {
+      return reply.code(404).send({ error: "Target not found" });
+    }
+
     // Validate subject and target belong to this org
     if (body.subjectType === "user") {
       const [u] = await db

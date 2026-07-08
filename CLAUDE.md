@@ -97,6 +97,18 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   model) comes from GET /api/agents/:id/trust; scope violations are
   recorded by the runtime when the model calls a tool outside its governed
   set + runtime built-ins (see RUNTIME_BUILTINS in agentTurn.ts).
+- Outbound web access is a capability, not a default (`runtime/webTools.ts`,
+  `buildWebTools`): the agent gets a governed `fetch_url` tool ONLY when its
+  Advanced-tab `capabilities.outboundWebAccess` is on, and every fetch is
+  bound to `capabilities.networkAllowlist`. Fail-closed — no capability or an
+  empty allowlist refuses all fetches. Allowlist matching is exact-host or
+  `*.suffix` (proper subdomains only, never the apex, never a substring, so
+  `evil-example.com` can't ride in on `example.com`); redirects are followed
+  but re-checked per hop; http/https only, with a timeout and size cap. The
+  allowlist IS the authorization boundary (an admin naming a host authorizes
+  egress there, localhost included — which is what lets e2e fetch the
+  emulator). Runs as the org service account (no per-call approval); the tool
+  name joins `allowedTools` so a legit fetch isn't a false scope violation.
 - Sub-agent delegation (bounded delegation pillar): agents linked via the
   "Agents" tab (`agent_links`; attach needs `use` on the target) become
   callable tools (`ask_<slug>`) in `buildSubAgentTools`. Each call runs the

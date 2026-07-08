@@ -41,6 +41,7 @@ import { recordAudit } from "../audit.js";
 import { Channel } from "./channel.js";
 import { gateUserAuth, type GateContext } from "./userAuthGate.js";
 import { buildPlatformTools } from "./platformTools.js";
+import { buildWebTools } from "./webTools.js";
 
 // How deep a chain of agents-calling-agents may go, and how many delegations
 // one turn may issue. Bounded delegation is a product pillar, not open-ended
@@ -487,6 +488,12 @@ export async function* runAgentTurn(
       ...buildPlatformTools(input, (event) => channel.push(event)),
     );
   }
+  // Outbound web access is a capability gated on the agent's Advanced tab:
+  // present only when `outboundWebAccess` is on, and every fetch is bound to
+  // the configured network allowlist (fail-closed when empty).
+  governedTools.push(
+    ...buildWebTools(input.agent, (event) => channel.push(event)),
+  );
   // Agents this one is wired to call become governed, callable tools — the
   // "bounded delegation" pillar. Included in the tool set below, so a
   // delegation is never misread as a scope violation.

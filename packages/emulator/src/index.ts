@@ -26,7 +26,7 @@ import { mountAnthropic, mountOpenAi } from "./llm.js";
 import { mountMcp } from "./mcp.js";
 import { mountSlack, pushSlackSocketEnvelope } from "./slack.js";
 import { mountGithub } from "./github.js";
-import { reset, state, type McpToolDef, type ScriptedReply } from "./state.js";
+import { logRequest, reset, state, type McpToolDef, type ScriptedReply } from "./state.js";
 
 export async function buildEmulator() {
   const app = Fastify({ logger: false });
@@ -47,6 +47,22 @@ export async function buildEmulator() {
   mountMcp(app);
   mountSlack(app);
   mountGithub(app);
+
+  // A generic fetchable web page, standing in for the open internet, so the
+  // governed `fetch_url` tool can be exercised against a real host. The
+  // response echoes the path; `/redirect?to=...` 302s so redirect-following
+  // (and its per-hop allowlist re-check) can be tested too.
+  app.get("/mock/web/redirect", async (req, reply) => {
+    const { to } = req.query as { to?: string };
+    logRequest("web", "GET", "/redirect", { to: to ?? null });
+    reply.header("location", to ?? "/mock/web/hello").code(302);
+    return "";
+  });
+  app.get("/mock/web/*", async (req) => {
+    const path = (req.params as Record<string, string>)["*"] ?? "";
+    logRequest("web", "GET", `/${path}`, null);
+    return `Hello from the emulated web (path: ${path}).`;
+  });
 
   // --- admin ---
   app.post("/admin/reset", async () => {

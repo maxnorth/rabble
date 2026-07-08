@@ -418,6 +418,82 @@ test("an out-of-scope tool attempt is recorded as a violation", async () => {
   ).toBeVisible();
 });
 
+test("outbound web access: fetch obeys the network allowlist", async () => {
+  // A dedicated agent whose Advanced tab turns on outbound web access and
+  // allowlists only the emulator host.
+  const modelsRes = (await (await page.request.get("/api/models")).json()) as {
+    models: Array<{ id: string; enabled: boolean }>;
+  };
+  const modelId = (modelsRes.models.find((m) => m.enabled) ?? modelsRes.models[0]!).id;
+  const created = (await (
+    await page.request.post("/api/agents", {
+      data: {
+        name: "Web Fetcher",
+        description: "Fetches allowlisted URLs",
+        instructions: "Fetch pages when asked.",
+        modelId,
+        status: "active",
+      },
+    })
+  ).json()) as { agent: { id: string; slug: string } };
+  const agentId = created.agent.id;
+
+  try {
+    await page.request.patch(`/api/agents/${agentId}`, {
+      data: { capabilities: { outboundWebAccess: true, networkAllowlist: "localhost" } },
+    });
+
+    // 1) An allowlisted host is fetched and its body folds back as tool output.
+    await enqueueToolCall("fetch_url", { url: `${EMULATOR}/mock/web/runbook` });
+    await page.locator("nav a[title='Sessions']").click();
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Fetch the runbook page");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const chip = page.locator(".tool-call", { hasText: "fetch_url" }).first();
+    await expect(chip).toBeVisible({ timeout: 15_000 });
+
+    const ok = await pollFirstToolCall("%Fetch the runbook page%");
+    expect(ok).toMatchObject({ name: "fetch_url", authType: "service" });
+    expect(String(ok.output)).toContain("Hello from the emulated web");
+    expect(String(ok.output)).toContain("path: runbook");
+    // The emulator actually received the GET.
+    const webLog = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=web`)
+    ).json()) as { requests: Array<{ path: string }> };
+    expect(webLog.requests.some((r) => r.path === "/runbook")).toBe(true);
+
+    // 2) A host outside the allowlist is refused before any network call.
+    await enqueueToolCall("fetch_url", { url: "https://evil.example.com/steal" });
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Fetch the evil page");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+      timeout: 15_000,
+    });
+    const refused = await pollFirstToolCall("%Fetch the evil page%");
+    expect(String(refused.output)).toContain("Refused:");
+    expect(String(refused.output)).toContain("not in this agent's network allowlist");
+    // Nothing left the box: the emulator never saw evil.example.com.
+    const evilLog = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=evil.example.com`)
+    ).json()) as { requests: unknown[] };
+    expect(evilLog.requests).toHaveLength(0);
+  } finally {
+    await dbQuery("DELETE FROM sessions WHERE agent_id = $1", [agentId]);
+    await page.request.delete(`/api/agents/${agentId}`);
+  }
+});
+
 test("audit trail covers the tool governance actions", async () => {
   const audit = await dbQuery<{ action: string }>(
     `SELECT action FROM audit_events

@@ -2002,7 +2002,7 @@ const CAPABILITIES: Array<{ key: keyof AgentCapabilities; label: string; hint: s
   { key: "codeSandbox", label: "Code sandbox", hint: "Isolated execution environment" },
   { key: "codeExecution", label: "Code execution", hint: "Run scripts, tests, build commands" },
   { key: "pullRequestAccess", label: "Pull request access", hint: "Create and update PRs on connected repos" },
-  { key: "outboundWebAccess", label: "Outbound web access", hint: "Fetch external URLs during sessions" },
+  { key: "outboundWebAccess", label: "Outbound web access", hint: "Gives a governed fetch_url tool, bound to the allowlist below" },
 ];
 
 function AdvancedTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
@@ -2054,7 +2054,7 @@ function AdvancedTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
         <div className="row">
           <div className="grow">
             <div className="title">Network allowlist</div>
-            <div className="sub">Restrict which hosts tools can reach (comma-separated)</div>
+            <div className="sub">Hosts fetch_url may reach — exact or *.wildcard, comma-separated. Empty means no web access.</div>
           </div>
           <input
             className="mono"

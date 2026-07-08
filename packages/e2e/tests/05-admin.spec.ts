@@ -2319,6 +2319,12 @@ test("profile: connected account and approval posture persist", async () => {
     "SELECT preferences FROM users WHERE email = 'alex@acme.com'",
   );
   expect(prefs[0]!.preferences.approvalPosture).toBe("trust");
+
+  // Approval posture is a governance control, so the change is on the record.
+  const postureAudit = await dbQuery<{ summary: string }>(
+    "SELECT summary FROM audit_events WHERE action = 'profile.posture'",
+  );
+  expect(postureAudit.some((a) => a.summary.includes("trust"))).toBe(true);
 });
 
 test("preferences: collapsed tool calls hide chips until expanded", async () => {

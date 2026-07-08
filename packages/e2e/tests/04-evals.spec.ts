@@ -126,6 +126,15 @@ test("suites: create, add a case, run it", async () => {
   expect(results).toHaveLength(1);
   expect(results[0]!.passed).toBe(true);
   expect(results[0]!.output).toContain("Mock reply to:");
+
+  // One run shows no trajectory yet.
+  await expect(suiteRow.locator(".suite-trend")).toHaveCount(0);
+
+  // A second run builds the pass-rate trend — the regression signal.
+  await page.getByRole("button", { name: "Run suite" }).click();
+  await expect(suiteRow.locator(".suite-trend > div")).toHaveCount(2, {
+    timeout: 30_000,
+  });
 });
 
 test("suites: marking a suite as gating persists and shows the chip", async () => {

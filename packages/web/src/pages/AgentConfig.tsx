@@ -1721,6 +1721,34 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
                   ? ` · last run ${s.lastRun.passed}/${s.lastRun.total} passed`
                   : " · never run"}
               </div>
+              {s.runHistory.length >= 2 && (
+                <div
+                  className="suite-trend"
+                  style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 18, marginTop: 5 }}
+                  title="Pass rate across recent runs (oldest → newest)"
+                >
+                  {s.runHistory.map((r) => {
+                    const pct = r.total > 0 ? (r.passed / r.total) * 100 : 0;
+                    const color =
+                      pct >= 100 ? "var(--green)" : pct > 0 ? "var(--amber)" : "var(--red)";
+                    return (
+                      <div
+                        key={r.id}
+                        style={{
+                          width: 5,
+                          height: Math.max(3, Math.round((pct / 100) * 16)),
+                          background: color,
+                          borderRadius: 1,
+                          opacity: 0.85,
+                        }}
+                        title={`${r.passed}/${r.total} passed · ${new Date(
+                          r.startedAt,
+                        ).toLocaleDateString()}`}
+                      />
+                    );
+                  })}
+                </div>
+              )}
             </div>
             {canEdit && (
               <label

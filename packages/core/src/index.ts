@@ -889,21 +889,23 @@ export const sessionEvalResultSchema = z.object({
 });
 export type SessionEvalResult = z.infer<typeof sessionEvalResultSchema>;
 
+const suiteRunSummarySchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["running", "completed", "failed"]),
+  passed: z.number().int(),
+  total: z.number().int(),
+  startedAt: z.string(),
+});
+
 export const evalSuiteSchema = z.object({
   id: z.string().uuid(),
   agentId: z.string().uuid(),
   name: z.string(),
   gating: z.boolean(),
   caseCount: z.number().int(),
-  lastRun: z
-    .object({
-      id: z.string().uuid(),
-      status: z.enum(["running", "completed", "failed"]),
-      passed: z.number().int(),
-      total: z.number().int(),
-      startedAt: z.string(),
-    })
-    .nullable(),
+  lastRun: suiteRunSummarySchema.nullable(),
+  /** Recent runs oldest→newest — the suite's pass-rate trajectory. */
+  runHistory: z.array(suiteRunSummarySchema).default([]),
   createdAt: z.string(),
 });
 export type EvalSuite = z.infer<typeof evalSuiteSchema>;

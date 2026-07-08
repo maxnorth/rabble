@@ -164,36 +164,41 @@ export async function evalRoutes(app: FastifyInstance) {
         .select({ count: sql<number>`count(*)::int` })
         .from(evalCases)
         .where(eq(evalCases.suiteId, suite.id));
-      const [lastRun] = await db
-        .select()
+      // Last runs with their pass tallies, newest first — one grouped query
+      // instead of a per-run round trip. The history is the regression signal:
+      // is this suite's pass rate climbing or sliding over successive runs?
+      const runRows = await db
+        .select({
+          id: suiteRuns.id,
+          status: suiteRuns.status,
+          startedAt: suiteRuns.startedAt,
+          passed: sql<number>`count(*) FILTER (WHERE ${caseResults.passed})::int`,
+          total: sql<number>`count(${caseResults.id})::int`,
+        })
         .from(suiteRuns)
+        .leftJoin(caseResults, eq(caseResults.runId, suiteRuns.id))
         .where(eq(suiteRuns.suiteId, suite.id))
+        .groupBy(suiteRuns.id, suiteRuns.status, suiteRuns.startedAt)
         .orderBy(desc(suiteRuns.startedAt))
-        .limit(1);
-      let runSummary = null;
-      if (lastRun) {
-        const [tally] = await db
-          .select({
-            passed: sql<number>`count(*) FILTER (WHERE passed)::int`,
-            total: sql<number>`count(*)::int`,
-          })
-          .from(caseResults)
-          .where(eq(caseResults.runId, lastRun.id));
-        runSummary = {
-          id: lastRun.id,
-          status: lastRun.status,
-          passed: tally?.passed ?? 0,
-          total: tally?.total ?? 0,
-          startedAt: lastRun.startedAt.toISOString(),
-        };
-      }
+        .limit(10);
+      // Oldest → newest, so the UI can draw a left-to-right trend.
+      const runHistory = runRows
+        .map((r) => ({
+          id: r.id,
+          status: r.status,
+          passed: r.passed,
+          total: r.total,
+          startedAt: r.startedAt.toISOString(),
+        }))
+        .reverse();
       suites.push({
         id: suite.id,
         agentId: suite.agentId,
         name: suite.name,
         gating: suite.gating,
         caseCount: caseCount?.count ?? 0,
-        lastRun: runSummary,
+        lastRun: runHistory[runHistory.length - 1] ?? null,
+        runHistory,
         createdAt: suite.createdAt.toISOString(),
       });
     }

@@ -583,18 +583,36 @@ export async function seedDemo(): Promise<void> {
       },
     ])
     .returning();
-  const [run] = await db
-    .insert(suiteRuns)
-    .values({ suiteId: suite!.id, status: "completed", completedAt: daysAgo(2) })
-    .returning();
-  for (const c of caseRows) {
-    await db.insert(caseResults).values({
-      runId: run!.id,
-      caseId: c.id,
-      passed: true,
-      output: "Deterministic checklist behavior verified.",
-      reasoning: "Matches the rubric.",
-    });
+  // A run history, not a single run: a regression the gate caught, then a
+  // recovery — the pass-rate trajectory the Evals trend visualizes.
+  const runSpecs = [
+    { day: 32, passed: 1 },
+    { day: 18, passed: 1 },
+    { day: 9, passed: 2 },
+    { day: 2, passed: 2 },
+  ];
+  for (const spec of runSpecs) {
+    const [run] = await db
+      .insert(suiteRuns)
+      .values({
+        suiteId: suite!.id,
+        status: "completed",
+        startedAt: daysAgo(spec.day),
+        completedAt: daysAgo(spec.day),
+      })
+      .returning();
+    for (let i = 0; i < caseRows.length; i++) {
+      const passed = i < spec.passed;
+      await db.insert(caseResults).values({
+        runId: run!.id,
+        caseId: caseRows[i]!.id,
+        passed,
+        output: passed
+          ? "Deterministic checklist behavior verified."
+          : "Approved a release with an open incident.",
+        reasoning: passed ? "Matches the rubric." : "Violated the rubric.",
+      });
+    }
   }
 
   // Trust-loop flavor: one recorded scope violation and one verdict in review

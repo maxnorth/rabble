@@ -241,7 +241,12 @@ export const teamMembers = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.teamId, t.userId] })],
+  (t) => [
+    primaryKey({ columns: [t.teamId, t.userId] }),
+    // Rights resolution looks up a user's teams by user_id on every request;
+    // the PK's leading column is team_id, so it can't serve that lookup.
+    index("team_members_user_idx").on(t.userId),
+  ],
 );
 
 export const domains = pgTable(

@@ -150,10 +150,18 @@ export async function processSlackEvent(
   // follow-up, so a DM conversation stays coherent (and skips the router
   // call) even if a later message reads like a different intent.
   const surfaceKey = `slack:${event.channel}:${threadTs}`;
+  // Scope the continuation lookup to this connection's org: surface_key isn't
+  // globally unique, so an unscoped match could attach this turn to another
+  // org's session that happens to share the key.
   let [session] = await db
     .select()
     .from(sessions)
-    .where(eq(sessions.surfaceKey, surfaceKey))
+    .where(
+      and(
+        eq(sessions.surfaceKey, surfaceKey),
+        eq(sessions.orgId, connection.orgId),
+      ),
+    )
     .limit(1);
 
   let agent: typeof agents.$inferSelect | undefined;

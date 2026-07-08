@@ -230,10 +230,18 @@ export async function inboundRoutes(app: FastifyInstance) {
       const surfaceLabel = isReviewComment
         ? `GitHub ${fullName}#${number} (review)`
         : `GitHub ${fullName}#${number}`;
+      // Scope to the connection's org: surface_key isn't globally unique, so a
+      // repo mapped in two orgs must not attach this turn to the other org's
+      // session.
       let [session] = await db
         .select()
         .from(sessions)
-        .where(eq(sessions.surfaceKey, surfaceKey))
+        .where(
+          and(
+            eq(sessions.surfaceKey, surfaceKey),
+            eq(sessions.orgId, connection.orgId),
+          ),
+        )
         .limit(1);
       if (!session) {
         const sessionTitle = title || `${fullName}#${number}`;

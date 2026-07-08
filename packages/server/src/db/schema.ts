@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -160,7 +161,12 @@ export const sessions = pgTable("sessions", {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (t) => [
+  // Surface events resolve their thread's session by (org_id, surface_key).
+  index("sessions_org_surface_key_idx")
+    .on(t.orgId, t.surfaceKey)
+    .where(sql`${t.surfaceKey} is not null`),
+]);
 
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().defaultRandom(),

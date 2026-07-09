@@ -177,6 +177,7 @@ export async function seedDemo(): Promise<void> {
       color: "amber",
       domainId: engDomain!.id,
       modelId: sonnetId,
+      capabilities: {},
     },
     {
       name: "Eng On-Call",
@@ -189,6 +190,12 @@ export async function seedDemo(): Promise<void> {
       color: "blue",
       domainId: engDomain!.id,
       modelId: sonnetId,
+      // Fetches live runbook pages — outbound web is bound to the internal
+      // docs hosts on the agent's Advanced tab (fail-closed elsewhere).
+      capabilities: {
+        outboundWebAccess: true,
+        networkAllowlist: "runbooks.acme.dev, *.internal.acme.dev",
+      },
     },
     {
       name: "PR Summarizer",
@@ -201,6 +208,7 @@ export async function seedDemo(): Promise<void> {
       color: "purple",
       domainId: engDomain!.id,
       modelId: haikuId,
+      capabilities: {},
     },
     {
       name: "Support Triage",
@@ -213,6 +221,7 @@ export async function seedDemo(): Promise<void> {
       color: "green",
       domainId: supportDomain!.id,
       modelId: haikuId,
+      capabilities: {},
     },
     {
       name: "Docs Writer",
@@ -224,6 +233,7 @@ export async function seedDemo(): Promise<void> {
       color: "blue",
       domainId: null,
       modelId: haikuId,
+      capabilities: {},
     },
   ];
   const seededAgents = await db
@@ -240,6 +250,7 @@ export async function seedDemo(): Promise<void> {
         color: a.color,
         domainId: a.domainId,
         modelId: a.modelId,
+        capabilities: a.capabilities,
         status: "active" as const,
         createdBy: owner!.id,
         createdAt: daysAgo(70),

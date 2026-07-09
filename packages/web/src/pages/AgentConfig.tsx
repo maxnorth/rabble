@@ -303,18 +303,14 @@ function ShareModal({
     queryFn: api.listConnections,
     retry: false,
   });
-  // A connection is one agent's identity: deploy to this agent's own Slack
-  // connection, or claim an unlinked one — never someone else's.
-  const slackCandidates = (connections.data?.connections ?? []).filter(
-    (c) => c.vendor === "slack",
+  // Reachability is configured on the Surfaces tab; the share flow only
+  // reports it (share = who may use it, surfaces = where it lives).
+  const slackIdentity = (connections.data?.connections ?? []).find(
+    (c) => c.vendor === "slack" && c.linkedAgentId === agentId,
   );
-  const slackConnection =
-    slackCandidates.find((c) => c.linkedAgentId === agentId) ??
-    slackCandidates.find((c) => !c.linkedAgentId);
 
   const [subject, setSubject] = useState("");
   const [right, setRight] = useState<"use" | "edit" | "admin">("use");
-  const [channel, setChannel] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const invalidate = () => {
@@ -349,19 +345,6 @@ function ShareModal({
     mutationFn: (next: "active" | "draft") => api.updateAgent(agentId, { status: next }),
     onSuccess: invalidate,
   });
-  const deploySlack = useMutation({
-    mutationFn: () =>
-      api.addSurface(agentId, {
-        connectionId: slackConnection!.id,
-        label: channel.startsWith("#") ? channel : `#${channel}`,
-      }),
-    onSuccess: () => {
-      setChannel("");
-      void queryClient.invalidateQueries({ queryKey: ["surfaces", agentId] });
-    },
-    onError: (err) => setError(err instanceof Error ? err.message : "Couldn't attach"),
-  });
-
   const audienceName = (() => {
     const [type, id] = subject.split(":");
     if (type === "team") return teams.data?.teams.find((t) => t.id === id)?.name;
@@ -465,29 +448,14 @@ function ShareModal({
           </>
         )}
 
-        {slackConnection && (
-          <div className="field" style={{ marginTop: 12 }}>
-            <label>Deploy to Slack (optional)</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input
-                placeholder="#channel"
-                value={channel}
-                onChange={(e) => setChannel(e.target.value)}
-              />
-              <button
-                className="btn"
-                disabled={!channel.trim() || deploySlack.isPending}
-                onClick={() => deploySlack.mutate()}
-              >
-                Attach
-              </button>
-            </div>
-            <span className="hint">
-              Messages in that channel become governed sessions with this agent
-              (via {slackConnection.name}).
-            </span>
-          </div>
-        )}
+        <div className="field" style={{ marginTop: 12 }}>
+          <label>Reachability</label>
+          <span className="hint">
+            {slackIdentity
+              ? `Reachable in Slack as ${slackIdentity.name}. Configure channels on the Surfaces tab.`
+              : "Web sessions only. Give it a Slack identity on the Surfaces tab to reach it from Slack."}
+          </span>
+        </div>
 
         <div
           className="card"
@@ -837,27 +805,50 @@ function ResponseModeControls({
   );
 }
 
+const VENDOR_GLYPHS: Record<string, { glyph: string; bg: string }> = {
+  slack: { glyph: "#", bg: "#4A154B" },
+  github: { glyph: "⎇", bg: "#24292f" },
+};
+
+function vendorBlurb(vendor: string): string {
+  if (vendor === "slack") return "Slack · this agent's identity in the workspace";
+  if (vendor === "github") return "GitHub · replies to issue comments in mapped repositories";
+  return vendor;
+}
+
 function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
+  const agent = useQuery({
+    queryKey: ["agent", agentId],
+    queryFn: () => api.getAgent(agentId),
+  });
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
   const surfaces = useQuery({
     queryKey: ["surfaces", agentId],
     queryFn: () => api.listSurfaces(agentId),
   });
-  const [connectionId, setConnectionId] = useState("");
-  const [label, setLabel] = useState("");
-  const [responseMode, setResponseMode] = useState<SurfaceResponseMode>("thread");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [exceptionFor, setExceptionFor] = useState<string | null>(null);
+  const [exceptionLabel, setExceptionLabel] = useState("");
+  const [exceptionMode, setExceptionMode] = useState<SurfaceResponseMode>("thread");
 
-  const invalidate = () =>
-    queryClient.invalidateQueries({ queryKey: ["surfaces", agentId] });
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["surfaces", agentId] });
+    void queryClient.invalidateQueries({ queryKey: ["connections"] });
+  };
   const add = useMutation({
-    mutationFn: () =>
-      api.addSurface(agentId, { connectionId, label: label.trim(), responseMode }),
+    mutationFn: (body: {
+      connectionId: string;
+      label: string;
+      responseMode?: SurfaceResponseMode;
+      dmEnabled?: boolean;
+    }) => api.addSurface(agentId, body),
     onSuccess: () => {
-      setConnectionId("");
-      setLabel("");
-      setResponseMode("thread");
-      void invalidate();
+      setMenuOpen(false);
+      setExceptionFor(null);
+      setExceptionLabel("");
+      setExceptionMode("thread");
+      invalidate();
     },
   });
   const update = useMutation({
@@ -870,152 +861,316 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
         responseMode: vars.responseMode,
         dmEnabled: vars.dmEnabled,
       }),
-    onSuccess: () => void invalidate(),
+    onSuccess: invalidate,
   });
   const remove = useMutation({
     mutationFn: (surfaceId: string) => api.removeSurface(agentId, surfaceId),
-    onSuccess: () => void invalidate(),
+    onSuccess: invalidate,
+  });
+  const detach = useMutation({
+    mutationFn: (surfaceIds: string[]) =>
+      Promise.all(surfaceIds.map((id) => api.removeSurface(agentId, id))),
+    onSuccess: invalidate,
+  });
+  const setWeb = useMutation({
+    mutationFn: (v: boolean) => api.updateAgent(agentId, { webEnabled: v }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["agent", agentId] });
+      void queryClient.invalidateQueries({ queryKey: ["agents"] });
+    },
   });
 
-  // Offer only identities this agent can hold: its own, or unclaimed ones.
-  const interfaces = (connections.data?.connections ?? []).filter(
-    (c) =>
-      c.roles.includes("Interface") &&
-      (!c.linkedAgentId || c.linkedAgentId === agentId),
-  );
   const attached = surfaces.data?.surfaces ?? [];
-  const labelPlaceholder = (vendor?: string) =>
-    vendor === "slack"
-      ? "#eng-oncall (empty = whole workspace)"
-      : vendor === "github"
-        ? "acme/api"
-        : "channel or path";
-  const selected = interfaces.find((c) => c.id === connectionId);
+  const byConnection = new Map<string, typeof attached>();
+  for (const s of attached) {
+    const list = byConnection.get(s.connectionId) ?? [];
+    list.push(s);
+    byConnection.set(s.connectionId, list);
+  }
+
+  // The link menu offers unclaimed interface connections; connections owned
+  // by other agents show who has them and stay disabled.
+  const linkable = (connections.data?.connections ?? []).filter(
+    (c) => c.roles.includes("Interface") && !byConnection.has(c.id),
+  );
+  const busy = add.isPending || update.isPending || remove.isPending || detach.isPending;
+  const webOn = agent.data?.agent.webEnabled ?? true;
+  const error = (add.error ?? update.error ?? detach.error) as Error | null;
 
   return (
     <>
       <p className="page-subtitle">
-        Where this agent is reachable. Surfaces are delivery points. The
-        platform owns the session either way. The web composer is always on;
-        connection-backed surfaces (Slack channels, GitHub repos…) attach here
-        once their connection is set up in Admin › Connections.
+        Where this agent is reachable. The web composer is always on. Linking a
+        connection makes this agent that app's identity: it alone answers
+        there, and every conversation lands in the same audited timeline.
       </p>
-      <div className="row-group" style={{ marginBottom: 16 }}>
+
+      <div className="row-group" style={{ marginBottom: 14 }}>
         <div className="row">
-          <span className="status-dot" style={{ background: "var(--green)" }} />
+          <span
+            className="status-dot"
+            style={{ background: webOn ? "var(--green)" : "var(--text-muted)" }}
+          />
           <div className="grow">
             <div className="title">Web sessions</div>
-            <div className="sub">The in-app composer, always available</div>
-          </div>
-          <span className="chip green">on</span>
-        </div>
-        {attached.map((s) => (
-          <div className="row" key={s.id}>
-            <span
-              className="status-dot"
-              style={{
-                background: s.status === "connected" ? "var(--green)" : "var(--amber)",
-              }}
-            />
-            <div className="grow">
-              <div className="title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                {s.connectionName}
-                {s.label && <span className="mono" style={{ fontSize: 12, color: "var(--text-dim)" }}>{s.label}</span>}
-              </div>
-              <div className="sub">
-                {s.vendor} · sessions started here land in the same audited timeline
-              </div>
+            <div className="sub">
+              {webOn
+                ? "The in-app composer, including Auto routing"
+                : "Off: hidden from the composer and Auto routing"}
             </div>
-            {s.vendor === "slack" && (
-              <ResponseModeControls
-                mode={s.responseMode}
-                disabled={!canEdit || update.isPending}
-                onChange={(m) => update.mutate({ surfaceId: s.id, responseMode: m })}
-              />
-            )}
-            {s.vendor === "slack" && s.label === "" && (
-              <label
-                style={{
-                  display: "inline-flex",
-                  gap: 4,
-                  alignItems: "center",
-                  fontSize: 13,
-                  color: "var(--text-dim)",
-                }}
-                title="Answer 1:1 direct messages to this app"
-              >
-                <input
-                  type="checkbox"
-                  disabled={!canEdit || update.isPending}
-                  checked={s.dmEnabled}
-                  onChange={(e) =>
-                    update.mutate({ surfaceId: s.id, dmEnabled: e.target.checked })
-                  }
-                />
-                Direct messages
-              </label>
-            )}
-            <span className={`chip ${s.status === "connected" ? "green" : "amber"}`}>
-              {s.status}
-            </span>
-            {canEdit && (
-              <button
-                className="btn danger"
-                disabled={remove.isPending}
-                onClick={() => remove.mutate(s.id)}
-              >
-                Detach
-              </button>
-            )}
           </div>
-        ))}
+          <span
+            role="switch"
+            aria-checked={webOn}
+            aria-label="Web sessions"
+            tabIndex={canEdit ? 0 : -1}
+            className={`toggle${webOn ? " on" : ""}`}
+            style={{ cursor: canEdit ? "pointer" : "default", display: "inline-block" }}
+            onClick={() => canEdit && !setWeb.isPending && setWeb.mutate(!webOn)}
+            onKeyDown={(e) => {
+              if (canEdit && !setWeb.isPending && (e.key === "Enter" || e.key === " "))
+                setWeb.mutate(!webOn);
+            }}
+          />
+        </div>
       </div>
 
-      {canEdit && interfaces.length > 0 && (
-        <div className="row-group">
-          <div className="row">
-            <select
-              value={connectionId}
-              onChange={(e) => setConnectionId(e.target.value)}
-              style={{ width: 220 }}
-            >
-              <option value="">Add a surface…</option>
-              {interfaces.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.vendor})
-                </option>
-              ))}
-            </select>
-            <input
-              placeholder={labelPlaceholder(selected?.vendor)}
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              style={{ width: 200 }}
-            />
-            {selected?.vendor === "slack" && (
-              <ResponseModeControls mode={responseMode} onChange={setResponseMode} />
-            )}
-            <button
-              className="btn primary"
-              disabled={!connectionId || add.isPending}
-              onClick={() => add.mutate()}
-            >
-              Attach surface
-            </button>
-          </div>
-          {add.isError && (
-            <div className="row">
-              <div className="sub" style={{ color: "var(--red)" }}>
-                {(add.error as Error).message}
+      {[...byConnection.entries()].map(([connectionId, rows]) => {
+        const meta = rows[0]!;
+        const workspace = rows.find((r) => r.label === "");
+        const channels = rows.filter((r) => r.label !== "");
+        const tile = VENDOR_GLYPHS[meta.vendor];
+        const defaultMode = workspace?.responseMode ?? "thread";
+        const dmOn = workspace?.dmEnabled ?? true;
+        const setDefaultMode = (m: SurfaceResponseMode) =>
+          workspace
+            ? update.mutate({ surfaceId: workspace.id, responseMode: m })
+            : add.mutate({ connectionId, label: "", responseMode: m });
+        const setDm = (v: boolean) =>
+          workspace
+            ? update.mutate({ surfaceId: workspace.id, dmEnabled: v })
+            : add.mutate({ connectionId, label: "", dmEnabled: v });
+        const exceptionsTitle =
+          meta.vendor === "slack" ? "Channel exceptions" : "Repositories";
+        const addExceptionText =
+          meta.vendor === "slack" ? "+ Add a channel exception" : "+ Add a repository";
+
+        return (
+          <div className="card" key={connectionId} style={{ padding: 0, marginBottom: 14, overflow: "hidden" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "13px 16px" }}>
+              <span
+                style={{
+                  width: 30,
+                  height: 30,
+                  borderRadius: 7,
+                  flexShrink: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: "#fff",
+                  background: tile?.bg ?? "var(--accent)",
+                }}
+              >
+                {tile?.glyph ?? meta.vendor[0]?.toUpperCase()}
+              </span>
+              <div className="grow" style={{ minWidth: 0 }}>
+                <div className="title" style={{ fontSize: 14 }}>{meta.connectionName}</div>
+                <div className="sub">{vendorBlurb(meta.vendor)}</div>
               </div>
+              <span className={`chip ${meta.status === "connected" ? "green" : "amber"}`}>
+                {meta.status}
+              </span>
+              {canEdit && (
+                <button
+                  className="btn danger"
+                  disabled={busy}
+                  onClick={() => detach.mutate(rows.map((r) => r.id))}
+                >
+                  Detach
+                </button>
+              )}
+            </div>
+
+            {meta.vendor === "slack" && (
+              <div style={{ borderTop: "1px solid var(--border-row)", background: "var(--surface-group)" }}>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "200px 1fr",
+                    gap: 16,
+                    alignItems: "center",
+                    padding: "11px 16px",
+                    borderBottom: "1px solid var(--border-row)",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 500 }}>In channels</div>
+                    <div className="sub">When it replies in channels it's invited to</div>
+                  </div>
+                  <ResponseModeControls
+                    mode={defaultMode}
+                    disabled={!canEdit || busy}
+                    onChange={setDefaultMode}
+                  />
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "200px 1fr",
+                    gap: 16,
+                    alignItems: "center",
+                    padding: "11px 16px",
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 12.5, fontWeight: 500 }}>Direct messages</div>
+                    <div className="sub">Answer 1:1 messages sent to this app</div>
+                  </div>
+                  <div>
+                    <span
+                      role="switch"
+                      aria-checked={dmOn}
+                      aria-label="Direct messages"
+                      tabIndex={canEdit ? 0 : -1}
+                      className={`toggle${dmOn ? " on" : ""}`}
+                      style={{ cursor: canEdit ? "pointer" : "default", display: "inline-block" }}
+                      onClick={() => canEdit && !busy && setDm(!dmOn)}
+                      onKeyDown={(e) => {
+                        if (canEdit && !busy && (e.key === "Enter" || e.key === " ")) setDm(!dmOn);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {(meta.vendor !== "slack" || channels.length > 0 || canEdit) && (
+              <div style={{ borderTop: "1px solid var(--border-row)" }}>
+                <div
+                  className="sidebar-title"
+                  style={{ padding: "10px 16px 2px", fontSize: 10.5 }}
+                >
+                  {exceptionsTitle}
+                </div>
+                {channels.map((s) => (
+                  <div className="row" key={s.id} style={{ padding: "8px 16px" }}>
+                    <span className="mono" style={{ fontSize: 12.5, color: "var(--accent-text)" }}>
+                      {s.label}
+                    </span>
+                    {meta.vendor === "slack" && (
+                      <ResponseModeControls
+                        mode={s.responseMode}
+                        disabled={!canEdit || busy}
+                        onChange={(m) => update.mutate({ surfaceId: s.id, responseMode: m })}
+                      />
+                    )}
+                    {canEdit && (
+                      <button
+                        className="btn"
+                        style={{ marginLeft: "auto", color: "var(--text-muted)" }}
+                        title="Remove"
+                        disabled={busy}
+                        onClick={() => remove.mutate(s.id)}
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {canEdit && exceptionFor !== connectionId && (
+                  <button
+                    className="btn"
+                    style={{ border: "none", color: "var(--accent-text)", padding: "8px 16px" }}
+                    onClick={() => {
+                      setExceptionFor(connectionId);
+                      setExceptionLabel("");
+                      setExceptionMode("thread");
+                    }}
+                  >
+                    {addExceptionText}
+                  </button>
+                )}
+                {canEdit && exceptionFor === connectionId && (
+                  <div className="row" style={{ padding: "8px 16px" }}>
+                    <input
+                      placeholder={meta.vendor === "slack" ? "#eng-oncall" : "acme/api"}
+                      value={exceptionLabel}
+                      onChange={(e) => setExceptionLabel(e.target.value)}
+                      style={{ width: 180 }}
+                      autoFocus
+                    />
+                    {meta.vendor === "slack" && (
+                      <ResponseModeControls mode={exceptionMode} onChange={setExceptionMode} />
+                    )}
+                    <button
+                      className="btn primary"
+                      disabled={!exceptionLabel.trim() || busy}
+                      onClick={() =>
+                        add.mutate({
+                          connectionId,
+                          label: exceptionLabel.trim(),
+                          responseMode: exceptionMode,
+                        })
+                      }
+                    >
+                      Add
+                    </button>
+                    <button className="btn" onClick={() => setExceptionFor(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+
+      {error && (
+        <p className="sub" style={{ color: "var(--red)", margin: "0 0 12px" }}>
+          {error.message}
+        </p>
+      )}
+
+      {canEdit && linkable.length > 0 && (
+        <div>
+          <button className="btn primary" onClick={() => setMenuOpen((v) => !v)}>
+            + Link a connection
+          </button>
+          {menuOpen && (
+            <div className="row-group" style={{ marginTop: 10, maxWidth: 420 }}>
+              {linkable.map((c) => {
+                const taken = !!c.linkedAgentId && c.linkedAgentId !== agentId;
+                return (
+                  <div className="row" key={c.id} style={{ opacity: taken ? 0.45 : 1 }}>
+                    <div className="grow">
+                      <div className="title">{c.name}</div>
+                      <div className="sub">
+                        {taken ? `identity of ${c.linkedAgentName}` : c.vendor}
+                      </div>
+                    </div>
+                    {!taken && (
+                      <button
+                        className="btn"
+                        disabled={busy}
+                        onClick={() => add.mutate({ connectionId: c.id, label: "" })}
+                      >
+                        Link
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       )}
-      {interfaces.length === 0 && (
+      {linkable.length === 0 && (
         <p className="page-subtitle">
-          No interface connections yet. Add Slack (or similar) in Admin ›
-          Connections to reach this agent outside the web app.
+          {byConnection.size === 0
+            ? "No interface connections yet. Add Slack (or similar) in Admin › Connections to reach this agent outside the web app."
+            : "Every connection is already linked. Create another in Admin › Connections to add a surface."}
         </p>
       )}
     </>

@@ -73,7 +73,7 @@ export async function sessionRoutes(app: FastifyInstance) {
 
     if (agentId) {
       const [agent] = await db
-        .select({ id: agents.id, status: agents.status })
+        .select({ id: agents.id, status: agents.status, webEnabled: agents.webEnabled })
         .from(agents)
         .where(and(eq(agents.id, agentId), eq(agents.orgId, req.user!.orgId)))
         .limit(1);
@@ -82,6 +82,11 @@ export async function sessionRoutes(app: FastifyInstance) {
         return reply
           .code(403)
           .send({ error: "You don't have use access to this agent" });
+      }
+      if (!agent.webEnabled) {
+        return reply
+          .code(403)
+          .send({ error: "This agent isn't available in web sessions" });
       }
     } else {
       // "Auto": route by intent across the agents the user can actually use.
@@ -93,6 +98,7 @@ export async function sessionRoutes(app: FastifyInstance) {
           and(
             eq(agents.orgId, req.user!.orgId),
             eq(agents.status, "active"),
+            eq(agents.webEnabled, true),
             isNull(agents.builtin),
           ),
         )

@@ -128,6 +128,8 @@ export const agents = pgTable(
       .default("draft"),
     /** First-party agents ("builder"); NULL for everything user-made. */
     builtin: text("builtin"),
+    // Reachable from web sessions (the in-app composer).
+    webEnabled: boolean("web_enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

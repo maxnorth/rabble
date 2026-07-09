@@ -135,32 +135,73 @@ test("slack managed setup: create → configure → install captures the bot tok
   await page.request.delete(`${SERVER}/api/connections/${connection.id}`);
 });
 
-test("surfaces: the Slack connection attaches to an agent as a delivery point", async () => {
+test("surfaces: linking a connection makes the agent its identity", async () => {
   await page.locator("nav a[title='Agents']").click();
   await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
   await page.getByRole("button", { name: "surfaces" }).click();
 
-  // Web sessions is always on; the Slack interface connection is attachable
+  // Web sessions is always on; linking claims the Slack identity with
+  // workspace defaults (mention + auto-reply in thread, DMs on).
   await expect(page.locator(".row", { hasText: "Web sessions" })).toBeVisible();
+  await page.getByRole("button", { name: "+ Link a connection" }).click();
   await page
-    .locator("select")
-    .filter({ has: page.locator("option", { hasText: "Add a surface" }) })
-    .selectOption({ label: "Acme Slack (slack)" });
-  await page.getByPlaceholder("#eng-oncall").fill("#eng-oncall");
-  // Respond to every message in this channel (not just @-mentions).
-  await page
+    .locator(".row", { hasText: "Acme Slack" })
+    .getByRole("button", { name: "Link", exact: true })
+    .click();
+  const card = page.locator(".card", { hasText: "Acme Slack" });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("In channels");
+  await expect(card).toContainText("Direct messages");
+
+  // A channel exception: #eng-oncall answers every message.
+  await card.getByRole("button", { name: "+ Add a channel exception" }).click();
+  const form = page.locator(".row", {
+    has: page.getByPlaceholder("#eng-oncall"),
+  });
+  await form.getByPlaceholder("#eng-oncall").fill("#eng-oncall");
+  await form
     .getByTitle("When this agent replies in the channel")
     .selectOption({ label: "Every message in channel" });
-  await page.getByRole("button", { name: "Attach surface" }).click();
-
-  const row = page.locator(".row", { hasText: "#eng-oncall" });
-  await expect(row).toBeVisible();
-  await expect(row).toContainText("Acme Slack");
+  await form.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(card.locator(".row", { hasText: "#eng-oncall" })).toBeVisible();
 
   const surfaces = await dbQuery<{ label: string; response_mode: string }>(
-    "SELECT label, response_mode FROM agent_surfaces",
+    "SELECT label, response_mode FROM agent_surfaces ORDER BY label",
   );
-  expect(surfaces).toEqual([{ label: "#eng-oncall", response_mode: "all" }]);
+  expect(surfaces).toEqual([
+    { label: "", response_mode: "thread" },
+    { label: "#eng-oncall", response_mode: "all" },
+  ]);
+
+  // Web access is a surface setting too: off blocks composer sessions and
+  // Auto routing; back on restores them.
+  const [engOnCall] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Eng On-Call'",
+  );
+  await page.getByRole("switch", { name: "Web sessions" }).click();
+  await expect
+    .poll(async () =>
+      (
+        await dbQuery<{ web_enabled: boolean }>(
+          "SELECT web_enabled FROM agents WHERE name = 'Eng On-Call'",
+        )
+      )[0]!.web_enabled,
+    )
+    .toBe(false);
+  const blocked = await page.request.post("/api/sessions", {
+    data: { agentId: engOnCall!.id },
+  });
+  expect(blocked.status()).toBe(403);
+  await page.getByRole("switch", { name: "Web sessions" }).click();
+  await expect
+    .poll(async () =>
+      (
+        await dbQuery<{ web_enabled: boolean }>(
+          "SELECT web_enabled FROM agents WHERE name = 'Eng On-Call'",
+        )
+      )[0]!.web_enabled,
+    )
+    .toBe(true);
 
   // The connections list shows whose identity this connection now is
   await page.locator("nav a[title='Admin']").click();
@@ -172,7 +213,7 @@ test("surfaces: the Slack connection attaches to an agent as a delivery point", 
   const audit = await dbQuery<{ action: string }>(
     "SELECT action FROM audit_events WHERE action = 'agent.surface.add'",
   );
-  expect(audit).toHaveLength(1);
+  expect(audit).toHaveLength(2);
 });
 
 const SERVER = "http://localhost:3178";
@@ -363,14 +404,9 @@ test("slack surface delivery: a channel message becomes a governed session", asy
 });
 
 test("auto-reply in thread: a mention starts it, untagged follow-ups answer", async () => {
-  // A workspace-level surface (empty label) carries the default response
-  // mode for every channel without its own row. Default 'thread': a mention
-  // opens the thread, then follow-ups inside it answer without re-tagging.
-  await dbQuery(
-    `INSERT INTO agent_surfaces (agent_id, connection_id, label, response_mode)
-     SELECT a.id, c.id, '', 'thread' FROM agents a, connections c
-     WHERE a.name = 'Eng On-Call' AND c.name = 'Acme Slack'`,
-  );
+  // The workspace-level surface (created by the link flow, default 'thread')
+  // carries the response mode for every channel without its own row: a
+  // mention opens the thread, then follow-ups inside it answer untagged.
   await fetch(`${EMULATOR}/admin/slack`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
@@ -692,14 +728,17 @@ test("github surface delivery: issue comments become governed sessions", async (
   await page.getByRole("button", { name: "surfaces" }).click();
   // Wait for the tab to replace the identity tab (which has its own selects)
   await expect(page.locator(".row", { hasText: "Web sessions" })).toBeVisible();
+  await page.getByRole("button", { name: "+ Link a connection" }).click();
   await page
-    .locator("select")
-    .filter({ has: page.locator("option", { hasText: "Add a surface" }) })
-    .selectOption({ label: "Acme GitHub (github)" });
-  // The label placeholder is vendor-aware (repo path for GitHub)
+    .locator(".row", { hasText: "Acme GitHub" })
+    .getByRole("button", { name: "Link", exact: true })
+    .click();
+  const ghCard = page.locator(".card", { hasText: "Acme GitHub" });
+  await expect(ghCard).toBeVisible();
+  await ghCard.getByRole("button", { name: "+ Add a repository" }).click();
   await page.getByPlaceholder("acme/api").fill("acme/api");
-  await page.getByRole("button", { name: "Attach surface" }).click();
-  await expect(page.locator(".row", { hasText: "acme/api" })).toBeVisible();
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(ghCard.locator(".row", { hasText: "acme/api" })).toBeVisible();
 
   // A forged signature is rejected
   const forged = await fetch(`${SERVER}/api/inbound/github`, {
@@ -1640,19 +1679,6 @@ test("pulse-back: a sagging pass rate DMs the agent's owner", async () => {
 });
 
 test("share is one verb: audience, plain-language right, pause/unshare", async () => {
-  // Both existing Slack connections are already other agents' identities —
-  // deploying Release Notes Bot to Slack needs a free identity of its own.
-  const freeConnection = await page.request.post(`${SERVER}/api/connections`, {
-    data: {
-      vendor: "slack",
-      name: "Relnotes Slack",
-      roles: ["Interface"],
-      baseUrl: `${EMULATOR}/mock/slack.com`,
-      token: "xoxb-relnotes",
-    },
-  });
-  expect(freeConnection.ok()).toBeTruthy();
-
   // The Builder-made draft is shared from a single Share button.
   await page.goto("/agents");
   await page.locator(".dir-table tbody tr", { hasText: "Release Notes Bot" }).click();
@@ -1676,21 +1702,9 @@ test("share is one verb: audience, plain-language right, pause/unshare", async (
   );
   expect(granted).toEqual([{ access_right: "use" }]);
 
-  // Optional deploy-to-Slack, right in the share flow — it claims the free
-  // connection (the taken ones are other agents' identities).
-  await expect(modal).toContainText("via Relnotes Slack");
-  await modal.getByPlaceholder("#channel").fill("#relnotes");
-  await modal.getByRole("button", { name: "Attach" }).click();
-  await expect
-    .poll(async () => {
-      const rows = await dbQuery<{ label: string }>(
-        `SELECT s.label FROM agent_surfaces s
-         JOIN connections c ON c.id = s.connection_id
-         WHERE s.label = '#relnotes' AND c.name = 'Relnotes Slack'`,
-      );
-      return rows.length;
-    })
-    .toBe(1);
+  // Share reports reachability but never configures it (that's Surfaces):
+  // this draft has no Slack identity, and the modal says so.
+  await expect(modal).toContainText("Web sessions only");
 
   // Visible pause/unshare: activate the draft, then pause it back
   await modal.getByRole("button", { name: "Activate" }).click();

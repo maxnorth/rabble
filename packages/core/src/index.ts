@@ -153,6 +153,8 @@ export const agentSchema = z.object({
   /** Tone & style guidance, folded into the system prompt. */
   tone: z.string(),
   status: agentStatusSchema,
+  /** Reachable from web sessions (the in-app composer). */
+  webEnabled: z.boolean().default(true),
   /** First-party agents ("builder"); null for everything user-made. */
   builtin: z.string().nullable().optional(),
   createdAt: z.string(),
@@ -217,6 +219,7 @@ export const updateAgentSchema = z.object({
   color: z.string().max(20).optional(),
   tone: z.string().max(2000).optional(),
   status: agentStatusSchema.optional(),
+  webEnabled: z.boolean().optional(),
 });
 export type UpdateAgentRequest = z.infer<typeof updateAgentSchema>;
 

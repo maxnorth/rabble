@@ -131,7 +131,7 @@ function AgentTargetPill({
   onChange: (agent: AgentDirectoryRow | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const usable = agents.filter((a) => a.status === "active" && a.myRight);
+  const usable = agents.filter((a) => a.status === "active" && a.myRight && a.webEnabled);
   return (
     <div style={{ position: "relative" }}>
       <button type="button" className="target-pill" onClick={() => setOpen((v) => !v)}>
@@ -241,7 +241,7 @@ function SessionLanding() {
   // The built-in Builder doesn't count as "having an agent" — the
   // first-run checklist should still walk a fresh org through setup.
   const usable = (agents.data?.agents ?? []).filter(
-    (a) => a.status === "active" && a.myRight && !a.builtin,
+    (a) => a.status === "active" && a.myRight && !a.builtin && a.webEnabled,
   );
   const isAdmin = me.data?.user.role !== "member";
   const models = useQuery({ queryKey: ["models"], queryFn: api.listModels });

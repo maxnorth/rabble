@@ -302,6 +302,7 @@ export async function agentRoutes(app: FastifyInstance) {
     if (body.color !== undefined) updates.color = body.color;
     if (body.tone !== undefined) updates.tone = body.tone;
     if (body.status !== undefined) updates.status = body.status;
+    if (body.webEnabled !== undefined) updates.webEnabled = body.webEnabled;
 
     const [current] = await db
       .select()

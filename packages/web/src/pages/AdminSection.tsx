@@ -306,6 +306,14 @@ function ConnectionsPage() {
                       {c.linkedAgentName}
                     </span>
                   )}
+                  {!c.linkedAgentName && c.roles.includes("Interface") && (
+                    <span
+                      className="chip amber"
+                      title="Link an agent from its Surfaces tab; until then this app answers as no one"
+                    >
+                      no linked agent
+                    </span>
+                  )}
                   {c.tunnel && (
                     <span className="chip purple" title="Reached through a private tunnel">
                       tunnel
@@ -491,6 +499,11 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
             >
               Install to Slack ↗
             </a>
+            <p className="hint" style={{ marginBottom: 12 }}>
+              After installing, give the app its voice: open an agent's
+              Surfaces tab and link this connection. Until then it answers as
+              no one.
+            </p>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
               <button type="button" className="btn" onClick={onClose}>
                 Done

@@ -1,4 +1,4 @@
-import type { ConnectionRole, ModelProtocol, OrgSettings } from "@rabblehq/core";
+import type { Connection, ConnectionRole, ModelProtocol, OrgSettings } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, NavLink, useParams } from "react-router-dom";
@@ -301,9 +301,9 @@ function ConnectionsPage() {
                       {r}
                     </span>
                   ))}
-                  {c.agentCount > 0 && (
-                    <span className="chip" title="Agents reachable through this connection">
-                      {c.agentCount} agent{c.agentCount === 1 ? "" : "s"}
+                  {c.linkedAgentName && (
+                    <span className="chip" title="The agent this connection answers as">
+                      {c.linkedAgentName}
                     </span>
                   )}
                   {c.tunnel && (
@@ -366,170 +366,275 @@ function ConnectionsPage() {
 
 function AddConnectionModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({
-    vendor: "slack",
-    name: "",
-    roles: ["Interface"] as ConnectionRole[],
-    baseUrl: "",
-    token: "",
-    signingSecret: "",
-    appToken: "",
-    tunnel: false,
+  const [vendor, setVendor] = useState("slack");
+  const [name, setName] = useState("");
+  const [roles, setRoles] = useState<ConnectionRole[]>(["Interface"]);
+  // Slack managed setup
+  const [configToken, setConfigToken] = useState("");
+  const [botName, setBotName] = useState("");
+  const [installUrl, setInstallUrl] = useState<string | null>(null);
+  // Manual / advanced (non-Slack, or Slack "existing tokens")
+  const [advanced, setAdvanced] = useState(false);
+  const [baseUrl, setBaseUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [signingSecret, setSigningSecret] = useState("");
+  const [appToken, setAppToken] = useState("");
+  const [tunnel, setTunnel] = useState(false);
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["connections"] });
+  const toggleRole = (r: ConnectionRole) =>
+    setRoles((rs) => (rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]));
+
+  // Managed Slack: create the connection holding the config token, then have
+  // Rabble create + configure the Slack app and return the install URL.
+  const managed = useMutation({
+    mutationFn: async () => {
+      const { connection } = await api.createConnection({
+        vendor: "slack",
+        name: name.trim(),
+        roles,
+        configToken: configToken.trim(),
+      });
+      const res = await api.provisionSlackApp(connection.id, botName.trim());
+      return res.installUrl;
+    },
+    onSuccess: (url) => {
+      setInstallUrl(url);
+      void invalidate();
+    },
   });
+
+  // Manual create: other vendors, or Slack with existing tokens.
   const create = useMutation({
     mutationFn: () =>
       api.createConnection({
-        vendor: form.vendor,
-        name: form.name,
-        roles: form.roles,
-        baseUrl: form.baseUrl.trim() || null,
-        token: form.token || undefined,
-        signingSecret: form.signingSecret || undefined,
-        appToken: form.appToken || undefined,
-        tunnel: form.tunnel,
+        vendor,
+        name: name.trim(),
+        roles,
+        baseUrl: baseUrl.trim() || null,
+        token: token || undefined,
+        signingSecret: signingSecret || undefined,
+        appToken: appToken || undefined,
+        tunnel,
       }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["connections"] });
+      await invalidate();
       onClose();
     },
   });
 
-  const toggleRole = (role: ConnectionRole) =>
-    setForm((f) => ({
-      ...f,
-      roles: f.roles.includes(role)
-        ? f.roles.filter((r) => r !== role)
-        : [...f.roles, role],
-    }));
+  const isSlack = vendor === "slack";
+  const useManaged = isSlack && !advanced;
+
+  const VendorNameRoles = (
+    <>
+      <div className="field">
+        <label>Vendor</label>
+        <select value={vendor} onChange={(e) => setVendor(e.target.value)}>
+          {VENDORS.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="field">
+        <label>Name</label>
+        <input
+          required
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={isSlack ? "Acme Slack" : "Acme GitHub"}
+        />
+      </div>
+      <div className="field">
+        <label>Roles</label>
+        <div style={{ display: "flex", gap: 6 }}>
+          {(["Interface", "Automation", "Tools"] as const).map((r) => (
+            <button
+              type="button"
+              key={r}
+              className={`chip ${roles.includes(r) ? "blue" : ""}`}
+              style={{ cursor: "pointer" }}
+              onClick={() => toggleRole(r)}
+            >
+              {roles.includes(r) ? "✓ " : ""}
+              {r}
+            </button>
+          ))}
+        </div>
+      </div>
+    </>
+  );
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Add connection</h2>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (form.name.trim() && form.roles.length > 0) create.mutate();
-          }}
-        >
-          <div className="field">
-            <label>Vendor</label>
-            <select
-              value={form.vendor}
-              onChange={(e) => setForm({ ...form, vendor: e.target.value })}
+
+        {installUrl ? (
+          // Final step: the app is created + configured; install to grant the token.
+          <div>
+            <p style={{ marginBottom: 8 }}>
+              ✅ Created and configured <b>{botName.trim()}</b> in Slack.
+            </p>
+            <p className="hint" style={{ marginBottom: 12 }}>
+              Last step — install it to your workspace. Click Allow; Rabble
+              captures the bot token automatically and finishes the connection.
+            </p>
+            <a
+              className="btn primary"
+              href={installUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ display: "inline-block", marginBottom: 12 }}
             >
-              {VENDORS.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
+              Install to Slack ↗
+            </a>
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button type="button" className="btn" onClick={onClose}>
+                Done
+              </button>
+            </div>
           </div>
-          <div className="field">
-            <label>Name</label>
-            <input
-              required
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="Acme Slack"
-            />
-          </div>
-          <div className="field">
-            <label>Roles</label>
-            <div style={{ display: "flex", gap: 6 }}>
-              {(["Interface", "Automation", "Tools"] as const).map((r) => (
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!name.trim() || roles.length === 0) return;
+              if (useManaged) managed.mutate();
+              else create.mutate();
+            }}
+          >
+            {VendorNameRoles}
+
+            {useManaged ? (
+              <>
+                <div className="field">
+                  <label>App configuration token</label>
+                  <input
+                    required
+                    type="password"
+                    placeholder="xoxe.xoxp-…"
+                    value={configToken}
+                    onChange={(e) => setConfigToken(e.target.value)}
+                  />
+                  <span className="hint">
+                    Rabble uses this to create and configure your Slack app for
+                    you.{" "}
+                    <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer">
+                      Generate one ↗
+                    </a>{" "}
+                    — below the app list, under “Your App Configuration Tokens”.
+                  </span>
+                </div>
+                <div className="field">
+                  <label>Bot name</label>
+                  <input
+                    required
+                    value={botName}
+                    onChange={(e) => setBotName(e.target.value)}
+                    placeholder="Rabble"
+                  />
+                  <span className="hint">How the bot appears in Slack.</span>
+                </div>
                 <button
                   type="button"
-                  key={r}
-                  className={`chip ${form.roles.includes(r) ? "blue" : ""}`}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => toggleRole(r)}
+                  className="link-btn"
+                  style={{ background: "none", border: 0, color: "var(--blue)", cursor: "pointer", padding: 0, fontSize: 13 }}
+                  onClick={() => setAdvanced(true)}
                 >
-                  {form.roles.includes(r) ? "✓ " : ""}
-                  {r}
+                  Connect with existing tokens instead
                 </button>
-              ))}
-            </div>
-          </div>
-          <div className="field">
-            <label>API base URL (optional)</label>
-            <input
-              value={form.baseUrl}
-              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
-              placeholder="https://slack.com"
-            />
-            <span className="hint">Override to point at a proxy or emulator.</span>
-          </div>
-          <div className="field">
-            <label>Token (optional)</label>
-            <input
-              type="password"
-              value={form.token}
-              onChange={(e) => setForm({ ...form, token: e.target.value })}
-            />
-          </div>
-          {(form.vendor === "slack" || form.vendor === "github") && (
-            <div className="field">
-              <label>
-                {form.vendor === "slack" ? "Signing secret" : "Webhook secret"} (optional)
-              </label>
-              <input
-                type="password"
-                placeholder={
-                  form.vendor === "slack"
-                    ? "Slack app signing secret"
-                    : "GitHub webhook secret"
-                }
-                value={form.signingSecret}
-                onChange={(e) => setForm({ ...form, signingSecret: e.target.value })}
-              />
-              <span className="hint">
-                {form.vendor === "slack"
-                  ? "Lets Slack deliver channel messages to agents — verifies inbound events from your Slack app."
-                  : "Lets GitHub deliver issue comments to agents — verifies inbound webhooks from your repos."}
-              </span>
-            </div>
-          )}
-          {form.vendor === "slack" && (
-            <div className="field">
-              <label>App-level token — Socket Mode (optional)</label>
-              <input
-                type="password"
-                placeholder="xapp-…"
-                value={form.appToken}
-                onChange={(e) => setForm({ ...form, appToken: e.target.value })}
-              />
-              <span className="hint">
-                Streams events over a WebSocket instead of webhooks — no public
-                URL needed. Generate one under your Slack app's Basic Information
-                › App-Level Tokens with the connections:write scope.
-              </span>
-            </div>
-          )}
-          <div className="field">
-            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={form.tunnel}
-                onChange={(e) => setForm({ ...form, tunnel: e.target.checked })}
-              />
-              Reached through a private tunnel
-            </label>
-            <span className="hint">
-              For self-hosted vendors behind a VPN or bastion — shown as a chip
-              on the connection.
-            </span>
-          </div>
-          {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" className="btn" onClick={onClose}>
-              Cancel
-            </button>
-            <button className="btn primary" disabled={create.isPending}>
-              + Add
-            </button>
-          </div>
-        </form>
+                {managed.isError && (
+                  <p className="error-text">{(managed.error as Error).message}</p>
+                )}
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+                  <button type="button" className="btn" onClick={onClose}>
+                    Cancel
+                  </button>
+                  <button className="btn primary" disabled={managed.isPending}>
+                    {managed.isPending ? "Creating app…" : "Create & configure"}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="field">
+                  <label>API base URL (optional)</label>
+                  <input
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://slack.com"
+                  />
+                  <span className="hint">Override to point at a proxy or emulator.</span>
+                </div>
+                <div className="field">
+                  <label>Token (optional)</label>
+                  <input
+                    type="password"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                  />
+                </div>
+                {(vendor === "slack" || vendor === "github") && (
+                  <div className="field">
+                    <label>
+                      {vendor === "slack" ? "Signing secret" : "Webhook secret"} (optional)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder={
+                        vendor === "slack" ? "Slack app signing secret" : "GitHub webhook secret"
+                      }
+                      value={signingSecret}
+                      onChange={(e) => setSigningSecret(e.target.value)}
+                    />
+                  </div>
+                )}
+                {vendor === "slack" && (
+                  <div className="field">
+                    <label>App-level token — Socket Mode (optional)</label>
+                    <input
+                      type="password"
+                      placeholder="xapp-…"
+                      value={appToken}
+                      onChange={(e) => setAppToken(e.target.value)}
+                    />
+                  </div>
+                )}
+                <div className="field">
+                  <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={tunnel}
+                      onChange={(e) => setTunnel(e.target.checked)}
+                    />
+                    Reached through a private tunnel
+                  </label>
+                </div>
+                {isSlack && (
+                  <button
+                    type="button"
+                    style={{ background: "none", border: 0, color: "var(--blue)", cursor: "pointer", padding: 0, fontSize: 13 }}
+                    onClick={() => setAdvanced(false)}
+                  >
+                    ← Back to managed setup
+                  </button>
+                )}
+                {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 8 }}>
+                  <button type="button" className="btn" onClick={onClose}>
+                    Cancel
+                  </button>
+                  <button className="btn primary" disabled={create.isPending}>
+                    + Add
+                  </button>
+                </div>
+              </>
+            )}
+          </form>
+        )}
       </div>
     </div>
   );

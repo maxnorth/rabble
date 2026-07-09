@@ -23,6 +23,15 @@ import {
 import { requireUser } from "../auth.js";
 import { recordAudit } from "../audit.js";
 import { encryptSecret, hashAuthToken, hashPassword } from "../crypto.js";
+import { env } from "../env.js";
+
+/** Rabble's public base URL — configured, or derived from the request. */
+function publicBaseUrl(req: FastifyRequest): string {
+  if (env.publicUrl) return env.publicUrl;
+  const proto = String(req.headers["x-forwarded-proto"] ?? "http");
+  const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
+  return `${proto}://${host}`;
+}
 
 async function requireOrgAdmin(req: FastifyRequest, reply: FastifyReply) {
   if (!req.user) return reply.code(401).send({ error: "Not authenticated" });
@@ -44,13 +53,24 @@ export async function adminRoutes(app: FastifyInstance) {
           SELECT count(DISTINCT s.agent_id)::int FROM agent_surfaces s
           WHERE s.connection_id = connections.id
         )`,
+        // The identity link: the one agent this connection answers as.
+        linkedAgentId: sql<string | null>`(
+          SELECT s.agent_id::text FROM agent_surfaces s
+          WHERE s.connection_id = connections.id LIMIT 1
+        )`,
+        linkedAgentName: sql<string | null>`(
+          SELECT a.name FROM agent_surfaces s JOIN agents a ON a.id = s.agent_id
+          WHERE s.connection_id = connections.id LIMIT 1
+        )`,
       })
       .from(connections)
       .where(eq(connections.orgId, req.user!.orgId))
       .orderBy(connections.name);
     return {
-      connections: rows.map(({ connection: c, agentCount }) => ({
+      connections: rows.map(({ connection: c, agentCount, linkedAgentId, linkedAgentName }) => ({
         agentCount,
+        linkedAgentId,
+        linkedAgentName,
         id: c.id,
         orgId: c.orgId,
         vendor: c.vendor,
@@ -60,6 +80,7 @@ export async function adminRoutes(app: FastifyInstance) {
         hasToken: c.encryptedToken !== null,
         hasAppToken: c.encryptedAppToken !== null,
         hasSigningSecret: c.encryptedSigningSecret !== null,
+        hasConfigToken: c.encryptedConfigToken !== null,
         status: c.status,
         tunnel: c.tunnel,
         createdAt: c.createdAt.toISOString(),
@@ -74,9 +95,11 @@ export async function adminRoutes(app: FastifyInstance) {
       const body = createConnectionSchema.parse(req.body);
 
       // Verify reachability the way the vendor's API expects (Slack today;
-      // other vendors are stored but not yet actively verified).
+      // other vendors are stored but not yet actively verified). Only when a
+      // bot token was actually supplied — a managed connection has none yet
+      // (it arrives via the install flow), so it stays needs-auth until then.
       let status: "connected" | "needs-auth" = "connected";
-      if (body.vendor === "slack" && body.baseUrl) {
+      if (body.vendor === "slack" && body.baseUrl && body.token) {
         try {
           const res = await fetch(`${body.baseUrl.replace(/\/$/, "")}/api/auth.test`, {
             method: "POST",
@@ -114,6 +137,12 @@ export async function adminRoutes(app: FastifyInstance) {
             ? encryptSecret(signingSecret)
             : null,
           encryptedAppToken: body.appToken ? encryptSecret(body.appToken) : null,
+          encryptedConfigToken: body.configToken
+            ? encryptSecret(body.configToken)
+            : null,
+          encryptedConfigRefreshToken: body.configRefreshToken
+            ? encryptSecret(body.configRefreshToken)
+            : null,
           status,
           tunnel: tunnel ?? false,
         })
@@ -174,6 +203,130 @@ export async function adminRoutes(app: FastifyInstance) {
       const { refreshSlackSockets } = await import("../surfaces/slackSocket.js");
       refreshSlackSockets().catch(() => {});
       return { ok: true };
+    },
+  );
+
+  // --- Slack app manifest sync (App Configuration token) ---
+
+  app.post(
+    "/api/connections/:id/slack/config",
+    { preHandler: requireOrgAdmin },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { accessToken, refreshToken } = (req.body ?? {}) as {
+        accessToken?: string;
+        refreshToken?: string;
+      };
+      if (!accessToken?.trim()) {
+        return reply.code(400).send({ error: "An access token is required" });
+      }
+      if (![accessToken, refreshToken ?? ""].every((t) => /^[!-~]*$/.test(t.trim()))) {
+        return reply
+          .code(400)
+          .send({ error: "Token contains non-ASCII characters — re-copy it exactly as shown" });
+      }
+      const [connection] = await db
+        .select()
+        .from(connections)
+        .where(and(eq(connections.id, id), eq(connections.orgId, req.user!.orgId)))
+        .limit(1);
+      if (!connection || connection.vendor !== "slack") {
+        return reply.code(404).send({ error: "Slack connection not found" });
+      }
+      const { saveSlackConfigTokens } = await import("../surfaces/slackManifest.js");
+      await saveSlackConfigTokens(id, accessToken.trim(), refreshToken?.trim() || undefined);
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "connection.slack.config",
+        targetType: "connection",
+        targetId: id,
+        summary: `Stored Slack app configuration token for "${connection.name}"`,
+      });
+      return { ok: true };
+    },
+  );
+
+  app.post(
+    "/api/connections/:id/slack/sync",
+    { preHandler: requireOrgAdmin },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { dryRun } = (req.body ?? {}) as { dryRun?: boolean };
+      const [connection] = await db
+        .select()
+        .from(connections)
+        .where(and(eq(connections.id, id), eq(connections.orgId, req.user!.orgId)))
+        .limit(1);
+      if (!connection || connection.vendor !== "slack") {
+        return reply.code(404).send({ error: "Slack connection not found" });
+      }
+      const { syncSlackApp } = await import("../surfaces/slackManifest.js");
+      let result;
+      try {
+        result = await syncSlackApp(id, {
+          dryRun: dryRun === true,
+          publicUrl: publicBaseUrl(req),
+        });
+      } catch (err) {
+        return reply.code(422).send({ error: (err as Error).message });
+      }
+      if (result.applied) {
+        await recordAudit({
+          orgId: req.user!.orgId,
+          actorUserId: req.user!.id,
+          action: "connection.slack.sync",
+          targetType: "connection",
+          targetId: id,
+          summary:
+            `Synced Slack app manifest for "${connection.name}" ` +
+            `(+${result.addedScopes.length} scopes, +${result.addedEvents.length} events)`,
+        });
+        // Delivery config may have changed — reconnect the socket to pick it up.
+        const { refreshSlackSockets } = await import("../surfaces/slackSocket.js");
+        refreshSlackSockets().catch(() => {});
+      }
+      return result;
+    },
+  );
+
+  app.post(
+    "/api/connections/:id/slack/provision",
+    { preHandler: requireOrgAdmin },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const { botName } = (req.body ?? {}) as { botName?: string };
+      if (!botName?.trim()) {
+        return reply.code(400).send({ error: "A bot name is required" });
+      }
+      const [connection] = await db
+        .select()
+        .from(connections)
+        .where(and(eq(connections.id, id), eq(connections.orgId, req.user!.orgId)))
+        .limit(1);
+      if (!connection || connection.vendor !== "slack") {
+        return reply.code(404).send({ error: "Slack connection not found" });
+      }
+      const { provisionSlackApp } = await import("../surfaces/slackOnboard.js");
+      let result;
+      try {
+        result = await provisionSlackApp({
+          connectionId: id,
+          botName: botName.trim(),
+          publicUrl: publicBaseUrl(req),
+        });
+      } catch (err) {
+        return reply.code(422).send({ error: (err as Error).message });
+      }
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "connection.slack.provision",
+        targetType: "connection",
+        targetId: id,
+        summary: `Created + configured Slack app "${botName.trim()}"`,
+      });
+      return result;
     },
   );
 

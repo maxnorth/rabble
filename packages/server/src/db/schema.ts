@@ -427,6 +427,15 @@ export const connections = pgTable("connections", {
   encryptedSigningSecret: text("encrypted_signing_secret"),
   /** App-level token (xapp-…) — presence turns on Slack Socket Mode. */
   encryptedAppToken: text("encrypted_app_token"),
+  /** App configuration token (xoxe.xoxp-…) + refresh — manages the Slack app
+   * manifest via apps.manifest.*. Rotated before each use. */
+  encryptedConfigToken: text("encrypted_config_token"),
+  encryptedConfigRefreshToken: text("encrypted_config_refresh_token"),
+  /** Managed setup: the created app + OAuth credentials for the install flow. */
+  slackAppId: text("slack_app_id"),
+  slackClientId: text("slack_client_id"),
+  encryptedClientSecret: text("encrypted_client_secret"),
+  oauthState: text("oauth_state"),
   status: text("status", { enum: ["connected", "needs-auth", "error"] })
     .notNull()
     .default("connected"),

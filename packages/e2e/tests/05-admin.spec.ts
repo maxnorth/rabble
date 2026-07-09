@@ -34,6 +34,11 @@ test("connections: add Slack, verified against the emulator", async () => {
   await page.getByRole("link", { name: "Connections" }).click();
   await page.getByRole("button", { name: "+ Add connection" }).click();
   await page.getByPlaceholder("Acme Slack").fill("Acme Slack");
+  // The managed flow (config token) is the default; this suite connects with
+  // explicit emulator tokens instead.
+  await page
+    .getByRole("button", { name: "Connect with existing tokens instead" })
+    .click();
   await page.getByPlaceholder("https://slack.com").fill(`${EMULATOR}/mock/slack.com`);
   await page.locator(".modal input[type=password]").first().fill("xoxb-emulated");
   await page
@@ -57,6 +62,79 @@ test("connections: add Slack, verified against the emulator", async () => {
   expect(rows).toEqual([{ vendor: "slack", status: "connected" }]);
 });
 
+test("slack managed setup: create → configure → install captures the bot token", async () => {
+  // A Slack connection holding only a config token, pointed at the emulator.
+  const created = await page.request.post(`${SERVER}/api/connections`, {
+    data: {
+      vendor: "slack",
+      name: "Managed Slack",
+      roles: ["Interface"],
+      baseUrl: `${EMULATOR}/mock/slack.com`,
+      configToken: "xoxe.xoxp-emulated",
+    },
+  });
+  expect(created.ok()).toBeTruthy();
+  const { connection } = (await created.json()) as { connection: { id: string } };
+
+  // Provision: Rabble creates + configures the app and returns an install URL.
+  const provisioned = await page.request.post(
+    `${SERVER}/api/connections/${connection.id}/slack/provision`,
+    { data: { botName: "Rabble" } },
+  );
+  expect(provisioned.ok()).toBeTruthy();
+  const prov = (await provisioned.json()) as { appId: string; installUrl: string };
+  expect(prov.appId).toBeTruthy();
+  expect(prov.installUrl).toContain("client_id=");
+
+  // The app was created + configured against the (emulated) manifest API.
+  const before = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as { requests: Array<{ path: string }> };
+  expect(before.requests.some((r) => r.path === "/api/apps.manifest.create")).toBe(true);
+  expect(before.requests.some((r) => r.path === "/api/apps.manifest.update")).toBe(true);
+
+  // Credentials stored; the connection awaits install (no bot token yet).
+  const [pending] = await dbQuery<{
+    status: string;
+    slack_app_id: string;
+    has_bot: boolean;
+    oauth_state: string;
+  }>(
+    "SELECT status, slack_app_id, (encrypted_token IS NOT NULL) AS has_bot, oauth_state FROM connections WHERE id = $1",
+    [connection.id],
+  );
+  expect(pending!.status).toBe("needs-auth");
+  expect(pending!.has_bot).toBe(false);
+  expect(pending!.slack_app_id).toBeTruthy();
+
+  // Slack redirects to the OAuth callback with the code + our state nonce.
+  const callback = await fetch(
+    `${SERVER}/api/connections/slack/oauth/callback?code=emu-code&state=${pending!.oauth_state}`,
+    { redirect: "manual" },
+  );
+  expect([302, 303]).toContain(callback.status);
+
+  // The code was exchanged and the bot token is now stored — connection live.
+  const after = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as { requests: Array<{ path: string }> };
+  expect(after.requests.some((r) => r.path === "/api/oauth.v2.access")).toBe(true);
+  const [live] = await dbQuery<{
+    status: string;
+    has_bot: boolean;
+    oauth_state: string | null;
+  }>(
+    "SELECT status, (encrypted_token IS NOT NULL) AS has_bot, oauth_state FROM connections WHERE id = $1",
+    [connection.id],
+  );
+  expect(live!.status).toBe("connected");
+  expect(live!.has_bot).toBe(true);
+  expect(live!.oauth_state).toBeNull();
+
+  // Clean up so later tests see only the Acme Slack connection.
+  await page.request.delete(`${SERVER}/api/connections/${connection.id}`);
+});
+
 test("surfaces: the Slack connection attaches to an agent as a delivery point", async () => {
   await page.locator("nav a[title='Agents']").click();
   await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
@@ -64,7 +142,10 @@ test("surfaces: the Slack connection attaches to an agent as a delivery point", 
 
   // Web sessions is always on; the Slack interface connection is attachable
   await expect(page.locator(".row", { hasText: "Web sessions" })).toBeVisible();
-  await page.locator("select").selectOption({ label: "Acme Slack (slack)" });
+  await page
+    .locator("select")
+    .filter({ has: page.locator("option", { hasText: "Add a surface" }) })
+    .selectOption({ label: "Acme Slack (slack)" });
   await page.getByPlaceholder("#eng-oncall").fill("#eng-oncall");
   // Respond to every message in this channel (not just @-mentions).
   await page
@@ -81,11 +162,11 @@ test("surfaces: the Slack connection attaches to an agent as a delivery point", 
   );
   expect(surfaces).toEqual([{ label: "#eng-oncall", response_mode: "all" }]);
 
-  // The connections list now attributes the agent to the connection
+  // The connections list shows whose identity this connection now is
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "Connections" }).click();
   await expect(
-    page.locator(".row", { hasText: "Acme Slack" }).locator(".chip", { hasText: "1 agent" }),
+    page.locator(".row", { hasText: "Acme Slack" }).locator(".chip", { hasText: "Eng On-Call" }),
   ).toBeVisible();
 
   const audit = await dbQuery<{ action: string }>(
@@ -515,7 +596,7 @@ test("github surface delivery: issue comments become governed sessions", async (
   await page.getByRole("link", { name: "Connections" }).click();
   await page.getByRole("button", { name: "+ Add connection" }).click();
   await page.locator(".modal select").first().selectOption("github");
-  await page.getByPlaceholder("Acme Slack").fill("Acme GitHub");
+  await page.getByPlaceholder("Acme GitHub").fill("Acme GitHub");
   await page
     .getByPlaceholder("https://slack.com")
     .fill(`${EMULATOR}/mock/api.github.com`);
@@ -539,7 +620,10 @@ test("github surface delivery: issue comments become governed sessions", async (
   await page.getByRole("button", { name: "surfaces" }).click();
   // Wait for the tab to replace the identity tab (which has its own selects)
   await expect(page.locator(".row", { hasText: "Web sessions" })).toBeVisible();
-  await page.locator("select").selectOption({ label: "Acme GitHub (github)" });
+  await page
+    .locator("select")
+    .filter({ has: page.locator("option", { hasText: "Add a surface" }) })
+    .selectOption({ label: "Acme GitHub (github)" });
   // The label placeholder is vendor-aware (repo path for GitHub)
   await page.getByPlaceholder("acme/api").fill("acme/api");
   await page.getByRole("button", { name: "Attach surface" }).click();
@@ -735,6 +819,9 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
   await page.getByRole("link", { name: "Connections" }).click();
   await page.getByRole("button", { name: "+ Add connection" }).click();
   await page.getByPlaceholder("Acme Slack").fill("Acme Slack (socket)");
+  await page
+    .getByRole("button", { name: "Connect with existing tokens instead" })
+    .click();
   await page.getByPlaceholder("https://slack.com").fill(`${EMULATOR}/mock/slack.com`);
   await page.locator(".modal input[type=password]").first().fill("xoxb-emulated");
   await page.getByPlaceholder("xapp-…").fill("xapp-emulated");
@@ -754,15 +841,54 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
     })
     .toBeGreaterThan(0);
 
-  // A channel on the socket connection, mapped to the same on-call agent.
+  // Until an agent links to this connection there's no one to answer as: a
+  // DM gets a pointer to the fix, but no session and no agent turn.
+  const preLink = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        event: {
+          type: "message",
+          channel: "D9001",
+          channel_type: "im",
+          user: "U777",
+          text: "Anyone home?",
+          ts: "1798.900",
+        },
+      }),
+    })
+  ).json()) as { delivered: number };
+  expect(preLink.delivered).toBeGreaterThan(0);
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.thread_ts === "1798.900" &&
+          r.body.text?.includes("isn't linked to an agent yet"),
+      );
+    })
+    .toBe(true);
+  expect(
+    await dbQuery("SELECT id FROM sessions WHERE surface_key = 'slack:D9001:1798.900'"),
+  ).toHaveLength(0);
+
+  // Link the on-call agent to the socket connection (its second workspace),
+  // with #eng-socket answering every message.
   await fetch(`${EMULATOR}/admin/slack`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ channels: { C888: "eng-socket" } }),
   });
   await dbQuery(
-    `INSERT INTO agent_surfaces (agent_id, connection_id, label)
-     SELECT a.id, c.id, '#eng-socket' FROM agents a, connections c
+    `INSERT INTO agent_surfaces (agent_id, connection_id, label, response_mode)
+     SELECT a.id, c.id, '#eng-socket', 'all' FROM agents a, connections c
      WHERE a.name = 'Eng On-Call' AND c.name = 'Acme Slack (socket)'`,
   );
 
@@ -836,7 +962,10 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
     ),
   ).toBe(true);
 
-  // A redelivered envelope (same event_id) never runs a second turn.
+  // A redelivery of the same message (same channel+ts) never runs a second
+  // turn — even under a fresh event_id. This covers Slack sending one @-mention
+  // as both app_mention and message.channels: message identity, not event_id,
+  // is what dedupes.
   await fetch(`${EMULATOR}/admin/slack/socket-event`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -855,7 +984,7 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      eventId: "EvSockDup1",
+      eventId: "EvSockDup2",
       event: {
         type: "message",
         channel: "C888",
@@ -865,34 +994,19 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
       },
     }),
   });
-  // Let the first redelivery finish its turn, then confirm exactly one ran.
-  await expect
-    .poll(async () => {
-      const rows = await dbQuery<{ n: string }>(
-        "SELECT count(*)::text AS n FROM messages WHERE session_id = $1",
-        [session!.id],
-      );
-      return Number(rows[0]!.n);
-    })
-    .toBe(4);
+  // Give the redeliveries time to be processed (and deduped), then confirm the
+  // single original turn is all that ran: still just user + agent.
   await page.waitForTimeout(1500);
   const finalCount = await dbQuery<{ n: string }>(
     "SELECT count(*)::text AS n FROM messages WHERE session_id = $1",
     [session!.id],
   );
-  expect(Number(finalCount[0]!.n)).toBe(4);
+  expect(Number(finalCount[0]!.n)).toBe(2);
 });
 
-test("a 1:1 DM to the bot becomes an auto-routed personal session", async () => {
-  // No channel mapping involved: the DM routes by intent across the
-  // sender's usable agents, exactly like an "Auto" web session.
-  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify([
-      { type: "text", text: "eng-on-call" }, // the router's verdict
-    ]),
-  });
+test("a 1:1 DM talks to the connection's linked agent", async () => {
+  // The socket connection is Eng On-Call's identity — a DM answers as that
+  // agent directly, no routing involved.
   const push = (await (
     await fetch(`${EMULATOR}/admin/slack/socket-event`, {
       method: "POST",
@@ -975,12 +1089,8 @@ test("a 1:1 DM to the bot becomes an auto-routed personal session", async () => 
   );
   expect(strangerSessions).toHaveLength(0);
 
-  // "Make me an agent…" routes to the Builder — creation works from Slack.
-  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ type: "text", text: "builder" }),
-  });
+  // The identity holds: even a Builder-shaped ask answers as the linked
+  // agent — one Slack face never switches agents behind the scenes.
   await fetch(`${EMULATOR}/admin/slack/socket-event`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -1004,8 +1114,7 @@ test("a 1:1 DM to the bot becomes an auto-routed personal session", async () => 
       );
       return rows[0] ?? null;
     })
-    .toEqual({ slug: "builder", surface: "Slack DM" });
-  // The Builder has no pinned model — the org default answered anyway.
+    .toEqual({ slug: "eng-on-call", surface: "Slack DM" });
   await expect
     .poll(async () => {
       const log = (await (
@@ -1413,6 +1522,19 @@ test("pulse-back: a sagging pass rate DMs the agent's owner", async () => {
 });
 
 test("share is one verb: audience, plain-language right, pause/unshare", async () => {
+  // Both existing Slack connections are already other agents' identities —
+  // deploying Release Notes Bot to Slack needs a free identity of its own.
+  const freeConnection = await page.request.post(`${SERVER}/api/connections`, {
+    data: {
+      vendor: "slack",
+      name: "Relnotes Slack",
+      roles: ["Interface"],
+      baseUrl: `${EMULATOR}/mock/slack.com`,
+      token: "xoxb-relnotes",
+    },
+  });
+  expect(freeConnection.ok()).toBeTruthy();
+
   // The Builder-made draft is shared from a single Share button.
   await page.goto("/agents");
   await page.locator(".dir-table tbody tr", { hasText: "Release Notes Bot" }).click();
@@ -1436,13 +1558,17 @@ test("share is one verb: audience, plain-language right, pause/unshare", async (
   );
   expect(granted).toEqual([{ access_right: "use" }]);
 
-  // Optional deploy-to-Slack, right in the share flow
+  // Optional deploy-to-Slack, right in the share flow — it claims the free
+  // connection (the taken ones are other agents' identities).
+  await expect(modal).toContainText("via Relnotes Slack");
   await modal.getByPlaceholder("#channel").fill("#relnotes");
   await modal.getByRole("button", { name: "Attach" }).click();
   await expect
     .poll(async () => {
       const rows = await dbQuery<{ label: string }>(
-        "SELECT label FROM agent_surfaces WHERE label = '#relnotes'",
+        `SELECT s.label FROM agent_surfaces s
+         JOIN connections c ON c.id = s.connection_id
+         WHERE s.label = '#relnotes' AND c.name = 'Relnotes Slack'`,
       );
       return rows.length;
     })
@@ -1622,7 +1748,11 @@ test("hitting an access limit becomes a request an admin approves", async ({
     /\d+% pass · \d+ graded/,
   );
   await requestRow.getByRole("button", { name: "Approve", exact: true }).click();
-  await expect(page.locator(".row", { hasText: "Approved by Alex Lin" })).toBeVisible();
+  // Scope to THIS request's decided row — an earlier test already produced an
+  // "Approved by Alex Lin" row, which must not satisfy this wait.
+  await expect(
+    page.locator(".row", { hasText: "Bea Ortiz · edit on agent" }),
+  ).toContainText("Approved by Alex Lin");
 
   // The grant materialized and Bea's effective right actually changed.
   const [engOnCall] = await dbQuery<{ id: string }>(

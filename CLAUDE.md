@@ -82,6 +82,12 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   POST /api/inbound/slack (Slack v0 HMAC signing over the RAW body — the
   route scope has its own string content-type parser; don't move it under
   the JSON-parsed tree).
+- A connection is one agent's identity: agent_surfaces links exactly one
+  agent per connection (DB exclusion constraint, 0018); an agent may hold
+  several connections. Everything answers as the linked agent; unlinked
+  connections reply to DMs/mentions with a link-me hint (no session) and
+  ignore ambient channel messages. No intent routing on Slack (web "Auto"
+  sessions still route by intent).
 - Approvals: the in-memory broker (runtime/approvals.ts) arbitrates all
   surfaces — web card, Slack DM buttons (interactivity endpoint), and
   pending asks returned on session GET. e2e runs with

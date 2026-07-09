@@ -303,9 +303,14 @@ function ShareModal({
     queryFn: api.listConnections,
     retry: false,
   });
-  const slackConnection = connections.data?.connections.find(
+  // A connection is one agent's identity: deploy to this agent's own Slack
+  // connection, or claim an unlinked one — never someone else's.
+  const slackCandidates = (connections.data?.connections ?? []).filter(
     (c) => c.vendor === "slack",
   );
+  const slackConnection =
+    slackCandidates.find((c) => c.linkedAgentId === agentId) ??
+    slackCandidates.find((c) => !c.linkedAgentId);
 
   const [subject, setSubject] = useState("");
   const [right, setRight] = useState<"use" | "edit" | "admin">("use");
@@ -865,12 +870,19 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
     onSuccess: () => void invalidate(),
   });
 
-  const interfaces = (connections.data?.connections ?? []).filter((c) =>
-    c.roles.includes("Interface"),
+  // Offer only identities this agent can hold: its own, or unclaimed ones.
+  const interfaces = (connections.data?.connections ?? []).filter(
+    (c) =>
+      c.roles.includes("Interface") &&
+      (!c.linkedAgentId || c.linkedAgentId === agentId),
   );
   const attached = surfaces.data?.surfaces ?? [];
   const labelPlaceholder = (vendor?: string) =>
-    vendor === "slack" ? "#eng-oncall" : vendor === "github" ? "acme/api" : "channel or path";
+    vendor === "slack"
+      ? "#eng-oncall (empty = whole workspace)"
+      : vendor === "github"
+        ? "acme/api"
+        : "channel or path";
   const selected = interfaces.find((c) => c.id === connectionId);
 
   return (
@@ -962,6 +974,13 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
               Attach surface
             </button>
           </div>
+          {add.isError && (
+            <div className="row">
+              <div className="sub" style={{ color: "var(--red)" }}>
+                {(add.error as Error).message}
+              </div>
+            </div>
+          )}
         </div>
       )}
       {interfaces.length === 0 && (

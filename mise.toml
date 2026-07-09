@@ -4,6 +4,8 @@
 [tools]
 node = "22"
 pnpm = "10"
+# Dev tunnel — the managed Slack setup needs Slack to reach this machine.
+cloudflared = "2026.6.1"
 
 [env]
 _.file = ".env"
@@ -21,8 +23,8 @@ run = [
 ]
 
 [tasks.dev]
-description = "Run the server (:3080) and web app (:5173) with hot reload"
-run = "pnpm dev"
+description = "Run the server (:3080) and web app (:5173) with hot reload, behind a public tunnel (PUBLIC_URL)"
+run = "bash scripts/dev-tunnel.sh"
 
 [tasks.build]
 description = "Build all packages"

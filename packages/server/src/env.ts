@@ -33,4 +33,10 @@ export const env = {
   databaseSsl: (process.env.DATABASE_SSL ?? "false") === "true",
   anthropicApiKey: process.env.ANTHROPIC_API_KEY,
   nodeEnv: process.env.NODE_ENV ?? "development",
+  /**
+   * Rabble's own public https base URL (no trailing slash). Slack must be
+   * able to reach it for the OAuth callback + Events request URL during the
+   * managed Slack setup. Falls back to the request host when unset.
+   */
+  publicUrl: process.env.PUBLIC_URL?.replace(/\/+$/, ""),
 };

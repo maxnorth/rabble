@@ -529,19 +529,34 @@ export const connectionSchema = z.object({
   hasToken: z.boolean(),
   hasAppToken: z.boolean().optional(),
   hasSigningSecret: z.boolean().optional(),
+  hasConfigToken: z.boolean().optional(),
   status: z.enum(["connected", "needs-auth", "error"]),
+  /** The identity link — the one agent this connection answers as. */
+  linkedAgentId: z.string().uuid().nullable().optional(),
+  linkedAgentName: z.string().nullable().optional(),
   createdAt: z.string(),
 });
 export type Connection = z.infer<typeof connectionSchema>;
+
+/** Tokens go into HTTP auth headers, which reject non-ASCII — and pastes
+ * through rich-text surfaces can smuggle in em-dashes or smart quotes. */
+const tokenString = z
+  .string()
+  .max(500)
+  .regex(/^[!-~]+$/, "Token contains non-ASCII characters — re-copy it exactly as shown");
 
 export const createConnectionSchema = z.object({
   vendor: z.string().min(1).max(40),
   name: z.string().min(1).max(120),
   roles: z.array(connectionRoleSchema).min(1),
   baseUrl: z.string().url().nullable().optional(),
-  token: z.string().max(500).optional(),
+  token: tokenString.optional(),
   /** Slack app-level token (xapp-…) — presence enables Socket Mode. */
-  appToken: z.string().max(500).optional(),
+  appToken: tokenString.optional(),
+  /** Slack app configuration token (xoxe.xoxp-…) + its refresh token —
+   * lets Rabble sync the app manifest. */
+  configToken: tokenString.optional(),
+  configRefreshToken: tokenString.optional(),
 });
 export type CreateConnectionRequest = z.infer<typeof createConnectionSchema>;
 

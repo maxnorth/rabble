@@ -16,7 +16,8 @@
     },
     "dev": {
       "cache": false,
-      "persistent": true
+      "persistent": true,
+      "passThroughEnv": ["PUBLIC_URL", "PORT"]
     },
     "test": {
       "dependsOn": [

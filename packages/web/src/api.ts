@@ -339,9 +339,16 @@ export const api = {
 
   // admin
   listConnections: () =>
-    get<{ connections: Array<Connection & { tunnel: boolean; agentCount: number }> }>(
-      "/api/connections",
-    ),
+    get<{
+      connections: Array<
+        Connection & {
+          tunnel: boolean;
+          agentCount: number;
+          linkedAgentId: string | null;
+          linkedAgentName: string | null;
+        }
+      >;
+    }>("/api/connections"),
   createConnection: (body: {
     vendor: string;
     name: string;
@@ -351,8 +358,26 @@ export const api = {
     tunnel?: boolean;
     signingSecret?: string;
     appToken?: string;
+    configToken?: string;
+    configRefreshToken?: string;
   }) => post<{ connection: Connection }>("/api/connections", body),
   deleteConnection: (id: string) => del<{ ok: true }>(`/api/connections/${id}`),
+  saveSlackConfig: (id: string, accessToken: string, refreshToken: string) =>
+    post<{ ok: true }>(`/api/connections/${id}/slack/config`, { accessToken, refreshToken }),
+  syncSlackApp: (id: string, dryRun: boolean) =>
+    post<{
+      applied: boolean;
+      reinstallRequired: boolean;
+      addedScopes: string[];
+      addedEvents: string[];
+      socketModeChanged: boolean;
+      interactivityChanged: boolean;
+    }>(`/api/connections/${id}/slack/sync`, { dryRun }),
+  provisionSlackApp: (id: string, botName: string) =>
+    post<{ appId: string; installUrl: string }>(
+      `/api/connections/${id}/slack/provision`,
+      { botName },
+    ),
   listApiKeys: () => get<{ keys: ApiKey[] }>("/api/api-keys"),
   createApiKey: (body: { name: string; scope: "read" | "write" | "admin" }) =>
     post<{ key: { id: string; name: string; scope: string; prefix: string }; token: string }>(

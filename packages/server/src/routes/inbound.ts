@@ -21,11 +21,13 @@ import {
   users,
 } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
+import { env } from "../env.js";
 import { executeTurnAndPersist } from "../runtime/executeTurn.js";
 import {
   alreadyDelivered,
   processSlackEvent,
   processSlackInteraction,
+  slackDiag,
   type SlackEventEnvelope,
   type SlackInteractionPayload,
 } from "../surfaces/slack.js";
@@ -329,9 +331,17 @@ export async function inboundRoutes(app: FastifyInstance) {
       const timestamp = String(req.headers["x-slack-request-timestamp"] ?? "");
       const signature = String(req.headers["x-slack-signature"] ?? "");
 
+      slackDiag(req.log, "inbound webhook received", {
+        ip: req.ip,
+        timestamp,
+        hasSignature: Boolean(signature),
+        bodyPreview: typeof rawBody === "string" ? rawBody.slice(0, 200) : typeof rawBody,
+      });
+
       // Replay window: Slack recommends rejecting anything older than 5 min.
       const age = Math.abs(Date.now() / 1000 - Number(timestamp));
       if (!timestamp || Number.isNaN(age) || age > 300) {
+        slackDiag(req.log, "inbound rejected: stale/missing timestamp", { timestamp, age });
         return reply.code(401).send({ error: "Stale or missing timestamp" });
       }
 
@@ -354,6 +364,9 @@ export async function inboundRoutes(app: FastifyInstance) {
         }
       });
       if (!connection) {
+        slackDiag(req.log, "inbound rejected: signature verification failed", {
+          candidates: candidates.length,
+        });
         return reply.code(401).send({ error: "Signature verification failed" });
       }
 
@@ -366,6 +379,9 @@ export async function inboundRoutes(app: FastifyInstance) {
 
       // Slack's endpoint handshake.
       if (envelope.type === "url_verification") {
+        slackDiag(req.log, "url_verification challenge answered", {
+          connectionId: connection.id,
+        });
         return { challenge: envelope.challenge };
       }
       // Webhook-only retry signal; the shared processor also dedupes by
@@ -375,6 +391,34 @@ export async function inboundRoutes(app: FastifyInstance) {
       }
 
       return processSlackEvent(connection, envelope, req.log);
+    });
+
+    /**
+     * Managed-setup OAuth callback: Slack redirects the admin here after they
+     * click "Allow". We exchange the code for the bot token (matched to the
+     * connection by the state nonce) and bounce back to the web app. Public —
+     * Slack's redirect carries no Rabble session; the state is the guard.
+     */
+    scope.get("/api/connections/slack/oauth/callback", async (req, reply) => {
+      const { code, state, error } = req.query as {
+        code?: string;
+        state?: string;
+        error?: string;
+      };
+      const publicUrl = env.publicUrl ?? `http://${req.headers.host ?? ""}`;
+      const back = (status: string) =>
+        `${publicUrl}/?slack=${encodeURIComponent(status)}`;
+      if (error || !code || !state) {
+        return reply.redirect(back(error || "missing_code"));
+      }
+      try {
+        const { completeSlackOAuth } = await import("../surfaces/slackOnboard.js");
+        await completeSlackOAuth({ code, state, publicUrl });
+        return reply.redirect(back("connected"));
+      } catch (err) {
+        req.log.error({ err }, "slack oauth callback failed");
+        return reply.redirect(back("error"));
+      }
     });
   });
 }

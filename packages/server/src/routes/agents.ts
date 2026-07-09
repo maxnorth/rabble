@@ -681,6 +681,30 @@ export async function agentRoutes(app: FastifyInstance) {
       )
       .limit(1);
     if (!connection) return reply.code(404).send({ error: "Connection not found" });
+
+    // A connection is an agent's identity — one agent per connection (an
+    // agent MAY hold several connections, e.g. one app per workspace). The
+    // DB's exclusion constraint backstops this check.
+    const { agents } = await import("../db/schema.js");
+    const existing = await db
+      .select()
+      .from(agentSurfaces)
+      .where(eq(agentSurfaces.connectionId, body.connectionId));
+    const otherAgent = existing.find((r) => r.agentId !== id);
+    if (otherAgent) {
+      const [owner] = await db
+        .select({ name: agents.name })
+        .from(agents)
+        .where(eq(agents.id, otherAgent.agentId))
+        .limit(1);
+      return reply.code(409).send({
+        error: `"${connection.name}" is already the identity of ${owner?.name ?? "another agent"} — a connection hosts one agent`,
+      });
+    }
+    if (existing.some((r) => r.label.toLowerCase() === body.label.toLowerCase())) {
+      return reply.code(409).send({ error: "That surface already exists" });
+    }
+
     const [row] = await db
       .insert(agentSurfaces)
       .values({

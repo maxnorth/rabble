@@ -86,7 +86,20 @@ export function mountSlack(app: FastifyInstance): void {
   });
 
   app.post("/mock/slack.com/api/chat.postMessage", async (req) => {
-    logRequest("slack.com", "POST", "/api/chat.postMessage", req.body ?? null);
+    // Form-encoded requests (what the @slack/web-api SDK sends) carry blocks /
+    // attachments as JSON strings; parse them back so logged assertions can
+    // inspect their structure, matching real Slack's semantics.
+    const body = { ...((req.body ?? {}) as Record<string, unknown>) };
+    for (const key of ["blocks", "attachments"]) {
+      if (typeof body[key] === "string") {
+        try {
+          body[key] = JSON.parse(body[key] as string);
+        } catch {
+          // leave as-is if not JSON
+        }
+      }
+    }
+    logRequest("slack.com", "POST", "/api/chat.postMessage", body);
     return { ok: true, channel: "C0EMU", ts: `${Math.floor(Date.now() / 1000)}.000100` };
   });
 
@@ -119,5 +132,115 @@ export function mountSlack(app: FastifyInstance): void {
     const name = channel ? state.slackChannels.get(channel) : undefined;
     if (!name) return { ok: false, error: "channel_not_found" };
     return { ok: true, channel: { id: channel, name } };
+  });
+
+  // --- App configuration / manifest APIs (managed setup) ---
+  // Matches real Slack behavior (verified empirically 2026-07): manifest
+  // update does NOT synchronously challenge the events request_url (url
+  // verification happens lazily, after install), but it DOES validate that
+  // every subscribed event has its required OAuth scope, failing with
+  // invalid_manifest + a detailed errors array.
+  const EVENT_SCOPE_REQUIREMENTS: Record<string, string> = {
+    app_mention: "app_mentions:read",
+    "message.channels": "channels:history",
+    "message.groups": "groups:history",
+    "message.im": "im:history",
+    "message.mpim": "mpim:history",
+  };
+  type Manifest = {
+    oauth_config?: { scopes?: { bot?: string[] } };
+    settings?: { event_subscriptions?: { bot_events?: string[] } };
+  };
+  function parseManifest(raw: unknown): Manifest | null {
+    if (typeof raw !== "string") return (raw ?? {}) as Manifest;
+    try {
+      return JSON.parse(raw) as Manifest;
+    } catch {
+      return null;
+    }
+  }
+  function manifestScopeErrors(manifest: Manifest): Record<string, unknown>[] {
+    const scopes = manifest.oauth_config?.scopes?.bot ?? [];
+    const events = manifest.settings?.event_subscriptions?.bot_events ?? [];
+    return events.flatMap((event) => {
+      const needed = EVENT_SCOPE_REQUIREMENTS[event];
+      if (!needed || scopes.includes(needed)) return [];
+      return [
+        {
+          code: `${event}_event_missing_scope`,
+          message: `${event} event is missing scope(s): ${needed}`,
+          pointer: "/settings/event_subscriptions",
+          related_component: "oauth",
+        },
+      ];
+    });
+  }
+  app.post("/mock/slack.com/api/apps.manifest.create", async (req) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    logRequest("slack.com", "POST", "/api/apps.manifest.create", body);
+    const manifest = parseManifest(body.manifest);
+    if (!manifest) return { ok: false, error: "invalid_manifest" };
+    const errors = manifestScopeErrors(manifest);
+    if (errors.length > 0) return { ok: false, error: "invalid_manifest", errors };
+    const appId = `AEMU${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    return {
+      ok: true,
+      app_id: appId,
+      credentials: {
+        client_id: "80230.emulated",
+        client_secret: "emu-client-secret",
+        verification_token: "emu-verify",
+        signing_secret: "emu-signing-secret",
+      },
+      oauth_authorize_url: `${req.headers.host ? `http://${req.headers.host}` : "https://slack.com"}/mock/slack.com/oauth/v2/authorize?client_id=80230.emulated&scope=chat:write`,
+    };
+  });
+  app.post("/mock/slack.com/api/apps.manifest.update", async (req) => {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    logRequest("slack.com", "POST", "/api/apps.manifest.update", body);
+    const manifest = parseManifest(body.manifest);
+    if (!manifest) return { ok: false, error: "invalid_manifest" };
+    const errors = manifestScopeErrors(manifest);
+    if (errors.length > 0) return { ok: false, error: "invalid_manifest", errors };
+    return { ok: true };
+  });
+  app.post("/mock/slack.com/api/apps.manifest.validate", async (req) => {
+    logRequest("slack.com", "POST", "/api/apps.manifest.validate", req.body ?? null);
+    return { ok: true };
+  });
+  app.post("/mock/slack.com/api/apps.manifest.export", async (req) => {
+    logRequest("slack.com", "POST", "/api/apps.manifest.export", req.body ?? null);
+    return {
+      ok: true,
+      manifest: {
+        display_information: { name: "Emu App" },
+        oauth_config: { scopes: { bot: [] } },
+        settings: { event_subscriptions: { bot_events: [] } },
+      },
+    };
+  });
+  app.post("/mock/slack.com/api/tooling.tokens.rotate", async (req) => {
+    logRequest("slack.com", "POST", "/api/tooling.tokens.rotate", req.body ?? null);
+    return { ok: true, token: "xoxe.xoxp-rotated", refresh_token: "xoxe-rotated" };
+  });
+  app.post("/mock/slack.com/api/bots.info", async (req) => {
+    logRequest("slack.com", "POST", "/api/bots.info", req.body ?? null);
+    return { ok: true, bot: { id: "B0EMU", app_id: "A0EMU", name: "rabble-bot" } };
+  });
+  app.post("/mock/slack.com/api/assistant.threads.setStatus", async (req) => {
+    logRequest("slack.com", "POST", "/api/assistant.threads.setStatus", req.body ?? null);
+    return { ok: true };
+  });
+  app.post("/mock/slack.com/api/oauth.v2.access", async (req) => {
+    logRequest("slack.com", "POST", "/api/oauth.v2.access", req.body ?? null);
+    const { code } = (req.body ?? {}) as { code?: string };
+    if (!code) return { ok: false, error: "invalid_code" };
+    return {
+      ok: true,
+      access_token: "xoxb-emulated-bot",
+      token_type: "bot",
+      bot_user_id: "U0EMU",
+      team: { id: "T0EMU", name: "Acme Corp" },
+    };
   });
 }

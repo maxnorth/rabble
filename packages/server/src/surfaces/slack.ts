@@ -7,11 +7,13 @@
  *   - Socket Mode (surfaces/slackSocket.ts) — the server dials out over a
  *     WebSocket and receives the same envelopes, no public URL needed.
  *
- * A message in a channel mapped to an agent surface starts (or continues) a
- * governed session for the matching platform user, runs a real agent turn,
- * and threads the reply back via chat.postMessage. Interactivity payloads
- * (Approve/Deny buttons on approval DMs) resolve pending approvals through
- * the same broker the web session card uses.
+ * A connection is an agent's Slack identity: exactly one agent links to it
+ * (via agent_surfaces), and every DM/mention/channel message answers as that
+ * agent — an unlinked connection answers as no one. Messages start (or
+ * continue) a governed session for the matching platform user, run a real
+ * agent turn, and thread the reply back via chat.postMessage. Interactivity
+ * payloads (Approve/Deny buttons on approval DMs) resolve pending approvals
+ * through the same broker the web session card uses.
  */
 import { appendFile } from "node:fs/promises";
 import type { WebClient } from "@slack/web-api";
@@ -83,36 +85,6 @@ export function alreadyDelivered(eventId: string | undefined): boolean {
 }
 
 /**
- * Pick an agent for a surface with no explicit channel mapping — a DM or an
- * @-mention in an unmapped channel. Routes by intent across the agents the
- * sender can actually `use` (the Builder included, so "make me an agent
- * that…" works straight from Slack), exactly like a web "Auto" session.
- * Returns null when the sender has no usable agents.
- */
-async function routeUsableAgentByIntent(
-  connection: SlackConnection,
-  platformUser: typeof users.$inferSelect,
-  text: string,
-): Promise<typeof agents.$inferSelect | null> {
-  const { rightsForAllAgents, hasRight } = await import("../rights.js");
-  const rights = await rightsForAllAgents({
-    id: platformUser.id,
-    orgId: platformUser.orgId,
-    role: platformUser.role,
-  } as Parameters<typeof rightsForAllAgents>[0]);
-  const candidates = await db
-    .select()
-    .from(agents)
-    .where(and(eq(agents.orgId, connection.orgId), eq(agents.status, "active")))
-    .orderBy(agents.name);
-  const usable = candidates.filter((c) => hasRight(rights.get(c.id) ?? null, "use"));
-  if (usable.length === 0) return null;
-  const { routeByIntent } = await import("../runtime/router.js");
-  const agentId = await routeByIntent(connection.orgId, text, usable);
-  return usable.find((c) => c.id === agentId) ?? usable[0]!;
-}
-
-/**
  * Whether a Slack message should get a reply, given the surface's response
  * mode. DMs and @-mentions always engage. In a channel it depends on the mode:
  *   all     – every message answers
@@ -136,7 +108,7 @@ export function shouldEngageSlack(opts: {
 // root-cause delivery/threading. Remove this block + all slackDiag() calls
 // (grep "slackDiag" / "slack.diag") once Slack is proven stable.
 const SLACK_DIAG_FILE = "/tmp/rabble-slack-diag.log";
-function slackDiag(
+export function slackDiag(
   log: SurfaceLogger,
   msg: string,
   obj: Record<string, unknown> = {},
@@ -269,6 +241,37 @@ export async function processSlackEvent(
     slackDiag(log, msg, { eventId: envelope.event_id, channel: event.channel, ...extra });
   diag("passed filters", { eventType: event.type, slackUser: event.user, ts: event.ts });
 
+  const isDm = event.channel_type === "im" || event.channel.startsWith("D");
+  // A tag can arrive as app_mention OR as a message.channels event whose text
+  // contains `<@BOT>` — treat both as a mention so the dedup can't drop the one
+  // that would have engaged.
+  const botUserId = await resolveBotUserId(connection.id, slack);
+  const isMention =
+    event.type === "app_mention" ||
+    (!!botUserId &&
+      (event.text.includes(`<@${botUserId}>`) ||
+        event.text.includes(`<@${botUserId}|`)));
+
+  // A connection is an agent's Slack identity. Until an agent is linked (an
+  // agent_surfaces row exists) there's no one to answer as — anyone who
+  // addresses the app directly gets pointed at the fix; ambient channel
+  // messages stay ignored.
+  const surfaceRows = await db
+    .select({ surface: agentSurfaces, agent: agents })
+    .from(agentSurfaces)
+    .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
+    .where(eq(agentSurfaces.connectionId, connection.id));
+  if (surfaceRows.length === 0) {
+    diag("not linked to an agent", { isDm, isMention });
+    if (isDm || isMention) {
+      await post(
+        "This app isn't linked to an agent yet — an admin can attach it in Rabble, under the agent's Surfaces tab.",
+      );
+    }
+    return { ok: true, ignored: "connection not linked to an agent" };
+  }
+  const linkedAgent = surfaceRows[0]!.agent;
+
   // Sessions belong to people: resolve the Slack user to a platform user via
   // their profile email. The SDK rejects on ok:false (e.g. user_not_found);
   // treat any failure as "no email" so the refusal path is taken.
@@ -288,26 +291,10 @@ export async function processSlackEvent(
     : [];
   // [diag] email is not a secret, but this line is removable with the rest.
   diag("identity resolved", { email: email ?? null, platformUser: platformUser?.id ?? null });
-
-  const isDm = event.channel_type === "im" || event.channel.startsWith("D");
-  // A tag can arrive as app_mention OR as a message.channels event whose text
-  // contains `<@BOT>` — treat both as a mention so the dedup can't drop the one
-  // that would have engaged.
-  const botUserId = await resolveBotUserId(connection.id, slack);
-  const isMention =
-    event.type === "app_mention" ||
-    (!!botUserId &&
-      (event.text.includes(`<@${botUserId}>`) ||
-        event.text.includes(`<@${botUserId}|`)));
   const notARabbleUser = async () => {
     diag("refused: no matching Rabble user", { email: email ?? null });
     await post("Sorry — I can only act for Rabble users. Ask an org admin to invite you.");
     return { ok: true, ignored: "no matching platform user" };
-  };
-  const noUsableAgents = async () => {
-    diag("refused: no usable agents for sender");
-    await post("No agents are shared with you yet — ask an org admin for access.");
-    return { ok: true, ignored: "no usable agents for sender" };
   };
 
   // One Slack thread (or DM) = one session.
@@ -318,8 +305,8 @@ export async function processSlackEvent(
     .where(eq(sessions.surfaceKey, surfaceKey))
     .limit(1);
 
-  // Resolve the channel's surface + response mode up front (channels only).
-  // Unmapped channels have no surface, so only @-mentions engage them.
+  // Resolve the channel's response mode (channels only). Channels without a
+  // surface row default to mention-only.
   let matched:
     | { surface: typeof agentSurfaces.$inferSelect; agent: typeof agents.$inferSelect }
     | undefined;
@@ -332,11 +319,6 @@ export async function processSlackEvent(
         .then((r) => r.channel?.name ?? "")
         .catch(() => "")
     ).replace(/^#/, "");
-    const surfaceRows = await db
-      .select({ surface: agentSurfaces, agent: agents })
-      .from(agentSurfaces)
-      .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
-      .where(eq(agentSurfaces.connectionId, connection.id));
     matched = surfaceRows.find((r) => {
       const label = r.surface.label.replace(/^#/, "");
       return label === channelName || label === event.channel;
@@ -377,9 +359,10 @@ export async function processSlackEvent(
   }
   if (!platformUser) return notARabbleUser();
 
-  // Who answers? An active thread continues with its owning agent; otherwise a
-  // mapped surface uses its agent and everything else routes by intent.
-  let agent: typeof agents.$inferSelect | undefined;
+  // Who answers? Always the connection's linked agent — the Slack identity IS
+  // that agent. An active thread continues with its owning agent for safety
+  // (sessions predating a re-link keep their original voice).
+  let agent: typeof agents.$inferSelect;
   if (existingSession) {
     const [owner] = await db
       .select()
@@ -388,12 +371,8 @@ export async function processSlackEvent(
       .limit(1);
     if (!owner) return { ok: true, ignored: "session agent missing" };
     agent = owner;
-  } else if (matched) {
-    agent = matched.agent;
   } else {
-    const routed = await routeUsableAgentByIntent(connection, platformUser, text);
-    if (!routed) return noUsableAgents();
-    agent = routed;
+    agent = linkedAgent;
   }
   const surfaceName =
     existingSession?.surface ??
@@ -448,17 +427,26 @@ export async function processSlackEvent(
     ),
   );
 
-  // Show Slack's native agent status ("<App> is thinking…") under the thread
-  // while the turn runs — the agent analogue of a typing indicator. It clears
-  // automatically when we post the reply; assistant:write (already granted)
-  // covers it. No message editing.
+  // Slack shows TWO agent working-indicators, both driven by setStatus:
+  //   status           – the static bar under the message
+  //   loading_messages – the rotating "typing" animation; if omitted, Slack
+  //                      cycles its own built-ins ("Summarizing findings…" etc.)
+  // Pin BOTH to the same text so neither rotates through the built-ins. Clears
+  // when we post the reply; assistant:write/chat:write (both granted) cover it.
+  const thinking = "Thinking…";
   try {
-    await slack.assistant.threads.setStatus({
+    const r = await slack.assistant.threads.setStatus({
       channel_id: event.channel,
       thread_ts: threadTs,
-      status: "is thinking…",
+      status: thinking,
+      loading_messages: [thinking],
     });
+    slackDiag(log, "setStatus ok", { status: thinking, threadTs, ok: r.ok });
   } catch (err) {
+    slackDiag(log, "setStatus FAILED", {
+      threadTs,
+      error: (err as { data?: { error?: string } })?.data?.error ?? String(err),
+    });
     log.warn({ err }, "slack setStatus failed");
   }
 

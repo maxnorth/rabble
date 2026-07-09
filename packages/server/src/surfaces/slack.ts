@@ -90,8 +90,8 @@ export function alreadyDelivered(eventId: string | undefined): boolean {
  *   all     – every message answers
  *   thread  – a tag starts a thread; follow-ups answer once its session exists
  *   mention – only @-mentions answer, even inside an active thread
- * Unmapped channels have no surface (mode defaults to "mention"), so they only
- * answer @-mentions.
+ * Channels without their own surface row inherit the workspace-level surface's
+ * mode (empty label); with neither, only @-mentions answer.
  */
 export function shouldEngageSlack(opts: {
   isDm: boolean;
@@ -265,12 +265,23 @@ export async function processSlackEvent(
     diag("not linked to an agent", { isDm, isMention });
     if (isDm || isMention) {
       await post(
-        "This app isn't linked to an agent yet — an admin can attach it in Rabble, under the agent's Surfaces tab.",
+        "This app isn't linked to an agent yet. An admin can attach it in Rabble, under the agent's Surfaces tab.",
       );
     }
     return { ok: true, ignored: "connection not linked to an agent" };
   }
   const linkedAgent = surfaceRows[0]!.agent;
+  const workspaceSurface = surfaceRows.find((r) => r.surface.label === "");
+
+  // DMs are a surface setting (workspace-level row). Off means a 1:1 message
+  // gets a short pointer, never a session.
+  if (isDm && workspaceSurface?.surface.dmEnabled === false) {
+    diag("refused: DMs disabled on this surface");
+    await post(
+      `${linkedAgent.name} doesn't take direct messages. Reach it in a channel instead.`,
+    );
+    return { ok: true, ignored: "DMs disabled on this surface" };
+  }
 
   // Sessions belong to people: resolve the Slack user to a platform user via
   // their profile email. The SDK rejects on ok:false (e.g. user_not_found);
@@ -293,7 +304,7 @@ export async function processSlackEvent(
   diag("identity resolved", { email: email ?? null, platformUser: platformUser?.id ?? null });
   const notARabbleUser = async () => {
     diag("refused: no matching Rabble user", { email: email ?? null });
-    await post("Sorry — I can only act for Rabble users. Ask an org admin to invite you.");
+    await post("Sorry, I can only act for Rabble users. Ask an org admin to invite you.");
     return { ok: true, ignored: "no matching platform user" };
   };
 
@@ -305,8 +316,9 @@ export async function processSlackEvent(
     .where(eq(sessions.surfaceKey, surfaceKey))
     .limit(1);
 
-  // Resolve the channel's response mode (channels only). Channels without a
-  // surface row default to mention-only.
+  // Resolve the channel's response mode (channels only): a channel-labeled
+  // surface wins, else the workspace-level surface (empty label) applies,
+  // else mention-only.
   let matched:
     | { surface: typeof agentSurfaces.$inferSelect; agent: typeof agents.$inferSelect }
     | undefined;
@@ -323,7 +335,10 @@ export async function processSlackEvent(
       const label = r.surface.label.replace(/^#/, "");
       return label === channelName || label === event.channel;
     });
-    mode = matched?.surface.responseMode ?? "mention";
+    mode =
+      matched?.surface.responseMode ??
+      workspaceSurface?.surface.responseMode ??
+      "mention";
   }
   diag("surface resolved", {
     isDm,
@@ -477,7 +492,7 @@ export async function processSlackEvent(
     fullText = result.fullText;
   } catch (err) {
     log.error({ err }, "slack surface turn failed");
-    await post("Something went wrong running the agent — check the session in Rabble.");
+    await post("Something went wrong running the agent. Check the session in Rabble.");
     return { ok: true, error: "turn failed" };
   }
 
@@ -535,8 +550,8 @@ export async function processSlackInteraction(
       : false;
   const outcomeText = ok
     ? action.action_id === "rabble_approve"
-      ? "✅ Approved — the agent is continuing."
-      : "🚫 Denied — the agent was told no."
+      ? "✅ Approved. The agent is continuing."
+      : "🚫 Denied. The agent was told no."
     : "This approval already resolved or isn't yours to decide.";
 
   // Swap the buttons out of the DM so the ask can't be double-clicked.

@@ -658,6 +658,7 @@ export async function agentRoutes(app: FastifyInstance) {
         vendor: r.connection.vendor,
         label: r.surface.label,
         responseMode: r.surface.responseMode,
+        dmEnabled: r.surface.dmEnabled,
         status: r.connection.status,
         createdAt: r.surface.createdAt.toISOString(),
       })),
@@ -698,7 +699,7 @@ export async function agentRoutes(app: FastifyInstance) {
         .where(eq(agents.id, otherAgent.agentId))
         .limit(1);
       return reply.code(409).send({
-        error: `"${connection.name}" is already the identity of ${owner?.name ?? "another agent"} — a connection hosts one agent`,
+        error: `"${connection.name}" is already the identity of ${owner?.name ?? "another agent"} . A connection hosts one agent`,
       });
     }
     if (existing.some((r) => r.label.toLowerCase() === body.label.toLowerCase())) {
@@ -712,6 +713,7 @@ export async function agentRoutes(app: FastifyInstance) {
         connectionId: body.connectionId,
         label: body.label,
         responseMode: body.responseMode,
+        dmEnabled: body.dmEnabled,
       })
       .returning();
     await recordAudit({
@@ -734,19 +736,31 @@ export async function agentRoutes(app: FastifyInstance) {
       return reply.code(403).send({ error: "You need edit access on this agent" });
     }
     const { agentSurfaces } = await import("../db/schema.js");
+    const changes: Partial<{ responseMode: string; dmEnabled: boolean }> = {};
+    if (body.responseMode !== undefined) changes.responseMode = body.responseMode;
+    if (body.dmEnabled !== undefined) changes.dmEnabled = body.dmEnabled;
+    if (Object.keys(changes).length === 0) {
+      return reply.code(400).send({ error: "Nothing to update" });
+    }
     const [row] = await db
       .update(agentSurfaces)
-      .set({ responseMode: body.responseMode })
+      .set(changes)
       .where(and(eq(agentSurfaces.id, surfaceId), eq(agentSurfaces.agentId, id)))
       .returning();
     if (!row) return reply.code(404).send({ error: "Surface not found" });
+    const summary = [
+      body.responseMode !== undefined ? `response mode ${body.responseMode}` : null,
+      body.dmEnabled !== undefined ? `DMs ${body.dmEnabled ? "on" : "off"}` : null,
+    ]
+      .filter(Boolean)
+      .join(", ");
     await recordAudit({
       orgId: req.user!.orgId,
       actorUserId: req.user!.id,
       action: "agent.surface.update",
       targetType: "agent",
       targetId: id,
-      summary: `Set surface response mode to ${body.responseMode}`,
+      summary: `Set surface ${summary}`,
     });
     return { ok: true };
   });

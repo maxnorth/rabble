@@ -12,6 +12,9 @@ describe("mergeRequiredSettings", () => {
     expect(merged.oauth_config?.scopes?.bot).toEqual(REQUIRED_BOT_SCOPES);
     expect(merged.settings?.event_subscriptions?.bot_events).toEqual(REQUIRED_BOT_EVENTS);
     expect(merged.settings?.interactivity?.is_enabled).toBe(true);
+    // The Messages tab is Slack's prerequisite for DMing a bot at all.
+    expect(merged.features?.app_home?.messages_tab_enabled).toBe(true);
+    expect(merged.features?.app_home?.messages_tab_read_only_enabled).toBe(false);
   });
 
   it("sets socket mode to match the connection's transport", () => {

@@ -47,7 +47,7 @@ export function Shell({ user }: { user: User }) {
       <nav className="icon-rail">
         <div
           className="rail-logo"
-          title="Home — Sessions"
+          title="Home · Sessions"
           style={{ cursor: "pointer" }}
           onClick={() => navigate("/sessions")}
         >
@@ -76,13 +76,13 @@ export function Shell({ user }: { user: User }) {
         <NavLink
           to="/profile"
           className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
-          title={`${user.name} — profile`}
+          title={`${user.name} · profile`}
         >
           <span style={{ fontSize: 11, fontWeight: 600 }}>{initials}</span>
         </NavLink>
         <button
           className="rail-btn"
-          title={`${user.name} — sign out`}
+          title={`${user.name} · sign out`}
           onClick={async () => {
             await api.logout();
             navigate("/");

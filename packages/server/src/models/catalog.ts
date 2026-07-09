@@ -12,7 +12,7 @@ export const MODEL_CATALOG: CatalogModel[] = [
     protocol: "anthropic",
     provider: "anthropic",
     modelId: "claude-sonnet-5",
-    description: "Balanced intelligence and speed — the default choice.",
+    description: "Balanced intelligence and speed. The default choice.",
     priceInputPerMtok: 3,
     priceOutputPerMtok: 15,
   },

@@ -458,6 +458,8 @@ export const agentSurfaces = pgTable(
     label: text("label").notNull().default(""),
     // Slack thread behavior: 'all' | 'thread' | 'mention' (see 0015 migration).
     responseMode: text("response_mode").notNull().default("thread"),
+    // DMs on/off for the linked agent; meaningful on the workspace row.
+    dmEnabled: boolean("dm_enabled").notNull().default(true),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

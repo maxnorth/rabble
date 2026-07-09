@@ -43,6 +43,12 @@ export const REQUIRED_BOT_EVENTS = [
 ];
 
 interface SlackManifest {
+  features?: {
+    app_home?: {
+      messages_tab_enabled?: boolean;
+      messages_tab_read_only_enabled?: boolean;
+    };
+  };
   oauth_config?: {
     scopes?: { bot?: string[]; user?: string[] };
     redirect_urls?: string[];
@@ -85,6 +91,14 @@ export function mergeRequiredSettings(
   m.settings.socket_mode_enabled = opts.socketMode;
   m.settings.interactivity ??= {};
   m.settings.interactivity.is_enabled = true;
+  // The Messages tab is Slack's switch for DMing a bot; whether the agent
+  // actually answers DMs is the surface's dm_enabled setting.
+  m.features ??= {};
+  m.features.app_home = {
+    ...m.features.app_home,
+    messages_tab_enabled: true,
+    messages_tab_read_only_enabled: false,
+  };
   // Webhook connections: pin delivery/callback URLs to where Rabble lives
   // now — a changed PUBLIC_URL (new tunnel, new domain) otherwise leaves the
   // app pointed at a dead address with no error anywhere.
@@ -103,6 +117,7 @@ export interface ManifestDiff {
   socketModeChanged: boolean;
   interactivityChanged: boolean;
   urlsChanged: boolean;
+  messagesTabChanged: boolean;
 }
 
 /** What mergeRequiredSettings changed. Pure — exported for tests. */
@@ -127,6 +142,11 @@ export function diffManifest(before: SlackManifest, after: SlackManifest): Manif
         after.settings?.interactivity?.request_url ||
       JSON.stringify(before.oauth_config?.redirect_urls ?? []) !==
         JSON.stringify(after.oauth_config?.redirect_urls ?? []),
+    messagesTabChanged:
+      (before.features?.app_home?.messages_tab_enabled ?? false) !==
+        (after.features?.app_home?.messages_tab_enabled ?? false) ||
+      (before.features?.app_home?.messages_tab_read_only_enabled ?? false) !==
+        (after.features?.app_home?.messages_tab_read_only_enabled ?? false),
   };
 }
 
@@ -193,7 +213,7 @@ async function rotateConfigToken(connection: SlackConnection): Promise<string> {
   });
   if (!res.ok || typeof res.token !== "string" || typeof res.refresh_token !== "string") {
     throw new Error(
-      `Config token rotation failed (${res.error ?? "unknown"}) — regenerate the token`,
+      `Config token rotation failed (${res.error ?? "unknown"}). Regenerate the token`,
     );
   }
   await saveSlackConfigTokens(connection.id, res.token, res.refresh_token);

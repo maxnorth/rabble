@@ -172,7 +172,7 @@ export function StatsSection() {
               <h1 className="page-title">{page}</h1>
               <p className="page-subtitle">
                 {page === "Overview" && "Usage, evals, and tool auth across the org."}
-                {page === "Eval performance" && "Pass rates per criterion — where agents earn trust."}
+                {page === "Eval performance" && "Pass rates per criterion, where agents earn trust."}
                 {page === "Usage & spend" && "Volume by agent and by model."}
                 {page === "Skill use" && "Which tools agents actually call, and where."}
               </p>
@@ -358,7 +358,7 @@ function EvalPerformance({ data }: { data: StatsResponse }) {
         <h3>Pass rate by criterion (worst first)</h3>
         <Bars
           rows={data.perCriterion.map((c) => ({
-            label: `${c.agentName} — ${c.criterionName}`,
+            label: `${c.agentName} · ${c.criterionName}`,
             value: c.passRate,
             suffix: "%",
             color:
@@ -406,7 +406,7 @@ function UsageSpend({ data }: { data: StatsResponse }) {
         />
         <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
           Token cost this period, at each agent's model rates. Models without
-          pricing contribute $0 — set prices in Admin › Models.
+          pricing contribute $0. Set prices in Admin › Models.
         </p>
       </div>
       <div className="chart-card">

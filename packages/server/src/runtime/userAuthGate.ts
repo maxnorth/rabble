@@ -57,7 +57,7 @@ export async function gateUserAuth(
       outcome: "refused",
       approval: { status: "denied", decidedByName: null },
       toolOutput:
-        "Approvals aren't available on this surface yet — run this from the web app.",
+        "Approvals aren't available on this surface yet. Run this from the web app.",
       modelText:
         "This action needs the user's approval, which isn't possible on " +
         "this surface. Tell the user to run it from the Rabble web app.",

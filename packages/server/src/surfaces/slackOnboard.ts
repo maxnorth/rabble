@@ -95,7 +95,13 @@ export async function provisionSlackApp(input: {
   const created = await api(baseUrl, configToken, "apps.manifest.create", {
     manifest: {
       display_information: { name },
-      features: { bot_user: { display_name: name } },
+      features: {
+        bot_user: { display_name: name },
+        app_home: {
+          messages_tab_enabled: true,
+          messages_tab_read_only_enabled: false,
+        },
+      },
       oauth_config: {
         scopes: { bot: REQUIRED_BOT_SCOPES },
         redirect_urls: [callbackUrl],
@@ -137,7 +143,13 @@ export async function provisionSlackApp(input: {
     app_id: appId,
     manifest: {
       display_information: { name },
-      features: { bot_user: { display_name: name } },
+      features: {
+        bot_user: { display_name: name },
+        app_home: {
+          messages_tab_enabled: true,
+          messages_tab_read_only_enabled: false,
+        },
+      },
       oauth_config: {
         scopes: { bot: REQUIRED_BOT_SCOPES },
         redirect_urls: [callbackUrl],
@@ -172,8 +184,8 @@ export async function provisionSlackApp(input: {
       })
       .where(eq(connections.id, connection.id));
     const detail = configured.errors
-      ? ` — ${JSON.stringify(configured.errors)}`
-      : ` — Slack must be able to reach Rabble at ${publicUrl} to verify event delivery`;
+      ? `. ${JSON.stringify(configured.errors)}`
+      : `. Slack must be able to reach Rabble at ${publicUrl} to verify event delivery`;
     throw new Error(`App event configuration failed (${configured.error ?? "unknown"})${detail}`);
   }
 

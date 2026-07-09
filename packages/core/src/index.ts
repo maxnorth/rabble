@@ -729,6 +729,7 @@ export const agentSurfaceSchema = z.object({
   vendor: z.string(),
   label: z.string(),
   responseMode: surfaceResponseModeSchema,
+  dmEnabled: z.boolean(),
   status: z.enum(["connected", "needs-auth", "error"]),
   createdAt: z.string(),
 });
@@ -738,11 +739,13 @@ export const createAgentSurfaceSchema = z.object({
   connectionId: z.string().uuid(),
   label: z.string().max(120).default(""),
   responseMode: surfaceResponseModeSchema.default("thread"),
+  dmEnabled: z.boolean().default(true),
 });
 export type CreateAgentSurfaceRequest = z.infer<typeof createAgentSurfaceSchema>;
 
 export const updateAgentSurfaceSchema = z.object({
-  responseMode: surfaceResponseModeSchema,
+  responseMode: surfaceResponseModeSchema.optional(),
+  dmEnabled: z.boolean().optional(),
 });
 export type UpdateAgentSurfaceRequest = z.infer<typeof updateAgentSurfaceSchema>;
 

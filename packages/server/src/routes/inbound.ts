@@ -175,7 +175,7 @@ export async function inboundRoutes(app: FastifyInstance) {
         .limit(1);
       if (!platformUser) {
         await postComment(
-          `@${login} I can only act for Rabble users — connect your GitHub ` +
+          `@${login} I can only act for Rabble users. Connect your GitHub ` +
             "account under Profile › Connected accounts and try again.",
         );
         return { ok: true, ignored: "no matching platform user" };
@@ -247,7 +247,7 @@ export async function inboundRoutes(app: FastifyInstance) {
       } catch (err) {
         req.log.error({ err }, "github surface turn failed");
         await postComment(
-          "Something went wrong running the agent — check the session in Rabble.",
+          "Something went wrong running the agent. Check the session in Rabble.",
         );
         return { ok: true, error: "turn failed" };
       }

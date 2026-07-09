@@ -183,7 +183,7 @@ export async function accessRequestRoutes(app: FastifyInstance) {
     if (duplicate) {
       return reply
         .code(409)
-        .send({ error: "You already have an open request for this — an admin will review it." });
+        .send({ error: "You already have an open request for this. An admin will review it." });
     }
 
     const [row] = await db

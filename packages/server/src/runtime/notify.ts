@@ -59,7 +59,7 @@ export async function sendSlackApprovalPrompt(input: {
           text: {
             type: "mrkdwn",
             text:
-              `*Approval needed — acting as you*\n` +
+              `*Approval needed · acting as you*\n` +
               `${input.agentName} wants to run \`${input.ask.toolName}\`` +
               `${input.ask.serverName ? ` via ${input.ask.serverName}` : ""} on ${input.surface}.`,
           },
@@ -129,7 +129,7 @@ export async function notifyBackgroundReply(input: {
         : input.replyPreview;
     await client.chat.postMessage({
       channel: slackUserId,
-      text: `${input.agentName} replied on ${input.surface}: "${preview}" — open the session in Rabble: /sessions/${input.sessionId}`,
+      text: `${input.agentName} replied on ${input.surface}: "${preview}". Open the session in Rabble: /sessions/${input.sessionId}`,
     });
   } catch {
     // Best-effort by design.

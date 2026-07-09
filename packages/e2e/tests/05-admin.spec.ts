@@ -362,6 +362,78 @@ test("slack surface delivery: a channel message becomes a governed session", asy
   );
 });
 
+test("auto-reply in thread: a mention starts it, untagged follow-ups answer", async () => {
+  // A workspace-level surface (empty label) carries the default response
+  // mode for every channel without its own row. Default 'thread': a mention
+  // opens the thread, then follow-ups inside it answer without re-tagging.
+  await dbQuery(
+    `INSERT INTO agent_surfaces (agent_id, connection_id, label, response_mode)
+     SELECT a.id, c.id, '', 'thread' FROM agents a, connections c
+     WHERE a.name = 'Eng On-Call' AND c.name = 'Acme Slack'`,
+  );
+  await fetch(`${EMULATOR}/admin/slack`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ channels: { C780: "random" } }),
+  });
+
+  // The mention engages (channel has no row of its own) and opens a thread.
+  await signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "app_mention",
+      channel: "C780",
+      user: "U777",
+      text: "<@U0EMU> what broke overnight?",
+      ts: "1713.001",
+    },
+  });
+  const [threadSession] = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE surface_key = 'slack:C780:1713.001'",
+  );
+  expect(threadSession).toBeDefined();
+
+  // The untagged follow-up inside the thread runs a second turn in the same
+  // session. This is the auto-reply-in-thread regression check: mode must
+  // come from the workspace surface, not fall back to mention-only.
+  await signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C780",
+      user: "U777",
+      text: "Anything in the deploy logs?",
+      ts: "1713.002",
+      thread_ts: "1713.001",
+    },
+  });
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ role: string }>(
+        "SELECT role FROM messages WHERE session_id = $1 ORDER BY created_at",
+        [threadSession!.id],
+      );
+      return rows.map((m) => m.role);
+    })
+    .toEqual(["user", "agent", "user", "agent"]);
+
+  // An untagged message OUTSIDE the thread stays ignored in 'thread' mode.
+  await signedSlackPost({
+    type: "event_callback",
+    event: {
+      type: "message",
+      channel: "C780",
+      user: "U777",
+      text: "Nobody asked you here",
+      ts: "1713.100",
+    },
+  });
+  await page.waitForTimeout(1000);
+  expect(
+    await dbQuery("SELECT id FROM sessions WHERE surface_key = 'slack:C780:1713.100'"),
+  ).toHaveLength(0);
+});
+
 test("participants can view and continue a shared thread — not manage it", async ({
   browser,
 }) => {
@@ -708,7 +780,7 @@ test("github surface delivery: issue comments become governed sessions", async (
   ).json()) as { requests: Array<{ body: { body?: string } }> };
   expect(
     refusal.requests.some((r) =>
-      r.body.body?.includes("connect your GitHub account under Profile"),
+      r.body.body?.includes("Connect your GitHub account under Profile"),
     ),
   ).toBe(true);
 
@@ -796,7 +868,7 @@ test("background replies ping the user's Slack DM when opted in", async () => {
           r.path === "/api/chat.postMessage" &&
           r.body.channel === "U777" &&
           r.body.text?.includes("replied on GitHub acme/api#7") &&
-          r.body.text?.includes("open the session in Rabble"),
+          r.body.text?.includes("Open the session in Rabble"),
       );
     })
     .toBe(true);
@@ -1130,6 +1202,52 @@ test("a 1:1 DM talks to the connection's linked agent", async () => {
       );
     })
     .toBe(true);
+
+  // DMs are a surface setting: turn them off on the workspace row and a DM
+  // gets a short pointer instead of a session.
+  await dbQuery(
+    `INSERT INTO agent_surfaces (agent_id, connection_id, label, response_mode, dm_enabled)
+     SELECT a.id, c.id, '', 'thread', false FROM agents a, connections c
+     WHERE a.name = 'Eng On-Call' AND c.name = 'Acme Slack (socket)'`,
+  );
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "D9001",
+        channel_type: "im",
+        user: "U777",
+        text: "Still there?",
+        ts: "1800.300",
+      },
+    }),
+  });
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.thread_ts === "1800.300" &&
+          r.body.text?.includes("doesn't take direct messages"),
+      );
+    })
+    .toBe(true);
+  expect(
+    await dbQuery("SELECT id FROM sessions WHERE surface_key = 'slack:D9001:1800.300'"),
+  ).toHaveLength(0);
+  // Restore: later tests expect the socket connection's default behavior.
+  await dbQuery(
+    `DELETE FROM agent_surfaces
+     WHERE label = '' AND connection_id =
+       (SELECT id FROM connections WHERE name = 'Acme Slack (socket)')`,
+  );
 });
 
 test("socket mode interactivity: DM buttons resolve approvals over the WebSocket", async () => {
@@ -1229,7 +1347,7 @@ test("socket mode interactivity: DM buttons resolve approvals over the WebSocket
       return log.requests.some(
         (r) =>
           r.path === "/response/socket-appr-1" &&
-          r.body.text?.includes("Approved — the agent is continuing"),
+          r.body.text?.includes("Approved. The agent is continuing"),
       );
     })
     .toBe(true);
@@ -1418,7 +1536,7 @@ test("'agent from this session' hands the transcript to the Builder", async () =
     "Message Builder…",
   );
   await expect(page.locator(".msg-user").first()).toContainText(
-    "draft an agent for it",
+    "Draft an agent for it",
     { timeout: 15000 },
   );
   await expect(page.locator(".msg-user").first()).toContainText(

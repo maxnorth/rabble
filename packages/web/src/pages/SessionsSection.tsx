@@ -254,7 +254,7 @@ function SessionLanding() {
         {firstName ? `, ${firstName}` : ""}
       </div>
       <p className="page-subtitle" style={{ marginTop: -14 }}>
-        Start a session with an agent — or let Auto route you to the right one.
+        Start a session with an agent, or let Auto route you to the right one.
       </p>
       {agents.data && usable.length === 0 && (
         <div
@@ -270,23 +270,21 @@ function SessionLanding() {
                 {hasModel ? "✓ " : ""}
                 <Link to="/admin/models" style={{ color: "var(--accent-text)" }}>
                   Register a model
-                </Link>{" "}
-                — enable a built-in or point at your own endpoint
+                </Link>. Enable a built-in or point at your own endpoint
               </li>
               <li>
                 <Link to="/agents" style={{ color: "var(--accent-text)" }}>
                   Create an agent
-                </Link>{" "}
-                — name, instructions, model, then set it active
+                </Link>, name, instructions, model, then set it active
               </li>
               <li>
-                Grant access — on the agent's access tab, so teammates can use
+                Grant access, on the agent's access tab, so teammates can use
                 it (you already can, as its creator)
               </li>
             </ol>
           ) : (
             <p style={{ fontSize: 12.5, color: "var(--text-dim)", margin: "8px 0 0" }}>
-              Nothing has been shared with you yet — ask an org admin to grant
+              Nothing has been shared with you yet. Ask an org admin to grant
               you access to an agent.
             </p>
           )}
@@ -440,7 +438,7 @@ function ApprovalCard({
     <div className={`approval-card${approval.resolved ? " resolved" : ""}`}>
       <div className="title">
         <span className="status-dot" style={{ background: "var(--amber)" }} />
-        Approval needed — acting as you
+        Approval needed · acting as you
       </div>
       <div className="detail">
         The agent wants to run <span className="mono">{approval.toolName}</span>
@@ -780,7 +778,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             return others.length > 0 ? (
               <span
                 className="chip purple"
-                title={`Shared thread — also here: ${others.join(", ")}`}
+                title={`Shared thread · also here: ${others.join(", ")}`}
               >
                 +{others.length} teammate{others.length === 1 ? "" : "s"}
               </span>
@@ -849,7 +847,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                   navigate(`/sessions/${created.id}`, {
                     state: {
                       initialMessage:
-                        `I keep doing this kind of work by hand — draft an agent for it. ` +
+                        `I keep doing this kind of work by hand. Draft an agent for it. ` +
                         `From my session "${session.data?.session.title ?? ""}", here's what I asked:\n${asks}\n` +
                         `Propose a draft with eval criteria and confirm what you inferred.`,
                     },
@@ -1090,7 +1088,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                 <EvalResultRow key={r.id} result={r} sessionId={sessionId} />
               ))}
               <p style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                Every grade is spot-checkable — disagree to queue it for human
+                Every grade is spot-checkable. Disagree to queue it for human
                 review on the agent's evals tab.
               </p>
               {session.data && (
@@ -1285,7 +1283,7 @@ function FreezeCard({ sessionId, agentId }: { sessionId: string; agentId: string
       <strong style={{ fontSize: 13 }}>Freeze as test case</strong>
       <p style={{ fontSize: 12, color: "var(--text-muted)", margin: "6px 0 10px" }}>
         Snapshot this session's input and expected outcome into an offline
-        suite — it re-runs on demand so this behavior can't silently regress.
+        suite. It re-runs on demand so this behavior can't silently regress.
       </p>
       {done ? (
         <span className="chip green">Added to suite ✓</span>
@@ -1318,7 +1316,7 @@ function FreezeCard({ sessionId, agentId }: { sessionId: string; agentId: string
       )}
       {suites.data?.suites.length === 0 && (
         <p style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-          No suites yet — create one on the agent's evals tab first.
+          No suites yet. Create one on the agent's evals tab first.
         </p>
       )}
       {error && <p className="error-text">{error}</p>}

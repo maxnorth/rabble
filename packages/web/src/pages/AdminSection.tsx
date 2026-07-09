@@ -86,7 +86,7 @@ function AccessRequestsPage() {
         <div>
           <h1 className="page-title">Access requests</h1>
           <p className="page-subtitle">
-            People asking for rights — approving materializes the grant and
+            People asking for rights. Approving materializes the grant and
             records it in the audit log.
           </p>
         </div>
@@ -116,7 +116,7 @@ function AccessRequestsPage() {
                       ? "green"
                       : "amber"
                 }`}
-                title="The agent's measured track record — evidence for this access decision (last 30 days)"
+                title="The agent's measured track record, evidence for this access decision (last 30 days)"
               >
                 {r.evidence.passRate30d === null
                   ? "no track record yet"
@@ -151,7 +151,7 @@ function AccessRequestsPage() {
         ))}
         {open.length === 0 && (
           <div className="row">
-            <div className="sub">Nothing waiting — requests land here when someone (or the Builder acting for them) asks for access.</div>
+            <div className="sub">Nothing waiting. Requests land here when someone (or the Builder acting for them) asks for access.</div>
           </div>
         )}
       </div>
@@ -314,7 +314,7 @@ function ConnectionsPage() {
                   {c.hasAppToken && (
                     <span
                       className="chip blue"
-                      title="Events stream over a Socket Mode WebSocket — no public webhook URL needed"
+                      title="Events stream over a Socket Mode WebSocket. No public webhook URL needed"
                     >
                       Socket Mode
                     </span>
@@ -322,7 +322,7 @@ function ConnectionsPage() {
                   {c.vendor === "slack" && !c.hasAppToken && !c.hasSigningSecret && (
                     <span
                       className="chip amber"
-                      title="Slack has no way to deliver channel messages to Rabble. Re-add this connection with an app-level token (Socket Mode, easiest — no public URL) or a signing secret (Events API webhooks)."
+                      title="Slack has no way to deliver channel messages to Rabble. Re-add this connection with an app-level token (Socket Mode, easiest, no public URL) or a signing secret (Events API webhooks)."
                     >
                       no event delivery
                     </span>
@@ -330,7 +330,7 @@ function ConnectionsPage() {
                   {c.vendor === "github" && !c.hasSigningSecret && (
                     <span
                       className="chip amber"
-                      title="No webhook secret — GitHub deliveries can't be verified, so issue comments never reach agents. Re-add this connection with the webhook secret."
+                      title="No webhook secret. GitHub deliveries can't be verified, so issue comments never reach agents. Re-add this connection with the webhook secret."
                     >
                       no event delivery
                     </span>
@@ -479,7 +479,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
               ✅ Created and configured <b>{botName.trim()}</b> in Slack.
             </p>
             <p className="hint" style={{ marginBottom: 12 }}>
-              Last step — install it to your workspace. Click Allow; Rabble
+              Last step. Install it to your workspace. Click Allow; Rabble
               captures the bot token automatically and finishes the connection.
             </p>
             <a
@@ -524,8 +524,8 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
                     you.{" "}
                     <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer">
                       Generate one ↗
-                    </a>{" "}
-                    — below the app list, under “Your App Configuration Tokens”.
+                    </a>
+                    , below the app list, under “Your App Configuration Tokens”.
                   </span>
                 </div>
                 <div className="field">
@@ -594,7 +594,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
                 )}
                 {vendor === "slack" && (
                   <div className="field">
-                    <label>App-level token — Socket Mode (optional)</label>
+                    <label>App-level token · Socket Mode (optional)</label>
                     <input
                       type="password"
                       placeholder="xapp-…"
@@ -932,7 +932,7 @@ function ModelsPage() {
                   ? p.fromEnv
                     ? "Configured via server environment"
                     : "Key configured"
-                  : "No key configured — built-in models won't run"}
+                  : "No key configured. Built-in models won't run"}
               </div>
             </div>
             <span className={`chip ${p.configured ? "green" : "amber"}`}>
@@ -1039,7 +1039,7 @@ function ModelsPage() {
         {registered.length === 0 && (
           <div className="row">
             <div className="sub">
-              No models registered yet — enable a built-in model or add a custom one.
+              No models registered yet. Enable a built-in model or add a custom one.
             </div>
           </div>
         )}
@@ -1100,7 +1100,7 @@ function ModelDetail({
       )}
       <p className="page-subtitle" style={{ marginBottom: 8 }}>
         With no grants, every member can put agents on this model. Add a grant
-        to restrict it — then only the grantees (and org admins) can.
+        to restrict it. Then only the grantees (and org admins) can.
       </p>
       <GrantEditor
         targetType="model"
@@ -1284,7 +1284,7 @@ function ApiKeysPage() {
           style={{ padding: 14, marginBottom: 16, borderColor: "rgba(52,211,153,0.4)" }}
         >
           <div style={{ fontSize: 13, marginBottom: 6 }}>
-            Copy this key now — it won't be shown again.
+            Copy this key now. It won't be shown again.
           </div>
           <code className="mono" style={{ fontSize: 12, wordBreak: "break-all" }}>
             {freshToken}
@@ -1391,7 +1391,7 @@ function AuditPage() {
     <div className="content-col" style={{ maxWidth: 880 }}>
       <h1 className="page-title">Audit log</h1>
       <p className="page-subtitle">
-        Control-plane state changes only — session transcripts live on sessions.
+        Control-plane state changes only. Session transcripts live on sessions.
       </p>
       <div className="filter-bar" style={{ display: "flex", gap: 8, alignItems: "center" }}>
         <select value={filter} onChange={(e) => setFilter(e.target.value)}>
@@ -1667,7 +1667,7 @@ function SettingsPage() {
           style={{ padding: 14, marginBottom: 12, borderColor: "rgba(52,211,153,0.4)" }}
         >
           <div style={{ fontSize: 13, marginBottom: 6 }}>
-            Share these sign-in details — the temporary password won't be shown again.
+            Share these sign-in details. The temporary password won't be shown again.
           </div>
           <code className="mono" style={{ fontSize: 12 }}>
             {tempCredentials.email} / {tempCredentials.password}

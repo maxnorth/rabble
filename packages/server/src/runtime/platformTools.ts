@@ -156,7 +156,7 @@ export function buildPlatformTools(
       name: "update_agent_draft",
       description:
         "Correct a draft agent's identity after the user fixes what you " +
-        "inferred — name, description, instructions, or tone. Drafts only: " +
+        "inferred: name, description, instructions, or tone. Drafts only: " +
         "active agents are edited on their config tabs, where gating suites " +
         "protect against regressions.",
       authType: "user",
@@ -183,7 +183,7 @@ export function buildPlatformTools(
         if (!existing) return "Error: agent not found.";
         if (existing.status !== "draft") {
           return (
-            "That agent is active — changes to it run through its gating " +
+            "That agent is active. Changes to it run through its gating " +
             "suites on the config tabs. Point the user at /agents/" +
             agentId +
             " instead."
@@ -196,7 +196,7 @@ export function buildPlatformTools(
           }
         }
         if (Object.keys(updates).length === 0) {
-          return "Nothing to update — pass at least one of name/description/instructions/tone.";
+          return "Nothing to update. Pass at least one of name/description/instructions/tone.";
         }
         await db
           .update(agents)
@@ -261,8 +261,8 @@ export function buildPlatformTools(
       name: "add_test_case",
       description:
         "Add an offline test case to one of the agent's eval suites (created " +
-        "if missing). Use it to mine cases from trial sessions — a user " +
-        "correction is a labeled example — and to propose adversarial cases " +
+        "if missing). Use it to mine cases from trial sessions (a user " +
+        "correction is a labeled example) and to propose adversarial cases " +
         "(\"what's the worst thing this agent could do?\").",
       authType: "user",
       schema: {
@@ -277,7 +277,7 @@ export function buildPlatformTools(
           input: { type: "string", description: "The user message the case replays" },
           rubric: {
             type: "string",
-            description: "What a good reply must do — the judge grades against this",
+            description: "What a good reply must do. The judge grades against this",
           },
         },
         required: ["agentId", "suiteName", "caseName", "input", "rubric"],
@@ -331,7 +331,7 @@ export function buildPlatformTools(
     {
       name: "list_mcp_servers",
       description:
-        "List the org's registered MCP servers and their tools — what an " +
+        "List the org's registered MCP servers and their tools: what an " +
         "agent could be given access to.",
       authType: "service",
       schema: { type: "object", properties: {} },
@@ -379,7 +379,7 @@ export function buildPlatformTools(
           )
           .limit(1);
         if (!server) {
-          return `No MCP server named "${serverName}" is registered — use list_mcp_servers to see what exists.`;
+          return `No MCP server named "${serverName}" is registered. Use list_mcp_servers to see what exists.`;
         }
         await db
           .insert(agentMcpServers)
@@ -417,7 +417,7 @@ export function buildPlatformTools(
           right: { type: "string", enum: ["use", "edit", "admin"] },
           reason: {
             type: "string",
-            description: "Why the user needs this — shown to the approving admin",
+            description: "Why the user needs this, shown to the approving admin",
           },
         },
         required: ["targetType", "targetName", "right", "reason"],

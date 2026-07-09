@@ -223,7 +223,7 @@ export async function adminRoutes(app: FastifyInstance) {
       if (![accessToken, refreshToken ?? ""].every((t) => /^[!-~]*$/.test(t.trim()))) {
         return reply
           .code(400)
-          .send({ error: "Token contains non-ASCII characters — re-copy it exactly as shown" });
+          .send({ error: "Token contains non-ASCII characters. Re-copy it exactly as shown" });
       }
       const [connection] = await db
         .select()

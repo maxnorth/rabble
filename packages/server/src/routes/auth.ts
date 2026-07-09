@@ -85,7 +85,7 @@ export async function authRoutes(app: FastifyInstance) {
     if (entry && entry.resetAt > Date.now() && entry.count >= LOGIN_MAX_FAILURES) {
       return reply
         .code(429)
-        .send({ error: "Too many failed attempts — try again in a few minutes" });
+        .send({ error: "Too many failed attempts. Try again in a few minutes" });
     }
     const [user] = await db
       .select()

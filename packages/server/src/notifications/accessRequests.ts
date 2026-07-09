@@ -55,7 +55,7 @@ export async function notifyAdminsOfAccessRequest(input: {
         text:
           `Access request: ${input.requesterName} requests ${input.accessRight} ` +
           `on ${input.targetLabel}${input.via === "builder" ? " (via Builder)" : ""}. ` +
-          `Reason: ${input.reason || "—"} — review under Admin › Access requests.`,
+          `Reason: ${input.reason || "—"}. Review under Admin › Access requests.`,
       });
     }
   } catch {

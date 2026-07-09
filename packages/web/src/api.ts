@@ -169,8 +169,11 @@ export const api = {
     agentId: string,
     body: { connectionId: string; label: string; responseMode?: SurfaceResponseMode },
   ) => post<{ surface: { id: string } }>(`/api/agents/${agentId}/surfaces`, body),
-  updateSurface: (agentId: string, surfaceId: string, responseMode: SurfaceResponseMode) =>
-    patch<{ ok: true }>(`/api/agents/${agentId}/surfaces/${surfaceId}`, { responseMode }),
+  updateSurface: (
+    agentId: string,
+    surfaceId: string,
+    body: { responseMode?: SurfaceResponseMode; dmEnabled?: boolean },
+  ) => patch<{ ok: true }>(`/api/agents/${agentId}/surfaces/${surfaceId}`, body),
   removeSurface: (agentId: string, surfaceId: string) =>
     del<{ ok: true }>(`/api/agents/${agentId}/surfaces/${surfaceId}`),
   linkSubAgent: (id: string, subId: string) =>

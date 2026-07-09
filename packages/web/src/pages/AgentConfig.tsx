@@ -195,7 +195,7 @@ function RequestAccessModal({
         {sent ? (
           <>
             <p className="page-subtitle">
-              Request sent — an org admin has been notified and can approve it
+              Request sent. An org admin has been notified and can approve it
               under Admin › Access requests.
             </p>
             <div style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -378,7 +378,7 @@ function ShareModal({
             className={`chip ${
               evalScore === null ? "" : evalScore >= 90 ? "green" : "amber"
             }`}
-            title="Measured track record — the evidence behind this decision"
+            title="Measured track record, the evidence behind this decision"
           >
             {evalScore === null
               ? "no track record yet"
@@ -504,7 +504,7 @@ function ShareModal({
           {status === "active" ? (
             <>
               <span className="grow">
-                Sharing is live — pausing sets the agent back to draft, so it
+                Sharing is live. Pausing sets the agent back to draft, so it
                 runs only for people with edit access.
               </span>
               <button
@@ -705,7 +705,7 @@ function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
             value={form.modelId}
             onChange={(e) => setForm({ ...form, modelId: e.target.value })}
           >
-            <option value="">— No model —</option>
+            <option value="">No model</option>
             {enabledModels.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.displayName}
@@ -861,8 +861,15 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
     },
   });
   const update = useMutation({
-    mutationFn: (vars: { surfaceId: string; responseMode: SurfaceResponseMode }) =>
-      api.updateSurface(agentId, vars.surfaceId, vars.responseMode),
+    mutationFn: (vars: {
+      surfaceId: string;
+      responseMode?: SurfaceResponseMode;
+      dmEnabled?: boolean;
+    }) =>
+      api.updateSurface(agentId, vars.surfaceId, {
+        responseMode: vars.responseMode,
+        dmEnabled: vars.dmEnabled,
+      }),
     onSuccess: () => void invalidate(),
   });
   const remove = useMutation({
@@ -888,7 +895,7 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
   return (
     <>
       <p className="page-subtitle">
-        Where this agent is reachable. Surfaces are delivery points — the
+        Where this agent is reachable. Surfaces are delivery points. The
         platform owns the session either way. The web composer is always on;
         connection-backed surfaces (Slack channels, GitHub repos…) attach here
         once their connection is set up in Admin › Connections.
@@ -898,7 +905,7 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
           <span className="status-dot" style={{ background: "var(--green)" }} />
           <div className="grow">
             <div className="title">Web sessions</div>
-            <div className="sub">The in-app composer — always available</div>
+            <div className="sub">The in-app composer, always available</div>
           </div>
           <span className="chip green">on</span>
         </div>
@@ -925,6 +932,28 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
                 disabled={!canEdit || update.isPending}
                 onChange={(m) => update.mutate({ surfaceId: s.id, responseMode: m })}
               />
+            )}
+            {s.vendor === "slack" && s.label === "" && (
+              <label
+                style={{
+                  display: "inline-flex",
+                  gap: 4,
+                  alignItems: "center",
+                  fontSize: 13,
+                  color: "var(--text-dim)",
+                }}
+                title="Answer 1:1 direct messages to this app"
+              >
+                <input
+                  type="checkbox"
+                  disabled={!canEdit || update.isPending}
+                  checked={s.dmEnabled}
+                  onChange={(e) =>
+                    update.mutate({ surfaceId: s.id, dmEnabled: e.target.checked })
+                  }
+                />
+                Direct messages
+              </label>
             )}
             <span className={`chip ${s.status === "connected" ? "green" : "amber"}`}>
               {s.status}
@@ -985,7 +1014,7 @@ function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
       )}
       {interfaces.length === 0 && (
         <p className="page-subtitle">
-          No interface connections yet — add Slack (or similar) in Admin ›
+          No interface connections yet. Add Slack (or similar) in Admin ›
           Connections to reach this agent outside the web app.
         </p>
       )}
@@ -1041,7 +1070,7 @@ function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
       <p className="page-subtitle">
         Tools from the org's MCP server library. Every tool runs either under
         the org <span className="chip green">service</span> credential or{" "}
-        <span className="chip amber">user</span> — as the person in the
+        <span className="chip amber">user</span>, as the person in the
         session, with an in-thread approval.
       </p>
       {[...byServer.entries()].map(([serverId, serverTools]) => {
@@ -1192,7 +1221,7 @@ function SubAgentsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean 
     <>
       <p className="page-subtitle">
         Other agents wired in as callable tools. You can only attach agents
-        you hold use access on — the permission gate that keeps the mesh
+        you hold use access on, the permission gate that keeps the mesh
         auditable.
       </p>
       <div className="row-group" style={{ marginBottom: 20 }}>
@@ -1293,7 +1322,7 @@ function AutomationsTab({ agentId, canEdit }: { agentId: string; canEdit: boolea
     <>
       <p className="page-subtitle">
         Scheduled runs of this agent. Each run is a real governed session on
-        the Automation surface — Run now executes immediately; recurring
+        the Automation surface. Run now executes immediately; recurring
         schedules land with the platform's scheduling engine.
       </p>
       {run.isError && (
@@ -1471,7 +1500,7 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
       <p className="page-subtitle">
         Criteria are evaluated live against real sessions; suites are offline
         test cases. Gating suites run automatically before any behavior
-        change ships — a regression blocks the save. Track record is
+        change ships. A regression blocks the save. Track record is
         evidence in access decisions.
       </p>
 
@@ -1583,7 +1612,7 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
         ))}
         {criteria.data?.criteria.length === 0 && (
           <div className="row">
-            <div className="sub">No criteria — this agent is unmeasured.</div>
+            <div className="sub">No criteria. This agent is unmeasured.</div>
           </div>
         )}
         {canEdit && (
@@ -1637,7 +1666,7 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
                     <button
                       className="btn"
                       disabled={resolve.isPending}
-                      title="The judge was right — keep the verdict"
+                      title="The judge was right. Keep the verdict"
                       onClick={() => resolve.mutate({ id: r.id, outcome: "upheld" })}
                     >
                       Uphold
@@ -1645,7 +1674,7 @@ function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
                     <button
                       className="btn danger"
                       disabled={resolve.isPending}
-                      title="The judge was wrong — flip the verdict"
+                      title="The judge was wrong. Flip the verdict"
                       onClick={() => resolve.mutate({ id: r.id, outcome: "overturned" })}
                     >
                       Overturn
@@ -1765,7 +1794,7 @@ function AccessTab({ agentId }: { agentId: string }) {
     <>
       <p className="page-subtitle">
         Who can use, configure, and administer this agent. Direct grants plus
-        grants inherited from its domain. There is no owner — rights come only
+        grants inherited from its domain. There is no owner. Rights come only
         from grants.
       </p>
       {domain ? (
@@ -1783,7 +1812,7 @@ function AccessTab({ agentId }: { agentId: string }) {
         >
           <span className="chip purple">domain</span>
           <span className="grow">
-            This agent is in <strong>{domain.name}</strong> — grants on the
+            This agent is in <strong>{domain.name}</strong>. Grants on the
             domain reach it too.
           </span>
           <Link to={`/domains/${domain.id}`} style={{ color: "var(--accent-text)" }}>
@@ -1805,7 +1834,7 @@ function AccessTab({ agentId }: { agentId: string }) {
         >
           <span className="chip">no domain</span>
           <span className="grow">
-            Not in a domain — access here is direct grants only. Adding it to a
+            Not in a domain. Access here is direct grants only. Adding it to a
             domain lets team access flow in automatically.
           </span>
           <Link to={`/agents/${agentId}`} style={{ color: "var(--accent-text)" }}>
@@ -1868,7 +1897,7 @@ function AdvancedTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }
     <>
       <p className="page-subtitle">
         Capability toggles. A simple Q&A agent has none of these; a full
-        coding agent has all of them — same platform, different configuration.
+        coding agent has all of them. Same platform, different configuration.
       </p>
       <div className="row-group" style={{ marginBottom: 16 }}>
         {CAPABILITIES.map((c) => (

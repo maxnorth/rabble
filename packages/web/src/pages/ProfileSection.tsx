@@ -112,7 +112,7 @@ function ConnectedAccounts() {
         }}
       >
         These are your personal connections. When an agent acts <strong>as you</strong>{" "}
-        (user-auth tools), it uses these — separate from the org's service accounts.
+        (user-auth tools), it uses these, separate from the org's service accounts.
       </div>
       <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
         Connected accounts

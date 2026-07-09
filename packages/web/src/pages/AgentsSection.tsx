@@ -32,7 +32,7 @@ export function AgentsSection() {
               className="sidebar-item"
               style={{ color: "var(--text-muted)", cursor: "default", fontSize: 12 }}
             >
-              No favorites yet — star agents in All agents to pin them here.
+              No favorites yet. Star agents in All agents to pin them here.
             </div>
           </>
         )}
@@ -254,7 +254,7 @@ function AgentDirectory() {
     <div className="content-col" style={{ maxWidth: 980 }}>
       <h1 className="page-title">All agents</h1>
       <p className="page-subtitle">
-        The org's agent directory — eval scores and grants tell you whether to
+        The org's agent directory. Eval scores and grants tell you whether to
         rely on an agent you didn't build.
       </p>
       <div className="filter-bar">
@@ -384,7 +384,7 @@ function AgentDirectory() {
                       {a.builtin && (
                         <span
                           className="chip purple"
-                          title="Ships with the platform — creates and configures agents conversationally"
+                          title="Ships with the platform. Creates and configures agents conversationally"
                         >
                           built-in
                         </span>
@@ -392,7 +392,7 @@ function AgentDirectory() {
                       {a.needsAttention && (
                         <span
                           className="chip amber"
-                          title="Open spot-check reviews or scope violations in the last 30 days — see the evals tab"
+                          title="Open spot-check reviews or scope violations in the last 30 days. See the evals tab"
                         >
                           needs attention
                         </span>
@@ -486,7 +486,7 @@ function DomainDetail({ domainId }: { domainId: string }) {
       <h1 className="page-title">{domain.name}</h1>
       <p className="page-subtitle">
         Flat, optional collection of agents. Grants set here apply to every
-        agent in the domain — the domain itself carries no inherent
+        agent in the domain. The domain itself carries no inherent
         permissions.
       </p>
 
@@ -515,7 +515,7 @@ function DomainDetail({ domainId }: { domainId: string }) {
         {members.length === 0 && (
           <div className="row">
             <div className="sub">
-              No agents yet — assign one from its identity tab.
+              No agents yet. Assign one from its identity tab.
             </div>
           </div>
         )}

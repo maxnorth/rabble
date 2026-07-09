@@ -106,7 +106,7 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
       >
         Access flows through teams, not individuals: grant an agent to{" "}
         <strong>Engineering</strong> and every sub-team inherits it. There are
-        no owners anywhere — only grants.
+        no owners anywhere, only grants.
       </div>
 
       <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
@@ -283,7 +283,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
               {!team.isEveryone && (
                 <button
                   className={`chip ${m.teamRole === "lead" ? "purple" : ""}`}
-                  title="Team label only — access still comes from grants"
+                  title="Team label only. Access still comes from grants"
                   onClick={() =>
                     setRole.mutate({
                       userId: m.userId,
@@ -370,7 +370,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
             {access.filter((a) => a.targetType === "domain").length === 0 && (
               <div className="row">
                 <div className="sub">
-                  No domain grants — this team has no access through domains.
+                  No domain grants. This team has no access through domains.
                 </div>
               </div>
             )}
@@ -393,7 +393,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
             {access.filter((a) => a.targetType === "agent").length === 0 && (
               <div className="row">
                 <div className="sub">
-                  None — this team's access comes entirely from domain grants.
+                  None. This team's access comes entirely from domain grants.
                 </div>
               </div>
             )}
@@ -455,7 +455,7 @@ function NewTeamModal({ onClose }: { onClose: () => void }) {
           <div className="field">
             <label>Parent team (optional)</label>
             <select value={parent} onChange={(e) => setParent(e.target.value)}>
-              <option value="">None — top level</option>
+              <option value="">None · top level</option>
               {teams.data?.teams
                 .filter((t) => !t.isEveryone)
                 .map((t) => (

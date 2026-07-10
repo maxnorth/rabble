@@ -22,9 +22,12 @@ import {
 } from "@rabblehq/core";
 import { db } from "../db/client.js";
 import {
+  agentLinks,
   agentMcpServers,
   agentToolConfigs,
+  agents as agentsTable,
   mcpServers,
+  sessions,
   type agents,
   type messages,
   type models,
@@ -32,10 +35,22 @@ import {
 } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
 import { chatModelFor } from "../models/chat.js";
+import { resolveAgentModel } from "../models/resolve.js";
 import { mcpCallTool } from "../mcp/client.js";
+import { recordAudit } from "../audit.js";
 import { Channel } from "./channel.js";
 import { gateUserAuth, type GateContext } from "./userAuthGate.js";
 import { buildPlatformTools } from "./platformTools.js";
+import { buildWebTools } from "./webTools.js";
+
+// How deep a chain of agents-calling-agents may go, and how many delegations
+// one turn may issue. Bounded delegation is a product pillar, not open-ended
+// recursion: with depth 3 a root can delegate, its child once more, and that
+// grandchild once more — the chain stops there. The per-turn breadth cap
+// keeps a single message from fanning out into a runaway tree of nested,
+// separately-judged turns (cost/DoS amplification).
+const MAX_DELEGATION_DEPTH = 3;
+const MAX_DELEGATIONS_PER_TURN = 8;
 
 export interface AgentTurnInput {
   agent: typeof agents.$inferSelect;
@@ -61,6 +76,12 @@ export interface AgentTurnInput {
     serverName: string | null;
     input: unknown;
   }) => Promise<void>;
+  /**
+   * Delegation bookkeeping for agents-calling-agents. `delegationChain` is
+   * the agent ids already on the call stack (root first), used to bound depth
+   * and refuse cycles; absent/empty for a top-level turn.
+   */
+  delegationChain?: string[];
 }
 
 export type AgentTurnEvent =
@@ -244,6 +265,205 @@ async function buildGovernedTools(
   return tools;
 }
 
+/** Sanitize an agent slug into a valid, prefixed tool name. */
+export function subAgentToolName(slug: string): string {
+  return `ask_${slug}`.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 64);
+}
+
+/**
+ * Which linked children may be offered as delegation tools given the current
+ * call stack. The safety guard for agents-calling-agents: nothing is offered
+ * once the chain has reached MAX_DELEGATION_DEPTH, and a child already
+ * somewhere above us in the stack is dropped so A→B→A can't loop. Pure so the
+ * bound is unit-tested rather than only exercised through a live turn.
+ */
+export function delegableChildIds(
+  childIds: string[],
+  chain: string[],
+  maxDepth: number = MAX_DELEGATION_DEPTH,
+): string[] {
+  if (chain.length >= maxDepth) return [];
+  const onStack = new Set(chain);
+  return childIds.filter((id) => !onStack.has(id));
+}
+
+/**
+ * Build governed tools for the agents this one is wired to call (the "Agents"
+ * config tab). Each linked sub-agent becomes a callable tool whose body runs
+ * that agent as a nested, non-interactive turn under the SAME user — so the
+ * child's own model, MCP tools, and auth gates apply and governance composes.
+ * The edge's note becomes the tool description, telling the model when to
+ * delegate. Depth and cycles are bounded: a sub-agent already on the call
+ * stack, or one past MAX_DELEGATION_DEPTH, is not offered.
+ */
+async function buildSubAgentTools(
+  input: AgentTurnInput,
+  emit: (event: AgentTurnEvent) => void,
+) {
+  const chain = input.delegationChain ?? [];
+  if (chain.length >= MAX_DELEGATION_DEPTH) return [];
+
+  const links = await db
+    .select({ child: agentsTable, note: agentLinks.note })
+    .from(agentLinks)
+    .innerJoin(agentsTable, eq(agentLinks.subAgentId, agentsTable.id))
+    .where(eq(agentLinks.agentId, input.agent.id));
+
+  const offerable = new Set(
+    delegableChildIds(
+      links.map((l) => l.child.id),
+      chain,
+    ),
+  );
+  // One shared budget across every delegation tool this turn offers, so the
+  // model can't fan a single message out into a runaway tree of nested turns.
+  let delegationsUsed = 0;
+  // Tool names must be unique within a tool set: distinct slugs can collide
+  // after sanitizing/truncation, so disambiguate on the rare clash.
+  const usedNames = new Set<string>();
+  const tools = [];
+  for (const { child, note } of links) {
+    // Depth cap + cycle guard (see delegableChildIds).
+    if (!offerable.has(child.id)) continue;
+    // Same-org only — a link is a within-org capability; never run an agent
+    // from another org as this user.
+    if (child.orgId !== input.agent.orgId) continue;
+
+    let toolName = subAgentToolName(child.slug);
+    for (let n = 2; usedNames.has(toolName); n += 1) {
+      toolName = `${subAgentToolName(child.slug).slice(0, 61)}_${n}`;
+    }
+    usedNames.add(toolName);
+    tools.push(
+      tool(
+        async (args: Record<string, unknown>) => {
+          if (delegationsUsed >= MAX_DELEGATIONS_PER_TURN) {
+            return (
+              `This turn's delegation budget (max ${MAX_DELEGATIONS_PER_TURN}) is used up. ` +
+              "Answer with what you have instead of delegating further."
+            );
+          }
+          delegationsUsed += 1;
+          const task = String(args.task ?? "");
+          const callId = randomUUID();
+          const startedAt = Date.now();
+          const call: ToolCall = {
+            id: callId,
+            name: toolName,
+            serverName: child.name,
+            input: args,
+            output: null,
+            authType: "service",
+            approval: null,
+          };
+          emit({ type: "tool-start", toolCall: call });
+
+          // Everything runs inside one guard so a tool-end with a concrete
+          // string output is ALWAYS emitted — the delegation call can never be
+          // left dangling with a null output (which the UI would flag as a
+          // failed/incomplete call).
+          let output: string;
+          let childSessionId: string | null = null;
+          try {
+            const childModel = await resolveAgentModel(child);
+            if (!childModel) {
+              throw new Error(`${child.name} has no model configured, so it can't run.`);
+            }
+            // The delegated turn is a real, governed session of the child —
+            // persisted, judged, and viewable — so delegated work lands on the
+            // child's own track record and the edge is fully auditable (not
+            // just an ephemeral tool call). It runs as the same user, with the
+            // call stack threaded so nested delegation stays bounded.
+            const [childSession] = await db
+              .insert(sessions)
+              .values({
+                orgId: child.orgId,
+                userId: input.user.id,
+                agentId: child.id,
+                title: task.length > 60 ? `${task.slice(0, 57)}…` : task,
+                surface: `Delegated by ${input.agent.name}`,
+              })
+              .returning();
+            childSessionId = childSession!.id;
+            const { executeTurnAndPersist } = await import("./executeTurn.js");
+            const result = await executeTurnAndPersist({
+              sessionId: childSession!.id,
+              agent: child,
+              model: childModel,
+              user: input.user,
+              content: task,
+              requireApproval: input.requireApproval,
+              // A parent-session approval must NOT authorize a different agent
+              // in a different session: the child starts un-approved, so its
+              // user-auth tools face their own gate (and, being non-interactive,
+              // auto-deny) rather than inheriting the parent's consent.
+              sessionApproved: false,
+              // A nested turn has no surface of its own to prompt on.
+              interactive: false,
+              delegationChain: [...chain, input.agent.id],
+            });
+            output = result.fullText || `${child.name} returned no reply.`;
+            await recordAudit({
+              orgId: input.agent.orgId,
+              actorUserId: input.user.id,
+              action: "agent.delegate",
+              targetType: "agent",
+              targetId: child.id,
+              summary: `${input.agent.name} delegated a task to ${child.name}`,
+              metadata: {
+                parentAgentId: input.agent.id,
+                sessionId: input.sessionId,
+                childSessionId: childSession!.id,
+              },
+            });
+          } catch (err) {
+            output = `Error: ${err instanceof Error ? err.message : "delegation failed"}`;
+            // A turn that threw left a child session with only the prompt and
+            // no reply — never judged. The attempt is already recorded on the
+            // parent tool call (input + this error) and audit, so drop the
+            // partial session rather than leave a dangling stub in the sidebar.
+            if (childSessionId) {
+              const dead = childSessionId;
+              childSessionId = null;
+              await db.delete(sessions).where(eq(sessions.id, dead)).catch(() => {});
+            }
+          }
+
+          emit({
+            type: "tool-end",
+            toolCall: {
+              ...call,
+              output,
+              childSessionId,
+              durationMs: Date.now() - startedAt,
+            },
+          });
+          return output;
+        },
+        {
+          name: toolName,
+          description:
+            (note?.trim() ? `${note.trim()} ` : "") +
+            `Delegate a task to ${child.name}` +
+            (child.description ? ` (${child.description})` : "") +
+            `. Pass the full task as "task"; the agent runs and returns its reply.`,
+          schema: {
+            type: "object",
+            properties: {
+              task: {
+                type: "string",
+                description: "The task or question to hand to this agent.",
+              },
+            },
+            required: ["task"],
+          },
+        },
+      ),
+    );
+  }
+  return tools;
+}
+
 export async function* runAgentTurn(
   input: AgentTurnInput,
 ): AsyncGenerator<AgentTurnEvent> {
@@ -268,6 +488,18 @@ export async function* runAgentTurn(
       ...buildPlatformTools(input, (event) => channel.push(event)),
     );
   }
+  // Outbound web access is a capability gated on the agent's Advanced tab:
+  // present only when `outboundWebAccess` is on, and every fetch is bound to
+  // the configured network allowlist (fail-closed when empty).
+  governedTools.push(
+    ...buildWebTools(input.agent, (event) => channel.push(event)),
+  );
+  // Agents this one is wired to call become governed, callable tools — the
+  // "bounded delegation" pillar. Included in the tool set below, so a
+  // delegation is never misread as a scope violation.
+  governedTools.push(
+    ...(await buildSubAgentTools(input, (event) => channel.push(event))),
+  );
 
   // Anything the model tries to call outside this set is a scope violation:
   // the governed tools it was given, plus the runtime's own built-ins.
@@ -307,41 +539,52 @@ export async function* runAgentTurn(
 
   // Drive the graph in the background; all events flow through the channel.
   const run = (async () => {
-    const stream = await deepAgent.stream(
-      { messages: turnMessages },
-      { streamMode: "messages", recursionLimit: 50 },
-    );
     let inputTokens = 0;
     let outputTokens = 0;
-    for await (const item of stream) {
-      const [chunk] = item as [unknown, unknown];
-      if (isAIMessageChunk(chunk as AIMessageChunk)) {
-        const aiChunk = chunk as AIMessageChunk;
-        const text = chunkText(aiChunk.content);
-        if (text) channel.push({ type: "text", text });
-        for (const call of aiChunk.tool_call_chunks ?? []) {
-          if (call.name) attemptedTools.add(call.name);
-        }
-        if (aiChunk.usage_metadata) {
-          inputTokens += aiChunk.usage_metadata.input_tokens ?? 0;
-          outputTokens += aiChunk.usage_metadata.output_tokens ?? 0;
+    try {
+      const stream = await deepAgent.stream(
+        { messages: turnMessages },
+        { streamMode: "messages", recursionLimit: 50 },
+      );
+      for await (const item of stream) {
+        const [chunk] = item as [unknown, unknown];
+        if (isAIMessageChunk(chunk as AIMessageChunk)) {
+          const aiChunk = chunk as AIMessageChunk;
+          const text = chunkText(aiChunk.content);
+          if (text) channel.push({ type: "text", text });
+          for (const call of aiChunk.tool_call_chunks ?? []) {
+            if (call.name) attemptedTools.add(call.name);
+          }
+          if (aiChunk.usage_metadata) {
+            inputTokens += aiChunk.usage_metadata.input_tokens ?? 0;
+            outputTokens += aiChunk.usage_metadata.output_tokens ?? 0;
+          }
         }
       }
-    }
-    const violations = [...attemptedTools].filter((n) => !allowedTools.has(n));
-    if (violations.length > 0) {
-      const { scopeViolations } = await import("../db/schema.js");
-      for (const toolName of violations) {
-        await db.insert(scopeViolations).values({
-          orgId: input.agent.orgId,
-          agentId: input.agent.id,
-          sessionId: input.sessionId,
-          toolName,
-        });
+    } finally {
+      // Record out-of-scope attempts and usage even when the stream errors
+      // partway (recursion limit, model failure): the attempt is exactly the
+      // signal the trust surface must not lose, and partial spend is real.
+      // Best-effort so a bookkeeping failure never masks the turn's own error.
+      const violations = [...attemptedTools].filter((n) => !allowedTools.has(n));
+      if (violations.length > 0) {
+        try {
+          const { scopeViolations } = await import("../db/schema.js");
+          for (const toolName of violations) {
+            await db.insert(scopeViolations).values({
+              orgId: input.agent.orgId,
+              agentId: input.agent.id,
+              sessionId: input.sessionId,
+              toolName,
+            });
+          }
+        } catch {
+          /* bookkeeping only — swallow so the real turn error surfaces */
+        }
       }
-    }
-    if (inputTokens || outputTokens) {
-      channel.push({ type: "usage", inputTokens, outputTokens });
+      if (inputTokens || outputTokens) {
+        channel.push({ type: "usage", inputTokens, outputTokens });
+      }
     }
   })();
   void run.finally(() => channel.close()).catch(() => channel.close());

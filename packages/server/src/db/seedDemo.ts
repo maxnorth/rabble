@@ -11,11 +11,18 @@
 import { fileURLToPath } from "node:url";
 import { eq } from "drizzle-orm";
 import { db, pool } from "./client.js";
-import { hashPassword } from "../crypto.js";
+import { hashPassword, encryptSecret, hashAuthToken } from "../crypto.js";
 import {
   agents,
+  agentLinks,
+  agentMcpServers,
+  agentSurfaces,
+  agentToolConfigs,
+  apiKeys,
   auditEvents,
+  connections,
   domains,
+  mcpServers,
   evalCriteria,
   evalResults,
   evalSuites,
@@ -170,6 +177,7 @@ export async function seedDemo(): Promise<void> {
       color: "amber",
       domainId: engDomain!.id,
       modelId: sonnetId,
+      capabilities: {},
     },
     {
       name: "Eng On-Call",
@@ -182,6 +190,12 @@ export async function seedDemo(): Promise<void> {
       color: "blue",
       domainId: engDomain!.id,
       modelId: sonnetId,
+      // Fetches live runbook pages — outbound web is bound to the internal
+      // docs hosts on the agent's Advanced tab (fail-closed elsewhere).
+      capabilities: {
+        outboundWebAccess: true,
+        networkAllowlist: "runbooks.acme.dev, *.internal.acme.dev",
+      },
     },
     {
       name: "PR Summarizer",
@@ -194,6 +208,7 @@ export async function seedDemo(): Promise<void> {
       color: "purple",
       domainId: engDomain!.id,
       modelId: haikuId,
+      capabilities: {},
     },
     {
       name: "Support Triage",
@@ -206,6 +221,7 @@ export async function seedDemo(): Promise<void> {
       color: "green",
       domainId: supportDomain!.id,
       modelId: haikuId,
+      capabilities: {},
     },
     {
       name: "Docs Writer",
@@ -217,6 +233,7 @@ export async function seedDemo(): Promise<void> {
       color: "blue",
       domainId: null,
       modelId: haikuId,
+      capabilities: {},
     },
   ];
   const seededAgents = await db
@@ -233,6 +250,7 @@ export async function seedDemo(): Promise<void> {
         color: a.color,
         domainId: a.domainId,
         modelId: a.modelId,
+        capabilities: a.capabilities,
         status: "active" as const,
         createdBy: owner!.id,
         createdAt: daysAgo(70),
@@ -241,6 +259,21 @@ export async function seedDemo(): Promise<void> {
     )
     .returning();
   const byName = new Map(seededAgents.map((a) => [a.name, a]));
+
+  // Bounded delegation: Eng On-Call is wired to call two specialists as tools
+  // (the "Agents" tab). The edge notes tell the model when to hand off.
+  await db.insert(agentLinks).values([
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      subAgentId: byName.get("PR Summarizer")!.id,
+      note: "When a change needs its PR summarized before triage",
+    },
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      subAgentId: byName.get("Docs Writer")!.id,
+      note: "For runbook and documentation lookups",
+    },
+  ]);
 
   // Grants: domains to teams, one org-wide agent, one personal draft feel
   await db.insert(grants).values([
@@ -296,7 +329,12 @@ export async function seedDemo(): Promise<void> {
     reply: string;
     day: number;
     surface?: string;
-    tool?: { name: string; server: string; auth: "service" | "user" };
+    tool?: {
+      name: string;
+      server: string;
+      auth: "service" | "user";
+      output?: string;
+    };
   }> = [
     {
       agent: "Eng On-Call",
@@ -304,9 +342,27 @@ export async function seedDemo(): Promise<void> {
       title: "Why is the api-gateway build red?",
       ask: "Why is the api-gateway build red?",
       reply:
-        "The build is failing in the integration stage: `test_rate_limiter` times out against the shared Redis. It started with #4821 which lowered the connection pool. Recommend reverting the pool change or bumping the test timeout — runbook: go/redis-pools.",
+        "The build is failing in the integration stage: `test_rate_limiter` times out against the shared Redis. It started with #4821 which lowered the connection pool. Recommend reverting the pool change or bumping the test timeout. Runbook: go/redis-pools.",
       day: 1,
       tool: { name: "search_ci_runs", server: "GitHub", auth: "service" },
+    },
+    {
+      // Bounded delegation in action: Eng On-Call hands the PR read to its
+      // wired sub-agent and folds the answer back.
+      agent: "Eng On-Call",
+      user: owner,
+      title: "Is #4830 safe to merge tonight?",
+      ask: "Is #4830 safe to merge tonight?",
+      reply:
+        "Not tonight. I had PR Summarizer read it: it swaps the retry queue to exponential backoff but only covers the happy path, and there's a duplicate-delivery risk on a crash between ack and commit (queue.ts:88). Add a test for the crash path first, then it's a clean merge.",
+      day: 5,
+      tool: {
+        name: "ask_pr-summarizer",
+        server: "PR Summarizer",
+        auth: "service",
+        output:
+          "#4830 swaps the retry queue to exponential backoff. Risk: duplicate delivery on a crash between ack and commit (queue.ts:88). Tests cover the happy path only.",
+      },
     },
     {
       agent: "Deploy Gate",
@@ -314,7 +370,7 @@ export async function seedDemo(): Promise<void> {
       title: "Clear to ship payments v2?",
       ask: "Clear to ship payments v2?",
       reply:
-        "Blocked. Two gating items: SEV-2 #339 (checkout latency) is still open, and the migration dry-run hasn't been attached to the release. Ship after both close — everything else on the checklist is green.",
+        "Blocked. Two gating items: SEV-2 #339 (checkout latency) is still open, and the migration dry-run hasn't been attached to the release. Ship after both close. Everything else on the checklist is green.",
       day: 2,
     },
     {
@@ -323,7 +379,7 @@ export async function seedDemo(): Promise<void> {
       title: "Summarize #4830",
       ask: "Summarize #4830",
       reply:
-        "#4830 swaps the retry queue to exponential backoff (risk: duplicate delivery on crash between ack and commit — see queue.ts:88). Tests cover the happy path only. Suggested review order: queue.ts, worker.ts, then the config plumbing.",
+        "#4830 swaps the retry queue to exponential backoff (risk: duplicate delivery on crash between ack and commit, see queue.ts:88). Tests cover the happy path only. Suggested review order: queue.ts, worker.ts, then the config plumbing.",
       day: 4,
       tool: { name: "read_pull_request", server: "GitHub", auth: "service" },
     },
@@ -343,7 +399,7 @@ export async function seedDemo(): Promise<void> {
       title: "Draft the incident review template",
       ask: "Draft the incident review template",
       reply:
-        "Drafted `incident-review.md` with sections for timeline, contributing factors, and follow-ups with owners and dates. Kept it to one page — long templates don't get filled in.",
+        "Drafted `incident-review.md` with sections for timeline, contributing factors, and follow-ups with owners and dates. Kept it to one page. Long templates don't get filled in.",
       day: 9,
     },
     {
@@ -352,7 +408,7 @@ export async function seedDemo(): Promise<void> {
       title: "Staging deploy stuck at 60%",
       ask: "Staging deploy stuck at 60%",
       reply:
-        "The rollout paused on a failing readiness probe in pod api-7f9: the new config expects SESSION_STORE but staging still has the legacy var. Update the staging config map and resume — no code change needed.",
+        "The rollout paused on a failing readiness probe in pod api-7f9: the new config expects SESSION_STORE but staging still has the legacy var. Update the staging config map and resume. No code change needed.",
       day: 12,
       surface: "Slack #eng-oncall",
     },
@@ -371,7 +427,7 @@ export async function seedDemo(): Promise<void> {
       title: "Weekly review digest",
       ask: "Weekly review digest",
       reply:
-        "12 PRs merged, 3 waiting on review over 48h (top: #4844 auth refactor). Riskiest merge: #4839 — it touches the billing webhook path with no new tests.",
+        "12 PRs merged, 3 waiting on review over 48h (top: #4844 auth refactor). Riskiest merge: #4839, it touches the billing webhook path with no new tests.",
       day: 20,
       surface: "Automation · Weekly review digest",
     },
@@ -381,7 +437,7 @@ export async function seedDemo(): Promise<void> {
       title: "Deploys are flaky on Fridays",
       ask: "What changed in the deploy pipeline this week?",
       reply:
-        "Two changes landed: the artifact cache moved regions (#4808) and the canary window shrank to 10 minutes (#4815). The Friday flakes correlate with the cache move — regional cold starts. Suggest pinning the cache region for the deploy job.",
+        "Two changes landed: the artifact cache moved regions (#4808) and the canary window shrank to 10 minutes (#4815). The Friday flakes correlate with the cache move: regional cold starts. Suggest pinning the cache region for the deploy job.",
       day: 5,
       surface: "GitHub acme/api#412",
     },
@@ -418,7 +474,7 @@ export async function seedDemo(): Promise<void> {
             name: spec.tool.name,
             serverName: spec.tool.server,
             input: { ref: spec.title },
-            output: "ok",
+            output: spec.tool.output ?? "ok",
             authType: spec.tool.auth,
             approval:
               spec.tool.auth === "user"
@@ -533,23 +589,41 @@ export async function seedDemo(): Promise<void> {
       {
         suiteId: suite!.id,
         name: "Approves a clean release",
-        input: "Checklist green, no incidents — ship v3.2?",
+        input: "Checklist green, no incidents. Ship v3.2?",
         rubric: "The reply approves and restates the conditions",
       },
     ])
     .returning();
-  const [run] = await db
-    .insert(suiteRuns)
-    .values({ suiteId: suite!.id, status: "completed", completedAt: daysAgo(2) })
-    .returning();
-  for (const c of caseRows) {
-    await db.insert(caseResults).values({
-      runId: run!.id,
-      caseId: c.id,
-      passed: true,
-      output: "Deterministic checklist behavior verified.",
-      reasoning: "Matches the rubric.",
-    });
+  // A run history, not a single run: a regression the gate caught, then a
+  // recovery — the pass-rate trajectory the Evals trend visualizes.
+  const runSpecs = [
+    { day: 32, passed: 1 },
+    { day: 18, passed: 1 },
+    { day: 9, passed: 2 },
+    { day: 2, passed: 2 },
+  ];
+  for (const spec of runSpecs) {
+    const [run] = await db
+      .insert(suiteRuns)
+      .values({
+        suiteId: suite!.id,
+        status: "completed",
+        startedAt: daysAgo(spec.day),
+        completedAt: daysAgo(spec.day),
+      })
+      .returning();
+    for (let i = 0; i < caseRows.length; i++) {
+      const passed = i < spec.passed;
+      await db.insert(caseResults).values({
+        runId: run!.id,
+        caseId: caseRows[i]!.id,
+        passed,
+        output: passed
+          ? "Deterministic checklist behavior verified."
+          : "Approved a release with an open incident.",
+        reasoning: passed ? "Matches the rubric." : "Violated the rubric.",
+      });
+    }
   }
 
   // Trust-loop flavor: one recorded scope violation and one verdict in review
@@ -590,6 +664,206 @@ export async function seedDemo(): Promise<void> {
       createdAt: daysAgo(day as number),
     })),
   );
+  // A blocked change carries structured detail (the failing case + the
+  // judge's reasoning) — expandable in the Audit log viewer.
+  await db.insert(auditEvents).values({
+    orgId,
+    actorUserId: teammates[0]!.id, // Priya tried to loosen the checklist
+    action: "eval.gate.block",
+    targetType: "agent",
+    targetId: byName.get("Deploy Gate")!.id,
+    summary:
+      'Gating suite "Release checklist" blocked a change to "Deploy Gate" (1/2 cases failed)',
+    metadata: {
+      suiteName: "Release checklist",
+      failures: [
+        {
+          case: "Blocks a deploy with an open Sev-1",
+          reasoning:
+            "The revised checklist approved the deploy despite an open Sev-1 incident.",
+        },
+      ],
+    },
+    createdAt: daysAgo(6),
+  });
+
+  // Connections + surfaces: the delivery story. A Slack workspace on Socket
+  // Mode and a GitHub app, each mapped to an agent, so Admin › Connections
+  // and the agent Surfaces tab aren't empty in the demo. Secrets are
+  // encrypted like production; they're throwaway placeholders here.
+  const [slackConn] = await db
+    .insert(connections)
+    .values({
+      orgId,
+      vendor: "slack",
+      name: "Acme Slack",
+      roles: ["Interface"],
+      baseUrl: null,
+      encryptedToken: encryptSecret("xoxb-demo-placeholder"),
+      encryptedSigningSecret: encryptSecret("demo-signing-secret"),
+      encryptedAppToken: encryptSecret("xapp-demo-placeholder"),
+      status: "connected" as const,
+      createdAt: daysAgo(58),
+    })
+    .returning();
+  const [githubConn] = await db
+    .insert(connections)
+    .values({
+      orgId,
+      vendor: "github",
+      name: "Acme GitHub",
+      roles: ["Interface", "Tools"],
+      baseUrl: null,
+      encryptedToken: encryptSecret("ghp-demo-placeholder"),
+      encryptedSigningSecret: encryptSecret("demo-webhook-secret"),
+      status: "connected" as const,
+      createdAt: daysAgo(52),
+    })
+    .returning();
+  await db.insert(agentSurfaces).values([
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      connectionId: slackConn!.id,
+      label: "#eng-oncall",
+      createdAt: daysAgo(58),
+    },
+    {
+      agentId: byName.get("PR Summarizer")!.id,
+      connectionId: githubConn!.id,
+      label: "acme/api",
+      createdAt: daysAgo(52),
+    },
+  ]);
+  await db.insert(auditEvents).values([
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "connection.add",
+      targetType: "connection",
+      targetId: slackConn!.id,
+      summary: 'Added slack connection "Acme Slack"',
+      createdAt: daysAgo(58),
+    },
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "connection.add",
+      targetType: "connection",
+      targetId: githubConn!.id,
+      summary: 'Added github connection "Acme GitHub"',
+      createdAt: daysAgo(52),
+    },
+  ]);
+
+  // A read-scoped API key (hash only — the plaintext was shown once at
+  // creation, exactly like production) so Admin › API keys isn't empty.
+  await db.insert(apiKeys).values({
+    orgId,
+    name: "CI dashboard (read-only)",
+    scope: "read" as const,
+    prefix: "rbl_ci",
+    keyHash: hashAuthToken(`rbl_ci_${"demo".repeat(8)}`),
+    createdBy: owner!.id,
+    createdAt: daysAgo(40),
+    lastUsedAt: daysAgo(0, 6),
+  });
+
+  // MCP servers + per-agent tool grants: the tool-governance story. Without
+  // these the directory shows every agent at "0 tools" and Admin › MCP is
+  // empty, even though sessions reference tool calls. One tool is user-auth
+  // so the approval/scope story has something to point at.
+  const [githubMcp] = await db
+    .insert(mcpServers)
+    .values({
+      orgId,
+      slug: "github",
+      name: "GitHub",
+      url: "https://mcp.acme.dev/github",
+      category: "Tools",
+      tools: [
+        { name: "search_repos", description: "Search repositories in the org" },
+        { name: "search_ci_runs", description: "Look up recent CI runs for a repo" },
+        { name: "create_issue", description: "Open an issue (acts as the calling user)" },
+      ],
+      status: "connected" as const,
+      createdAt: daysAgo(55),
+    })
+    .returning();
+  const [datadogMcp] = await db
+    .insert(mcpServers)
+    .values({
+      orgId,
+      slug: "datadog",
+      name: "Datadog",
+      url: "https://mcp.acme.dev/datadog",
+      category: "Tools",
+      tools: [{ name: "query_metrics", description: "Query a metric timeseries" }],
+      status: "connected" as const,
+      createdAt: daysAgo(48),
+    })
+    .returning();
+  // Server-level attachment (what "used by" counts) mirrors the per-tool
+  // grants below — an agent attaches a server, then enables tools on it.
+  await db.insert(agentMcpServers).values([
+    { agentId: byName.get("Eng On-Call")!.id, serverId: githubMcp!.id },
+    { agentId: byName.get("Eng On-Call")!.id, serverId: datadogMcp!.id },
+    { agentId: byName.get("Deploy Gate")!.id, serverId: githubMcp!.id },
+    { agentId: byName.get("PR Summarizer")!.id, serverId: githubMcp!.id },
+  ]);
+  await db.insert(agentToolConfigs).values([
+    // Eng On-Call reads CI as the service account, but opening an issue
+    // acts as the user — so it needs an approval each time.
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      serverId: githubMcp!.id,
+      toolName: "search_ci_runs",
+      authType: "service" as const,
+    },
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      serverId: githubMcp!.id,
+      toolName: "create_issue",
+      authType: "user" as const,
+    },
+    {
+      agentId: byName.get("Eng On-Call")!.id,
+      serverId: datadogMcp!.id,
+      toolName: "query_metrics",
+      authType: "service" as const,
+    },
+    {
+      agentId: byName.get("Deploy Gate")!.id,
+      serverId: githubMcp!.id,
+      toolName: "search_ci_runs",
+      authType: "service" as const,
+    },
+    {
+      agentId: byName.get("PR Summarizer")!.id,
+      serverId: githubMcp!.id,
+      toolName: "search_repos",
+      authType: "service" as const,
+    },
+  ]);
+  await db.insert(auditEvents).values([
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "mcp.add",
+      targetType: "mcp_server",
+      targetId: githubMcp!.id,
+      summary: 'Registered MCP server "GitHub"',
+      createdAt: daysAgo(55),
+    },
+    {
+      orgId,
+      actorUserId: owner!.id,
+      action: "mcp.add",
+      targetType: "mcp_server",
+      targetId: datadogMcp!.id,
+      summary: 'Registered MCP server "Datadog"',
+      createdAt: daysAgo(48),
+    },
+  ]);
 
   // An open access request (filed via the Builder) so Admin › Access
   // requests demos with real track-record evidence behind the decision.
@@ -600,7 +874,7 @@ export async function seedDemo(): Promise<void> {
     targetType: "agent",
     targetId: byName.get("Deploy Gate")!.id,
     accessRight: "edit",
-    reason: "Deploy Gate keeps missing our staging freeze window — I want to tune its checklist.",
+    reason: "Deploy Gate keeps missing our staging freeze window. I want to tune its checklist.",
     via: "builder",
     createdAt: daysAgo(0, 4),
   });
@@ -615,7 +889,7 @@ export async function seedDemo(): Promise<void> {
   });
 
   console.log(
-    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, an open access request, audit trail`,
+    `seeded: ${seededAgents.length} agents, ${sessionSpecs.length} sessions, teams/domains/grants, evals with trends, suite + run, 2 connections with surfaces, 2 MCP servers with tool grants, an API key, an open access request, audit trail`,
   );
 }
 

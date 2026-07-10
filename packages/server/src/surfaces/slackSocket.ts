@@ -41,6 +41,9 @@ interface ManagedSocket {
   stopped: boolean;
   attempts: number;
   reconnectTimer: NodeJS.Timeout | null;
+  /** Ciphertext of the app token this socket last dialed with — lets a
+   *  refresh notice a rotation and reconnect with the new token. */
+  appTokenEnc: string | null;
 }
 
 const managed = new Map<string, ManagedSocket>();
@@ -83,6 +86,7 @@ async function connect(entry: ManagedSocket): Promise<void> {
     stopSocket(entry.connectionId);
     return;
   }
+  entry.appTokenEnc = row.encryptedAppToken;
 
   const baseUrl = row.baseUrl ?? "https://slack.com";
   let wsUrl: string | undefined;
@@ -229,23 +233,34 @@ export async function refreshSlackSockets(): Promise<void> {
     return;
   }
   const rows = await db
-    .select({ id: connections.id })
+    .select({ id: connections.id, appTokenEnc: connections.encryptedAppToken })
     .from(connections)
     .where(
       and(eq(connections.vendor, "slack"), isNotNull(connections.encryptedAppToken)),
     );
-  const wanted = new Set(rows.map((r) => r.id));
+  const wanted = new Map(rows.map((r) => [r.id, r.appTokenEnc]));
   for (const id of [...managed.keys()]) {
     if (!wanted.has(id)) stopSocket(id);
   }
-  for (const id of wanted) {
-    if (managed.has(id)) continue;
+  for (const [id, appTokenEnc] of wanted) {
+    const current = managed.get(id);
+    if (current) {
+      // Already connected — but if the app token was rotated, tear the old
+      // socket down and redial with the new one instead of waiting for the
+      // next natural reconnect.
+      if (current.appTokenEnc !== null && current.appTokenEnc !== appTokenEnc) {
+        stopSocket(id);
+      } else {
+        continue;
+      }
+    }
     const entry: ManagedSocket = {
       connectionId: id,
       ws: null,
       stopped: false,
       attempts: 0,
       reconnectTimer: null,
+      appTokenEnc,
     };
     managed.set(id, entry);
     void connect(entry);

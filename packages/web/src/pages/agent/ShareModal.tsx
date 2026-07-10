@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../../api";
+import { count } from "../../lib/time";
 
 // ---------------------------------------------------------------------------
 // Share — one verb (PRODUCT_CONTEXT §5): audience picker (teams first),
@@ -99,16 +100,31 @@ export function ShareModal({
       <div className="modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
         <h2 style={{ display: "flex", alignItems: "center", gap: 8 }}>
           Share {agentName}
-          <span
-            className={`chip ${
-              evalScore === null ? "" : evalScore >= 90 ? "green" : "amber"
-            }`}
-            title="Measured track record, the evidence behind this decision"
-          >
-            {evalScore === null
-              ? "no track record yet"
-              : `${evalScore}% eval score · ${trust.data?.gradedCount ?? 0} graded`}
-          </span>
+          {(() => {
+            const violations = trust.data?.scopeViolations30d ?? 0;
+            // Evidence has two halves: the quality (eval score) and the safety
+            // (recent scope violations). A violation flags the chip amber even
+            // on a good score — the same signal the access-request queue shows.
+            const chipClass =
+              evalScore === null
+                ? ""
+                : violations > 0 || evalScore < 90
+                  ? "amber"
+                  : "green";
+            return (
+              <span
+                className={`chip ${chipClass}`}
+                title="Measured track record, the evidence behind this decision"
+              >
+                {evalScore === null
+                  ? "no track record yet"
+                  : `${evalScore}% eval score · ${trust.data?.gradedCount ?? 0} graded` +
+                    (violations > 0
+                      ? ` · ${count(violations, "scope violation")} · 30d`
+                      : "")}
+              </span>
+            );
+          })()}
         </h2>
 
         <div className="field">

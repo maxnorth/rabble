@@ -20,6 +20,7 @@ import {
 } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { recordAudit } from "../audit.js";
+import { agentInOrg } from "../rights.js";
 
 async function requireOrgAdmin(req: FastifyRequest, reply: FastifyReply) {
   if (!req.user) return reply.code(401).send({ error: "Not authenticated" });
@@ -34,12 +35,17 @@ async function requireOrgAdmin(req: FastifyRequest, reply: FastifyReply) {
  * lets an approver sign a defensible yes. Agent targets only.
  */
 async function evidenceFor(
+  orgId: string,
   targetType: "agent" | "domain" | "model",
   targetId: string,
 ): Promise<
   { passRate30d: number | null; graded30d: number; scopeViolations30d: number } | undefined
 > {
+  // Evidence is track-record data (pass rate, graded volume, scope
+  // violations) — only ever computed for an agent that belongs to this org,
+  // so it can't leak a foreign agent's record into an admin's queue.
   if (targetType !== "agent") return undefined;
+  if (!(await agentInOrg(orgId, targetId))) return undefined;
   const [row] = await db
     .select({
       graded: sql<number>`count(*)::int`,
@@ -64,7 +70,11 @@ async function evidenceFor(
   };
 }
 
+// Org-scoped: a request may only target a resource in the caller's own org.
+// An out-of-org (or missing) target reads back as "(deleted)", so a cross-org
+// UUID can't be smuggled into a request or leak its name into an admin's view.
 async function targetNameFor(
+  orgId: string,
   targetType: "agent" | "domain" | "model",
   targetId: string,
 ): Promise<string> {
@@ -72,7 +82,7 @@ async function targetNameFor(
     const [row] = await db
       .select({ name: agents.name })
       .from(agents)
-      .where(eq(agents.id, targetId))
+      .where(and(eq(agents.id, targetId), eq(agents.orgId, orgId)))
       .limit(1);
     return row?.name ?? "(deleted)";
   }
@@ -80,14 +90,14 @@ async function targetNameFor(
     const [row] = await db
       .select({ name: domains.name })
       .from(domains)
-      .where(eq(domains.id, targetId))
+      .where(and(eq(domains.id, targetId), eq(domains.orgId, orgId)))
       .limit(1);
     return row?.name ?? "(deleted)";
   }
   const [row] = await db
     .select({ name: models.displayName })
     .from(models)
-    .where(eq(models.id, targetId))
+    .where(and(eq(models.id, targetId), eq(models.orgId, orgId)))
     .limit(1);
   return row?.name ?? "(deleted)";
 }
@@ -122,7 +132,7 @@ export async function accessRequestRoutes(app: FastifyInstance) {
           requesterName,
           targetType: r.targetType,
           targetId: r.targetId,
-          targetName: await targetNameFor(r.targetType, r.targetId),
+          targetName: await targetNameFor(req.user!.orgId, r.targetType, r.targetId),
           accessRight: r.accessRight,
           reason: r.reason,
           via: r.via,
@@ -131,7 +141,9 @@ export async function accessRequestRoutes(app: FastifyInstance) {
           decidedAt: r.decidedAt?.toISOString() ?? null,
           createdAt: r.createdAt.toISOString(),
           evidence:
-            r.status === "open" ? await evidenceFor(r.targetType, r.targetId) : undefined,
+            r.status === "open"
+              ? await evidenceFor(req.user!.orgId, r.targetType, r.targetId)
+              : undefined,
         });
       }
       return { requests };
@@ -162,7 +174,11 @@ export async function accessRequestRoutes(app: FastifyInstance) {
     const body = createAccessRequestSchema.parse(req.body);
 
     // The target must exist in the caller's org.
-    const targetName = await targetNameFor(body.targetType, body.targetId);
+    const targetName = await targetNameFor(
+      req.user!.orgId,
+      body.targetType,
+      body.targetId,
+    );
     if (targetName === "(deleted)") {
       return reply.code(404).send({ error: "Target not found" });
     }
@@ -274,7 +290,7 @@ export async function accessRequestRoutes(app: FastifyInstance) {
         .set({ status: "approved", decidedBy: req.user!.id, decidedAt: new Date() })
         .where(eq(accessRequests.id, id));
 
-      const targetName = await targetNameFor(request.targetType, request.targetId);
+      const targetName = await targetNameFor(request.orgId, request.targetType, request.targetId);
       const [requester] = await db
         .select({ name: users.name })
         .from(users)
@@ -314,7 +330,7 @@ export async function accessRequestRoutes(app: FastifyInstance) {
         .update(accessRequests)
         .set({ status: "denied", decidedBy: req.user!.id, decidedAt: new Date() })
         .where(eq(accessRequests.id, id));
-      const targetName = await targetNameFor(request.targetType, request.targetId);
+      const targetName = await targetNameFor(request.orgId, request.targetType, request.targetId);
       await recordAudit({
         orgId: request.orgId,
         actorUserId: req.user!.id,

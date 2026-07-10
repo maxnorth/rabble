@@ -45,9 +45,13 @@ digests/alerts, and any queue-shaped workload. Rationale: Postgres-backed (no
 new datastore for self-hosters), self-hostable to match the open-source
 story, TypeScript SDK, and durable workflows fit the eval/automation roadmap.
 
-Nothing in the current slice schedules work yet; the first feature that does
-(automations or eval runs) introduces the Hatchet worker alongside the API
-server. Do not reach for node-cron/BullMQ/ad-hoc setIntervals.
+The worker is wired in `src/scheduling/hatchet.ts`, started at boot but
+**off unless `HATCHET_CLIENT_TOKEN` is set** — so a plain deploy and the e2e
+suite are unaffected (retention still sweeps once at boot). When a token is
+present it registers cron workflows that call the same job functions the app
+already runs on demand (retention today; automation schedules next, keyed on
+the tested `cronMatches`). Bring the engine up with `docker compose --profile
+hatchet up`. Do not reach for node-cron/BullMQ/ad-hoc setIntervals.
 
 ## Testing
 
@@ -78,6 +82,22 @@ resolved by the Slack profile email, and strangers get a refusal instead
 of a session. Unattended surfaces cannot host approval prompts, so
 user-auth tools auto-deny with a pointer to the web app (the org approval
 floor is honored). Redeliveries are deduped by event id and retry header.
+
+## Sub-agent delegation
+
+Agents linked on the "Agents" tab (`agent_links`, gated on `use` of the
+target) are exposed to the model as governed tools (`ask_<slug>`). A call
+runs the child as a **real, persisted, judged session** (surface
+`Delegated by <parent>`) via the same `executeTurnAndPersist` used by every
+surface — under the SAME user, so the child's model, MCP tools, and auth
+gates apply and governance composes. Delegated work therefore lands on the
+child's own track record and stays auditable; the tool call carries
+`childSessionId` for click-through, and each call audits `agent.delegate`.
+Depth and cycles are bounded by a `delegationChain` threaded through
+`executeTurn` (a child already on the stack is never offered, so A→B→A
+can't loop). Nested turns are non-interactive — a delegated child has no
+surface to host an approval, so user-auth tools there auto-deny, same as
+any unattended surface.
 
 ## Cost accounting
 

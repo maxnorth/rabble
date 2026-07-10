@@ -26,7 +26,7 @@ import { mountAnthropic, mountOpenAi } from "./llm.js";
 import { mountMcp } from "./mcp.js";
 import { mountSlack, pushSlackSocketEnvelope } from "./slack.js";
 import { mountGithub } from "./github.js";
-import { reset, state, type McpToolDef, type ScriptedReply } from "./state.js";
+import { logRequest, reset, state, type McpToolDef, type ScriptedReply } from "./state.js";
 
 export async function buildEmulator() {
   const app = Fastify({ logger: false });
@@ -56,6 +56,22 @@ export async function buildEmulator() {
   mountMcp(app);
   mountSlack(app);
   mountGithub(app);
+
+  // A generic fetchable web page, standing in for the open internet, so the
+  // governed `fetch_url` tool can be exercised against a real host. The
+  // response echoes the path; `/redirect?to=...` 302s so redirect-following
+  // (and its per-hop allowlist re-check) can be tested too.
+  app.get("/mock/web/redirect", async (req, reply) => {
+    const { to } = req.query as { to?: string };
+    logRequest("web", "GET", "/redirect", { to: to ?? null });
+    reply.header("location", to ?? "/mock/web/hello").code(302);
+    return "";
+  });
+  app.get("/mock/web/*", async (req) => {
+    const path = (req.params as Record<string, string>)["*"] ?? "";
+    logRequest("web", "GET", `/${path}`, null);
+    return `Hello from the emulated web (path: ${path}).`;
+  });
 
   // --- admin ---
   app.post("/admin/reset", async () => {
@@ -104,10 +120,11 @@ export async function buildEmulator() {
   // Wraps a bare Slack event in the envelopes the real socket would carry:
   // an event_callback payload inside an events_api Socket Mode envelope.
   app.post("/admin/slack/socket-event", async (req) => {
-    const { event, eventId, envelopeId } = (req.body ?? {}) as {
+    const { event, eventId, envelopeId, appToken } = (req.body ?? {}) as {
       event?: Record<string, unknown>;
       eventId?: string;
       envelopeId?: string;
+      appToken?: string;
     };
     if (!event) return { ok: false, error: "event required" };
     const envelope = {
@@ -123,14 +140,15 @@ export async function buildEmulator() {
         event,
       },
     };
-    const delivered = pushSlackSocketEnvelope(envelope);
+    const delivered = pushSlackSocketEnvelope(envelope, appToken);
     return { ok: true, delivered, envelopeId: envelope.envelope_id };
   });
 
   app.post("/admin/slack/socket-interaction", async (req) => {
-    const { payload, envelopeId } = (req.body ?? {}) as {
+    const { payload, envelopeId, appToken } = (req.body ?? {}) as {
       payload?: Record<string, unknown>;
       envelopeId?: string;
+      appToken?: string;
     };
     if (!payload) return { ok: false, error: "payload required" };
     const envelope = {
@@ -139,12 +157,13 @@ export async function buildEmulator() {
       accepts_response_payload: false,
       payload,
     };
-    const delivered = pushSlackSocketEnvelope(envelope);
+    const delivered = pushSlackSocketEnvelope(envelope, appToken);
     return { ok: true, delivered, envelopeId: envelope.envelope_id };
   });
 
   app.get("/admin/slack/socket", async () => ({
     connections: state.slackSockets.size,
+    apps: [...new Set(state.slackSocketApp.values())],
     log: state.slackSocketLog,
   }));
 

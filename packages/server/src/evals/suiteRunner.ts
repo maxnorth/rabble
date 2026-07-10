@@ -14,6 +14,13 @@ export interface AgentSnapshot {
   name: string;
   description: string;
   instructions: string;
+  /**
+   * Tone is a gated, behavior-affecting field (routes/agents.ts). It MUST be
+   * part of the snapshot prompt, or gating a tone change runs against a prompt
+   * with no tone and passes falsely — the gate would protect the very field
+   * that triggered it against a prompt that can't exhibit it.
+   */
+  tone: string | null;
 }
 
 export interface CaseOutcome {
@@ -22,6 +29,21 @@ export interface CaseOutcome {
   passed: boolean;
   output: string;
   reasoning: string;
+}
+
+/**
+ * The system prompt a suite case runs under. Kept in step with the fields the
+ * production runtime feeds from agent config (name/description/instructions/
+ * tone) so gating tests the agent as it will actually behave. Pure + exported
+ * so the tone-inclusion is unit-tested rather than only exercised through a
+ * live model call.
+ */
+export function snapshotSystemPrompt(agent: AgentSnapshot): string {
+  return [
+    `You are ${agent.name}. ${agent.description}`,
+    agent.instructions,
+    ...(agent.tone ? [`Tone & style: ${agent.tone}`] : []),
+  ].join("\n\n");
 }
 
 /** Execute every case in the suite against the snapshot. Does NOT persist. */
@@ -38,11 +60,10 @@ export async function executeSuiteCases(
 
   const chat = await chatModelFor(model);
   const outcomes: CaseOutcome[] = [];
+  const systemPrompt = snapshotSystemPrompt(agent);
   for (const testCase of cases) {
     const reply = await chat.invoke([
-      new SystemMessage(
-        `You are ${agent.name}. ${agent.description}\n\n${agent.instructions}`,
-      ),
+      new SystemMessage(systemPrompt),
       new HumanMessage(testCase.input),
     ]);
     const output =

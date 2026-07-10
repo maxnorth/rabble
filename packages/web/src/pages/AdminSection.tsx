@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { api } from "../api";
 import { GrantEditor } from "./AgentsSection";
-import { relativeTime } from "../lib/time";
+import { relativeTime, count } from "../lib/time";
 
 const ADMIN_PAGES = [
   { key: "connections", label: "Connections" },
@@ -224,10 +224,15 @@ function VendorTile({ vendor }: { vendor: string }) {
   );
 }
 
+type ConnectionRow = NonNullable<
+  Awaited<ReturnType<typeof api.listConnections>>
+>["connections"][number];
+
 function ConnectionsPage() {
   const queryClient = useQueryClient();
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.listConnections });
   const [showAdd, setShowAdd] = useState(false);
+  const [editing, setEditing] = useState<ConnectionRow | null>(null);
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteConnection(id),
@@ -330,7 +335,7 @@ function ConnectionsPage() {
                   {c.vendor === "slack" && !c.hasAppToken && !c.hasSigningSecret && (
                     <span
                       className="chip amber"
-                      title="Slack has no way to deliver channel messages to Rabble. Re-add this connection with an app-level token (Socket Mode, easiest, no public URL) or a signing secret (Events API webhooks)."
+                      title="Slack has no way to deliver channel messages to Rabble. Edit this connection to add an app-level token (Socket Mode, easiest, no public URL) or a signing secret (Events API webhooks)."
                     >
                       no event delivery
                     </span>
@@ -338,7 +343,7 @@ function ConnectionsPage() {
                   {c.vendor === "github" && !c.hasSigningSecret && (
                     <span
                       className="chip amber"
-                      title="No webhook secret. GitHub deliveries can't be verified, so issue comments never reach agents. Re-add this connection with the webhook secret."
+                      title="No webhook secret. GitHub deliveries can't be verified, so issue comments never reach agents. Edit this connection to add the webhook secret."
                     >
                       no event delivery
                     </span>
@@ -346,6 +351,9 @@ function ConnectionsPage() {
                   <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
                     {c.status}
                   </span>
+                  <button className="btn" onClick={() => setEditing(c)}>
+                    Edit
+                  </button>
                   <button
                     className="btn danger"
                     onClick={() => {
@@ -368,6 +376,12 @@ function ConnectionsPage() {
         </div>
       )}
       {showAdd && <AddConnectionModal onClose={() => setShowAdd(false)} />}
+      {editing && (
+        <EditConnectionModal
+          connection={editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -653,6 +667,200 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function EditConnectionModal({
+  connection,
+  onClose,
+}: {
+  connection: ConnectionRow;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    name: connection.name,
+    roles: connection.roles,
+    baseUrl: connection.baseUrl ?? "",
+    tunnel: connection.tunnel,
+    token: "",
+    clearToken: false,
+    signingSecret: "",
+    clearSigningSecret: false,
+    appToken: "",
+    clearAppToken: false,
+  });
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateConnection(connection.id, {
+        name: form.name,
+        roles: form.roles,
+        baseUrl: form.baseUrl.trim() || null,
+        tunnel: form.tunnel,
+        token: form.clearToken ? null : form.token || undefined,
+        signingSecret: form.clearSigningSecret
+          ? null
+          : form.signingSecret || undefined,
+        appToken: form.clearAppToken ? null : form.appToken || undefined,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["connections"] });
+      onClose();
+    },
+  });
+
+  const toggleRole = (role: ConnectionRole) =>
+    setForm((f) => ({
+      ...f,
+      roles: f.roles.includes(role)
+        ? f.roles.filter((r) => r !== role)
+        : [...f.roles, role],
+    }));
+
+  // Empty = keep the stored secret; type to replace; "Remove" clears it.
+  const secretHint = (isSet: boolean | undefined) =>
+    isSet ? "A value is set. Leave blank to keep it." : "Not set.";
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Edit {connection.vendor} connection</h2>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (form.name.trim() && form.roles.length > 0) save.mutate();
+          }}
+        >
+          <div className="field">
+            <label>Name</label>
+            <input
+              required
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Roles</label>
+            <div style={{ display: "flex", gap: 6 }}>
+              {(["Interface", "Automation", "Tools"] as const).map((r) => (
+                <button
+                  type="button"
+                  key={r}
+                  className={`chip ${form.roles.includes(r) ? "blue" : ""}`}
+                  style={{ cursor: "pointer" }}
+                  onClick={() => toggleRole(r)}
+                >
+                  {form.roles.includes(r) ? "✓ " : ""}
+                  {r}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label>API base URL (optional)</label>
+            <input
+              value={form.baseUrl}
+              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              placeholder="https://slack.com"
+            />
+          </div>
+          <div className="field">
+            <label>Token</label>
+            <input
+              type="password"
+              placeholder="Leave blank to keep"
+              disabled={form.clearToken}
+              value={form.token}
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+            <span className="hint">{secretHint(connection.hasToken)}</span>
+            {connection.hasToken && (
+              <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={form.clearToken}
+                  onChange={(e) => setForm({ ...form, clearToken: e.target.checked })}
+                />
+                Remove token
+              </label>
+            )}
+          </div>
+          {(connection.vendor === "slack" || connection.vendor === "github") && (
+            <div className="field">
+              <label>
+                {connection.vendor === "slack" ? "Signing secret" : "Webhook secret"}
+              </label>
+              <input
+                type="password"
+                placeholder="Leave blank to keep"
+                disabled={form.clearSigningSecret}
+                value={form.signingSecret}
+                onChange={(e) => setForm({ ...form, signingSecret: e.target.value })}
+              />
+              <span className="hint">{secretHint(connection.hasSigningSecret)}</span>
+              {connection.hasSigningSecret && (
+                <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.clearSigningSecret}
+                    onChange={(e) =>
+                      setForm({ ...form, clearSigningSecret: e.target.checked })
+                    }
+                  />
+                  Remove secret
+                </label>
+              )}
+            </div>
+          )}
+          {connection.vendor === "slack" && (
+            <div className="field">
+              <label>App-level token · Socket Mode</label>
+              <input
+                type="password"
+                placeholder="xapp-… (leave blank to keep)"
+                disabled={form.clearAppToken}
+                value={form.appToken}
+                onChange={(e) => setForm({ ...form, appToken: e.target.value })}
+              />
+              <span className="hint">
+                {connection.hasAppToken
+                  ? "Socket Mode is on. Leave blank to keep, type to rotate, or remove to switch back to webhooks."
+                  : "Add an app-level token to stream events over a WebSocket. No public URL needed."}
+              </span>
+              {connection.hasAppToken && (
+                <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
+                  <input
+                    type="checkbox"
+                    checked={form.clearAppToken}
+                    onChange={(e) => setForm({ ...form, clearAppToken: e.target.checked })}
+                  />
+                  Turn off Socket Mode (remove app token)
+                </label>
+              )}
+            </div>
+          )}
+          <div className="field">
+            <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={form.tunnel}
+                onChange={(e) => setForm({ ...form, tunnel: e.target.checked })}
+              />
+              Reached through a private tunnel
+            </label>
+          </div>
+          {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={save.isPending}>
+              Save changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // MCP servers
 // ---------------------------------------------------------------------------
@@ -705,7 +913,7 @@ function McpServersPage() {
               {selected.status}
             </span>
             <span className="chip">{selected.category}</span>
-            <span className="chip blue">{selected.tools.length} tools</span>
+            <span className="chip blue">{count(selected.tools.length, "tool")}</span>
             <span style={{ fontSize: 12, color: "var(--text-dim)", alignSelf: "center" }}>
               Test connection re-discovers the tool catalog. Enablement and
               service/user auth are set per agent on its MCP tab.
@@ -780,7 +988,7 @@ function McpServersPage() {
                   <div className="sub mono">{s.url}</div>
                 </div>
                 <span className="chip">{s.category}</span>
-                <span className="chip blue">{s.tools.length} tools</span>
+                <span className="chip blue">{count(s.tools.length, "tool")}</span>
                 <span className="chip purple">used by {s.usedByCount}</span>
                 <button
                   className="btn danger"
@@ -1385,9 +1593,58 @@ function ApiKeysPage() {
 // Audit log
 // ---------------------------------------------------------------------------
 
+/** The expandable detail under an audit row — the metadata behind the
+ *  summary (e.g. a gating block's failing cases + the judge's reasoning). */
+function AuditDetail({ metadata }: { metadata: Record<string, unknown> }) {
+  const failures = Array.isArray(metadata.failures)
+    ? (metadata.failures as Array<{ case?: string; reasoning?: string }>)
+    : null;
+  return (
+    <div
+      className="row"
+      style={{
+        display: "block",
+        background: "var(--surface-group)",
+        padding: "8px 12px 10px 44px",
+      }}
+    >
+      {failures ? (
+        <>
+          <div className="sub" style={{ marginBottom: 4 }}>
+            Failing cases
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 16 }}>
+            {failures.map((f, i) => (
+              <li key={i} style={{ fontSize: 12, marginBottom: 2 }}>
+                <strong>{f.case}</strong>: {f.reasoning}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : (
+        Object.entries(metadata).map(([k, v]) => (
+          <div key={k} style={{ fontSize: 12, wordBreak: "break-word" }}>
+            <span className="mono" style={{ color: "var(--text-muted)" }}>
+              {k}:
+            </span>{" "}
+            {typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 function AuditPage() {
   const [filter, setFilter] = useState("");
   const [pages, setPages] = useState(1);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (id: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
   const audit = useQuery({
     queryKey: ["audit", filter, pages],
     queryFn: async () => {
@@ -1411,7 +1668,9 @@ function AuditPage() {
           <option value="">All actions</option>
           {[
             "agent",
+            "automation",
             "grant",
+            "access",
             "team",
             "domain",
             "model",
@@ -1420,6 +1679,7 @@ function AuditPage() {
             "api-key",
             "eval",
             "member",
+            "profile",
             "org",
           ].map((a) => (
             <option key={a} value={a}>
@@ -1449,41 +1709,55 @@ function AuditPage() {
                   : category === "org" || category === "api-key"
                     ? "amber"
                     : "";
+          const hasDetail = e.metadata && Object.keys(e.metadata).length > 0;
+          const isOpen = expanded.has(e.id);
           return (
-            <div className="row" key={e.id}>
-              <span
-                className="rail-logo"
-                title={e.actorName ?? "system"}
-                style={{
-                  width: 26,
-                  height: 26,
-                  fontSize: 10,
-                  marginBottom: 0,
-                  background: e.actorName ? "var(--surface-tool)" : "var(--purple)",
-                  color: "var(--text-2)",
-                  flexShrink: 0,
-                }}
+            <div key={e.id}>
+              <div
+                className="row"
+                style={{ cursor: hasDetail ? "pointer" : "default" }}
+                onClick={hasDetail ? () => toggle(e.id) : undefined}
               >
-                {(e.actorName ?? "sys")
-                  .split(/\s+/)
-                  .map((part) => part[0])
-                  .slice(0, 2)
-                  .join("")
-                  .toUpperCase()}
-              </span>
-              <div className="grow">
-                <div className="title" style={{ fontWeight: 400 }}>
-                  {e.summary}
+                <span
+                  className="rail-logo"
+                  title={e.actorName ?? "system"}
+                  style={{
+                    width: 26,
+                    height: 26,
+                    fontSize: 10,
+                    marginBottom: 0,
+                    background: e.actorName ? "var(--surface-tool)" : "var(--purple)",
+                    color: "var(--text-2)",
+                    flexShrink: 0,
+                  }}
+                >
+                  {(e.actorName ?? "sys")
+                    .split(/\s+/)
+                    .map((part) => part[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase()}
+                </span>
+                <div className="grow">
+                  <div className="title" style={{ fontWeight: 400 }}>
+                    {hasDetail && (
+                      <span style={{ color: "var(--text-muted)", marginRight: 6 }}>
+                        {isOpen ? "▾" : "▸"}
+                      </span>
+                    )}
+                    {e.summary}
+                  </div>
+                  <div className="sub mono">{e.action}</div>
                 </div>
-                <div className="sub mono">{e.action}</div>
+                <span className={`chip ${chipColor}`}>{category}</span>
+                <span
+                  style={{ fontSize: 11.5, color: "var(--text-muted)", width: 84, textAlign: "right" }}
+                  title={new Date(e.createdAt).toLocaleString()}
+                >
+                  {relativeTime(e.createdAt)}
+                </span>
               </div>
-              <span className={`chip ${chipColor}`}>{category}</span>
-              <span
-                style={{ fontSize: 11.5, color: "var(--text-muted)", width: 84, textAlign: "right" }}
-                title={new Date(e.createdAt).toLocaleString()}
-              >
-                {relativeTime(e.createdAt)}
-              </span>
+              {isOpen && hasDetail && <AuditDetail metadata={e.metadata} />}
             </div>
           );
         })}

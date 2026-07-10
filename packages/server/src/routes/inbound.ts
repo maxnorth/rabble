@@ -99,10 +99,14 @@ export async function inboundRoutes(app: FastifyInstance) {
       }
 
       if (eventName === "ping") return { ok: true };
-      if (eventName !== "issue_comment") {
+      // Issue comments and PR conversation comments both arrive as
+      // issue_comment; inline code-review comments arrive as
+      // pull_request_review_comment (a distinct payload + threaded reply).
+      const isReviewComment = eventName === "pull_request_review_comment";
+      if (eventName !== "issue_comment" && !isReviewComment) {
         return { ok: true, ignored: "unsupported event" };
       }
-      if (alreadyDelivered(deliveryId ? `gh:${deliveryId}` : undefined)) {
+      if (await alreadyDelivered(deliveryId ? `gh:${deliveryId}` : undefined)) {
         return { ok: true, ignored: "duplicate delivery" };
       }
 
@@ -110,7 +114,15 @@ export async function inboundRoutes(app: FastifyInstance) {
         action?: string;
         repository?: { full_name?: string };
         issue?: { number?: number; title?: string };
-        comment?: { body?: string; user?: { login?: string; type?: string } };
+        pull_request?: { number?: number; title?: string };
+        comment?: {
+          id?: number;
+          in_reply_to_id?: number;
+          body?: string;
+          path?: string;
+          line?: number;
+          user?: { login?: string; type?: string };
+        };
       };
       try {
         payload = JSON.parse(rawBody) as typeof payload;
@@ -119,19 +131,45 @@ export async function inboundRoutes(app: FastifyInstance) {
       }
 
       const fullName = payload.repository?.full_name ?? "";
-      const issueNumber = payload.issue?.number;
+      const number = isReviewComment
+        ? payload.pull_request?.number
+        : payload.issue?.number;
+      const title = (
+        isReviewComment ? payload.pull_request?.title : payload.issue?.title
+      )?.trim();
       const body = payload.comment?.body?.trim() ?? "";
       const login = payload.comment?.user?.login ?? "";
       if (
         payload.action !== "created" ||
         payload.comment?.user?.type === "Bot" ||
         !fullName ||
-        !issueNumber ||
+        // The number flows into the reply URL path — require a real positive
+        // integer, never a coincidentally-truthy string, even from a signed
+        // payload (defense in depth for a governed surface).
+        typeof number !== "number" ||
+        !Number.isInteger(number) ||
+        number <= 0 ||
         !body ||
         !login
       ) {
         return { ok: true, ignored: "not a user comment" };
       }
+      // A review comment is anchored to a file/line — hand that context to
+      // the agent so it can answer about the actual code, not just the text.
+      const agentContent =
+        isReviewComment && payload.comment?.path
+          ? `On \`${payload.comment.path}\`` +
+            (payload.comment.line ? ` line ${payload.comment.line}` : "") +
+            `:\n\n${body}`
+          : body;
+      // A review thread is one conversation: key it on the thread's root
+      // comment so every reply continues the same session. Coerce to a safe
+      // non-negative integer since it also lands in the reply URL path.
+      const rawRoot = payload.comment?.in_reply_to_id ?? payload.comment?.id ?? 0;
+      const threadRootId =
+        typeof rawRoot === "number" && Number.isInteger(rawRoot) && rawRoot > 0
+          ? rawRoot
+          : 0;
 
       // Which agent listens on this repo?
       const surfaceRows = await db
@@ -148,8 +186,13 @@ export async function inboundRoutes(app: FastifyInstance) {
       const token = connection.encryptedToken
         ? decryptSecret(connection.encryptedToken)
         : "";
+      // Review comments reply into their thread; issue/PR conversation
+      // comments post to the issue comment list.
+      const replyPath = isReviewComment
+        ? `/repos/${fullName}/pulls/${number}/comments/${threadRootId}/replies`
+        : `/repos/${fullName}/issues/${number}/comments`;
       const postComment = (text: string) =>
-        fetch(`${baseUrl}/repos/${fullName}/issues/${issueNumber}/comments`, {
+        fetch(`${baseUrl}${replyPath}`, {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -181,23 +224,40 @@ export async function inboundRoutes(app: FastifyInstance) {
         return { ok: true, ignored: "no matching platform user" };
       }
 
-      // One issue = one session.
-      const surfaceKey = `github:${fullName.toLowerCase()}#${issueNumber}`;
+      // One thread = one session. A review thread is a distinct surface from
+      // the PR's conversation, so it gets its own key.
+      const surfaceKey = isReviewComment
+        ? `github-review:${fullName.toLowerCase()}#${number}#${threadRootId}`
+        : `github:${fullName.toLowerCase()}#${number}`;
+      const surfaceLabel = isReviewComment
+        ? `GitHub ${fullName}#${number} (review)`
+        : `GitHub ${fullName}#${number}`;
+      // Scope to the connection's org: surface_key isn't globally unique, so a
+      // repo mapped in two orgs must not attach this turn to the other org's
+      // session.
       let [session] = await db
         .select()
         .from(sessions)
-        .where(eq(sessions.surfaceKey, surfaceKey))
+        .where(
+          and(
+            eq(sessions.surfaceKey, surfaceKey),
+            eq(sessions.orgId, connection.orgId),
+          ),
+        )
         .limit(1);
       if (!session) {
-        const title = payload.issue?.title?.trim() || `${fullName}#${issueNumber}`;
+        const sessionTitle = title || `${fullName}#${number}`;
         [session] = await db
           .insert(sessions)
           .values({
             orgId: connection.orgId,
             userId: platformUser.user.id,
             agentId: matched.agent.id,
-            title: title.length > 60 ? `${title.slice(0, 57)}…` : title,
-            surface: `GitHub ${fullName}#${issueNumber}`,
+            title:
+              sessionTitle.length > 60
+                ? `${sessionTitle.slice(0, 57)}…`
+                : sessionTitle,
+            surface: surfaceLabel,
             surfaceKey,
           })
           .returning();
@@ -226,7 +286,7 @@ export async function inboundRoutes(app: FastifyInstance) {
           agent: matched.agent,
           model,
           user: platformUser.user,
-          content: body,
+          content: agentContent,
           requireApproval: orgSettings.requireApprovalForUserTools,
           sessionApproved: false,
           interactive: false,

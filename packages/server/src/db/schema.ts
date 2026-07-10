@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
   index,
@@ -162,7 +163,12 @@ export const sessions = pgTable("sessions", {
   updatedAt: timestamp("updated_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (t) => [
+  // Surface events resolve their thread's session by (org_id, surface_key).
+  index("sessions_org_surface_key_idx")
+    .on(t.orgId, t.surfaceKey)
+    .where(sql`${t.surfaceKey} is not null`),
+]);
 
 export const messages = pgTable("messages", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -171,11 +177,18 @@ export const messages = pgTable("messages", {
     .references(() => sessions.id, { onDelete: "cascade" }),
   role: text("role", { enum: ["user", "agent"] }).notNull(),
   content: text("content").notNull(),
+  // Set on an agent message when its turn failed — the record keeps the error
+  // rather than dropping the turn, so a reload shows the failure inline.
+  error: text("error"),
   toolCalls: jsonb("tool_calls").notNull().default([]),
   inputTokens: integer("input_tokens").notNull().default(0),
   outputTokens: integer("output_tokens").notNull().default(0),
   // Which model produced this agent message (spend is priced at use time)
   modelId: uuid("model_id").references(() => models.id, { onDelete: "set null" }),
+  // The model's rate snapshotted at write time, so spend survives the model
+  // being deleted or re-priced later (model_id above is set null on delete).
+  priceInputPerMtok: numeric("price_input_per_mtok", { precision: 10, scale: 4 }),
+  priceOutputPerMtok: numeric("price_output_per_mtok", { precision: 10, scale: 4 }),
   // Who wrote this user message (multi-participant surface threads)
   authorUserId: uuid("author_user_id").references(() => users.id, {
     onDelete: "set null",
@@ -183,7 +196,10 @@ export const messages = pgTable("messages", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
-});
+}, (t) => [
+  // Messages are loaded by session, ordered by time, on every turn and view.
+  index("messages_session_created_idx").on(t.sessionId, t.createdAt),
+]);
 
 // ---------------------------------------------------------------------------
 // Governance: teams, domains, grants
@@ -227,7 +243,12 @@ export const teamMembers = pgTable(
       .notNull()
       .defaultNow(),
   },
-  (t) => [primaryKey({ columns: [t.teamId, t.userId] })],
+  (t) => [
+    primaryKey({ columns: [t.teamId, t.userId] }),
+    // Rights resolution looks up a user's teams by user_id on every request;
+    // the PK's leading column is team_id, so it can't serve that lookup.
+    index("team_members_user_idx").on(t.userId),
+  ],
 );
 
 export const domains = pgTable(
@@ -407,6 +428,8 @@ export const automations = pgTable("automations", {
   lastSessionId: uuid("last_session_id").references((): AnyPgColumn => sessions.id, {
     onDelete: "set null",
   }),
+  /** Who a scheduler-fired run acts as (the creator); null = won't auto-fire. */
+  createdBy: uuid("created_by").references((): AnyPgColumn => users.id),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -458,7 +481,7 @@ export const agentSurfaces = pgTable(
       .notNull()
       .references(() => connections.id, { onDelete: "cascade" }),
     label: text("label").notNull().default(""),
-    // Slack thread behavior: 'all' | 'thread' | 'mention' (see 0015 migration).
+    // Slack thread behavior: 'all' | 'thread' | 'mention' (see 0022 migration).
     responseMode: text("response_mode").notNull().default("thread"),
     // DMs on/off for the linked agent; meaningful on the workspace row.
     dmEnabled: boolean("dm_enabled").notNull().default(true),
@@ -489,6 +512,16 @@ export const apiKeys = pgTable(
   },
   (t) => [uniqueIndex("api_keys_hash_idx").on(t.keyHash)],
 );
+
+// Durable inbound-event dedup (Slack event_id or "gh:<deliveryId>"). Durability
+// is the point: it suppresses redeliveries across transports, processes, and
+// restarts where the old in-memory Set could not.
+export const deliveredEvents = pgTable("delivered_events", {
+  eventId: text("event_id").primaryKey(),
+  deliveredAt: timestamp("delivered_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const auditEvents = pgTable(
   "audit_events",

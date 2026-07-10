@@ -3,7 +3,7 @@ import { createDomainSchema, slugify } from "@rabblehq/core";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, domains, grants } from "../db/schema.js";
-import { requireUser } from "../auth.js";
+import { requireUser, isOrgAdmin } from "../auth.js";
 import { recordAudit } from "../audit.js";
 
 function serializeDomain(row: typeof domains.$inferSelect, agentCount: number) {
@@ -19,6 +19,14 @@ function serializeDomain(row: typeof domains.$inferSelect, agentCount: number) {
 
 export async function domainRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
+  // Domains scope agent membership + grants; mutating them is org-admin
+  // territory (reads stay open). Deleting a domain strips it from every
+  // member agent, so a member must not be able to.
+  app.addHook("preHandler", async (req, reply) => {
+    if (req.method !== "GET" && !isOrgAdmin(req.user)) {
+      return reply.code(403).send({ error: "Org admin access required" });
+    }
+  });
 
   app.get("/api/domains", async (req) => {
     const rows = await db

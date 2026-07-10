@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../../api";
+import { api, ApiError } from "../../api";
 import { AGENT_COLORS, AGENT_GLYPHS } from "../../lib/time";
 
 // ---------------------------------------------------------------------------
@@ -211,11 +211,27 @@ export function IdentityTab({ agentId, canEdit }: { agentId: string; canEdit: bo
         <span className="hint">Only active agents appear in the session composer.</span>
       </div>
 
-      {(save.isError || remove.isError) && (
-        <p className="error-text" style={{ marginBottom: 12 }}>
-          {((save.error ?? remove.error) as Error).message}
-        </p>
-      )}
+      {(save.isError || remove.isError) &&
+        (() => {
+          const err = (save.error ?? remove.error) as ApiError;
+          const gate = err.body?.gate as
+            | { suiteName?: string; failures?: Array<{ caseName: string; reasoning: string }> }
+            | undefined;
+          return (
+            <div className="error-text" style={{ marginBottom: 12 }}>
+              <p style={{ margin: 0 }}>{err.message}</p>
+              {gate?.failures && gate.failures.length > 0 && (
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                  {gate.failures.map((f, i) => (
+                    <li key={i} style={{ marginBottom: 2 }}>
+                      <strong>{f.caseName}</strong>: {f.reasoning}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          );
+        })()}
       <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
         <button className="btn primary" disabled={save.isPending} onClick={() => save.mutate()}>
           {saved ? "Saved ✓" : "Save changes"}

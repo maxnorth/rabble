@@ -23,6 +23,7 @@ import {
   agentSurfaces,
   agents,
   connections,
+  deliveredEvents,
   messages,
   sessions,
   users,
@@ -71,17 +72,21 @@ export interface SurfaceLogger {
  * reply. Shared across transports on purpose — Slack can retry a webhook
  * delivery over the socket and vice versa.
  */
-const seenEvents = new Set<string>();
-const SEEN_EVENTS_CAP = 5000;
-export function alreadyDelivered(eventId: string | undefined): boolean {
+export async function alreadyDelivered(
+  eventId: string | undefined,
+): Promise<boolean> {
   if (!eventId) return false;
-  if (seenEvents.has(eventId)) return true;
-  seenEvents.add(eventId);
-  if (seenEvents.size > SEEN_EVENTS_CAP) {
-    const oldest = seenEvents.values().next().value;
-    if (oldest) seenEvents.delete(oldest);
-  }
-  return false;
+  // Claim the id atomically: the PK conflict means a concurrent or repeat
+  // delivery (any transport, any process, even after a restart) inserts
+  // nothing and is treated as already delivered. Recording before processing
+  // matches the old Set's semantics — a redelivery after a failed turn is not
+  // reprocessed.
+  const inserted = await db
+    .insert(deliveredEvents)
+    .values({ eventId })
+    .onConflictDoNothing()
+    .returning({ eventId: deliveredEvents.eventId });
+  return inserted.length === 0;
 }
 
 /**
@@ -225,7 +230,7 @@ export async function processSlackEvent(
     hasText: !!event.text?.trim(),
   });
 
-  if (alreadyDelivered(envelope.event_id)) {
+  if (await alreadyDelivered(envelope.event_id)) {
     slackDiag(log, "ignored: duplicate event_id", { eventId: envelope.event_id });
     return { ok: true, ignored: "duplicate delivery" };
   }
@@ -254,7 +259,7 @@ export async function processSlackEvent(
 
   // A mention in a channel the app also reads arrives twice (app_mention +
   // message) under distinct event_ids; dedupe on channel+ts so one turn runs.
-  if (alreadyDelivered(`msg:${event.channel}:${event.ts}`)) {
+  if (await alreadyDelivered(`msg:${event.channel}:${event.ts}`)) {
     slackDiag(log, "ignored: duplicate message identity", {
       channel: event.channel,
       ts: event.ts,
@@ -355,10 +360,15 @@ export async function processSlackEvent(
 
   // One Slack thread (or DM) = one session.
   const surfaceKey = `slack:${event.channel}:${threadTs}`;
+  // Scope the continuation lookup to this connection's org: surface_key
+  // isn't globally unique, so an unscoped match could attach this turn to
+  // another org's session that happens to share the key.
   const [existingSession] = await db
     .select()
     .from(sessions)
-    .where(eq(sessions.surfaceKey, surfaceKey))
+    .where(
+      and(eq(sessions.surfaceKey, surfaceKey), eq(sessions.orgId, connection.orgId)),
+    )
     .limit(1);
 
   // Resolve the channel's response mode (channels only).

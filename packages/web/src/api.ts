@@ -40,6 +40,9 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** The full parsed error body — lets callers read structured detail
+     *  (e.g. a gating block's per-case failures) beyond the message. */
+    public body?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -53,13 +56,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     let message = res.statusText;
+    let body: Record<string, unknown> | undefined;
     try {
-      const body = (await res.json()) as { error?: string };
-      if (body.error) message = body.error;
+      body = (await res.json()) as Record<string, unknown>;
+      if (typeof body.error === "string") message = body.error;
     } catch {
       // non-JSON error body; keep statusText
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, body);
   }
   return (await res.json()) as T;
 }
@@ -160,7 +164,11 @@ export const api = {
   detachMcpServer: (agentId: string, serverId: string) =>
     del<{ ok: true }>(`/api/agents/${agentId}/mcp-servers/${serverId}`),
   subAgents: (id: string) =>
-    get<{ subAgents: Array<Agent & { note: string }> }>(`/api/agents/${id}/sub-agents`),
+    get<{
+      subAgents: Array<
+        Agent & { note: string; evalScore: number | null; evalCount: number }
+      >;
+    }>(`/api/agents/${id}/sub-agents`),
   setSubAgentNote: (id: string, subId: string, note: string) =>
     patch<{ ok: true }>(`/api/agents/${id}/sub-agents/${subId}`, { note }),
   listSurfaces: (agentId: string) =>
@@ -328,6 +336,7 @@ export const api = {
     }>(`/api/suites/${suiteId}/run`),
 
   // automations
+  schedulerStatus: () => get<{ active: boolean }>("/api/scheduler"),
   listAutomations: (agentId: string) =>
     get<{ automations: Automation[] }>(`/api/agents/${agentId}/automations`),
   createAutomation: (agentId: string, body: { name: string; schedule: string; prompt: string }) =>
@@ -338,6 +347,10 @@ export const api = {
     ),
   toggleAutomation: (id: string, enabled: boolean) =>
     patch<{ automation: Automation }>(`/api/automations/${id}`, { enabled }),
+  updateAutomation: (
+    id: string,
+    body: Partial<{ name: string; schedule: string; prompt: string }>,
+  ) => patch<{ automation: Automation }>(`/api/automations/${id}`, body),
   deleteAutomation: (id: string) => del<{ ok: true }>(`/api/automations/${id}`),
 
   // admin
@@ -364,6 +377,18 @@ export const api = {
     configToken?: string;
     configRefreshToken?: string;
   }) => post<{ connection: Connection }>("/api/connections", body),
+  updateConnection: (
+    id: string,
+    body: {
+      name?: string;
+      roles?: ConnectionRole[];
+      baseUrl?: string | null;
+      tunnel?: boolean;
+      token?: string | null;
+      signingSecret?: string | null;
+      appToken?: string | null;
+    },
+  ) => patch<{ connection: Connection }>(`/api/connections/${id}`, body),
   deleteConnection: (id: string) => del<{ ok: true }>(`/api/connections/${id}`),
   saveSlackConfig: (id: string, accessToken: string, refreshToken: string) =>
     post<{ ok: true }>(`/api/connections/${id}/slack/config`, { accessToken, refreshToken }),
@@ -456,12 +481,14 @@ export async function streamMessage(
   sessionId: string,
   content: string,
   onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch(`/api/sessions/${sessionId}/messages`, {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ content }),
+    signal,
   });
   if (!res.ok || !res.body) {
     let message = res.statusText;
@@ -477,6 +504,7 @@ export async function streamMessage(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let sawTerminal = false;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -487,11 +515,20 @@ export async function streamMessage(
       for (const line of chunk.split("\n")) {
         if (!line.startsWith("data:")) continue;
         try {
-          onEvent(JSON.parse(line.slice(5).trim()) as StreamEvent);
+          const event = JSON.parse(line.slice(5).trim()) as StreamEvent;
+          if (event.type === "done" || event.type === "error") sawTerminal = true;
+          onEvent(event);
         } catch {
           // skip malformed event
         }
       }
     }
+  }
+  // The server always ends a turn with a done/error event before closing. A
+  // clean close without one means the stream dropped mid-reply (proxy/idle
+  // timeout, server restart, network blip) — surface it so the caller resets
+  // its streaming state instead of showing a forever-typing bubble.
+  if (!sawTerminal) {
+    throw new ApiError(0, "The connection closed before the reply finished.");
   }
 }

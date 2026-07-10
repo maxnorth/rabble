@@ -40,19 +40,15 @@ export async function gateUserAuth(
   ctx: GateContext,
   call: ToolCall,
 ): Promise<GateResult> {
-  const autoApprove =
-    !ctx.requireApproval &&
-    (ctx.approvalPosture === "trust" ||
-      (ctx.approvalPosture === "session" && ctx.sessionApproved));
-  if (autoApprove) {
-    return {
-      outcome: "proceed",
-      approval: { status: "auto-approved", decidedByName: ctx.userName },
-    };
-  }
-
+  // A surface with no way to prompt (a delegated sub-agent turn, an
+  // automation, an inbound event without an out-of-band prompt) can never
+  // surface this action to the user — so refuse it BEFORE considering any
+  // auto-approval. "Trust" posture means "don't ask me in my own sessions,"
+  // not "silently act as me in a nested turn I can't see"; letting trust
+  // auto-approve here would run a user-auth write with no consent path and
+  // break the delegation guarantee that a parent's session never authorizes
+  // a different agent.
   if (!ctx.interactive && !ctx.approvalPrompt) {
-    // No way to prompt on this surface — refuse the action.
     return {
       outcome: "refused",
       approval: { status: "denied", decidedByName: null },
@@ -61,6 +57,17 @@ export async function gateUserAuth(
       modelText:
         "This action needs the user's approval, which isn't possible on " +
         "this surface. Tell the user to run it from the Rabble web app.",
+    };
+  }
+
+  const autoApprove =
+    !ctx.requireApproval &&
+    (ctx.approvalPosture === "trust" ||
+      (ctx.approvalPosture === "session" && ctx.sessionApproved));
+  if (autoApprove) {
+    return {
+      outcome: "proceed",
+      approval: { status: "auto-approved", decidedByName: ctx.userName },
     };
   }
 

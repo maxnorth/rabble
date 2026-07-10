@@ -255,6 +255,11 @@ export const toolCallSchema = z.object({
   authType: z.enum(["service", "user"]).nullable(),
   approval: approvalOutcomeSchema.nullable().optional(),
   durationMs: z.number().int().nullable().optional(),
+  /**
+   * For a sub-agent delegation, the id of the child's session — lets the UI
+   * link straight from the delegation call to the delegated turn's transcript.
+   */
+  childSessionId: z.string().uuid().nullable().optional(),
 });
 export type ToolCall = z.infer<typeof toolCallSchema>;
 
@@ -266,6 +271,8 @@ export const messageSchema = z.object({
   authorName: z.string().nullable().default(null),
   content: z.string(),
   toolCalls: z.array(toolCallSchema),
+  /** Set when this agent turn failed; the failure is kept as part of the record. */
+  error: z.string().nullable().default(null),
   createdAt: z.string(),
 });
 export type Message = z.infer<typeof messageSchema>;
@@ -508,12 +515,264 @@ export const automationSchema = z.object({
 });
 export type Automation = z.infer<typeof automationSchema>;
 
+// Standard 5-field cron ranges: minute, hour, day-of-month, month, weekday
+// (0 and 7 both mean Sunday). Validated at creation so a typo can't sit
+// silently until the scheduler tries to run it.
+const CRON_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0, 59],
+  [0, 23],
+  [1, 31],
+  [1, 12],
+  [0, 7],
+];
+
+function validCronField(field: string, min: number, max: number): boolean {
+  return field.split(",").every((part) => {
+    const slash = part.indexOf("/");
+    const rangePart = slash === -1 ? part : part.slice(0, slash);
+    const stepPart = slash === -1 ? undefined : part.slice(slash + 1);
+    if (stepPart !== undefined && (!/^\d+$/.test(stepPart) || Number(stepPart) < 1)) {
+      return false;
+    }
+    if (rangePart === "*") return true;
+    const dash = rangePart.indexOf("-");
+    const a = dash === -1 ? rangePart : rangePart.slice(0, dash);
+    const b = dash === -1 ? undefined : rangePart.slice(dash + 1);
+    if (!/^\d+$/.test(a)) return false;
+    const lo = Number(a);
+    if (lo < min || lo > max) return false;
+    if (b !== undefined) {
+      if (!/^\d+$/.test(b)) return false;
+      const hi = Number(b);
+      if (hi < min || hi > max || hi < lo) return false;
+    }
+    return true;
+  });
+}
+
+/** True for a well-formed standard 5-field cron expression. */
+export function isValidCron(expr: string): boolean {
+  const fields = expr.trim().split(/\s+/);
+  if (fields.length !== 5) return false;
+  return fields.every((f, i) => validCronField(f, CRON_RANGES[i]![0], CRON_RANGES[i]![1]));
+}
+
+/** Does one already-validated cron field match a numeric time component? */
+function cronFieldMatches(field: string, value: number): boolean {
+  return field.split(",").some((part) => {
+    const slash = part.indexOf("/");
+    const rangePart = slash === -1 ? part : part.slice(0, slash);
+    const step = slash === -1 ? 1 : Number(part.slice(slash + 1));
+    let lo: number;
+    let hi: number;
+    if (rangePart === "*") {
+      // Any value; only the step constrains it (relative to 0).
+      return step === 1 || value % step === 0;
+    }
+    const dash = rangePart.indexOf("-");
+    lo = Number(dash === -1 ? rangePart : rangePart.slice(0, dash));
+    hi = dash === -1 ? lo : Number(rangePart.slice(dash + 1));
+    if (value < lo || value > hi) return false;
+    return (value - lo) % step === 0;
+  });
+}
+
+/**
+ * Whether a cron's date fields (month + the day-of-month/day-of-week pair)
+ * match `date`. Standard Vixie semantics: when BOTH day fields are
+ * restricted, the day matches if EITHER does; if either is `*`, it's a plain
+ * AND. Split out so nextCronRun can skip whole non-matching days cheaply.
+ */
+function cronDayMatches(mon: string, dom: string, dow: string, date: Date): boolean {
+  if (!cronFieldMatches(mon, date.getUTCMonth() + 1)) return false;
+  const jsDow = date.getUTCDay(); // 0=Sun..6=Sat
+  const domMatch = cronFieldMatches(dom, date.getUTCDate());
+  const dowMatch =
+    cronFieldMatches(dow, jsDow) || (jsDow === 0 && cronFieldMatches(dow, 7));
+  const domRestricted = dom !== "*";
+  const dowRestricted = dow !== "*";
+  if (domRestricted && dowRestricted) return domMatch || dowMatch;
+  return domMatch && dowMatch;
+}
+
+/**
+ * Whether a 5-field cron expression fires at the given instant (minute
+ * granularity, UTC). Standard Vixie semantics: when BOTH day-of-month and
+ * day-of-week are restricted, the schedule matches if EITHER does; if either
+ * is `*`, day matching is a plain AND. Returns false for an invalid cron.
+ */
+export function cronMatches(expr: string, date: Date): boolean {
+  if (!isValidCron(expr)) return false;
+  const [min, hr, dom, mon, dow] = expr.trim().split(/\s+/) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  if (!cronFieldMatches(min, date.getUTCMinutes())) return false;
+  if (!cronFieldMatches(hr, date.getUTCHours())) return false;
+  return cronDayMatches(mon, dom, dow, date);
+}
+
+/**
+ * The next UTC instant strictly after `after` at which the cron fires, or
+ * null for an invalid cron or one that never runs within a ~4-year horizon
+ * (e.g. a Feb-30 schedule). Walks day-by-day using cronDayMatches — cheap
+ * enough to call from the UI to show "next run in …".
+ */
+export function nextCronRun(expr: string, after: Date = new Date()): Date | null {
+  if (!isValidCron(expr)) return null;
+  const [min, hr, dom, mon, dow] = expr.trim().split(/\s+/) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  // First whole minute strictly after `after`.
+  const startMs = Math.floor(after.getTime() / 60000) * 60000 + 60000;
+  let day = new Date(
+    Date.UTC(
+      new Date(startMs).getUTCFullYear(),
+      new Date(startMs).getUTCMonth(),
+      new Date(startMs).getUTCDate(),
+    ),
+  );
+  // 1500 days covers a full leap cycle, so Feb-29 schedules resolve.
+  for (let d = 0; d < 1500; d++) {
+    if (cronDayMatches(mon, dom, dow, day)) {
+      for (let h = 0; h < 24; h++) {
+        if (!cronFieldMatches(hr, h)) continue;
+        for (let m = 0; m < 60; m++) {
+          if (!cronFieldMatches(min, m)) continue;
+          const cand = Date.UTC(
+            day.getUTCFullYear(),
+            day.getUTCMonth(),
+            day.getUTCDate(),
+            h,
+            m,
+          );
+          if (cand >= startMs) return new Date(cand);
+        }
+      }
+    }
+    day = new Date(
+      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + 1),
+    );
+  }
+  return null;
+}
+
+const CRON_DAY_NAMES = [
+  "Sunday",
+  "Monday",
+  "Tuesday",
+  "Wednesday",
+  "Thursday",
+  "Friday",
+  "Saturday",
+];
+
+/** Join a list the way prose does: "a", "a and b", "a, b and c". */
+function joinProse(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? "";
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+/**
+ * A plain-language summary of a cron expression for common patterns
+ * (fixed daily time, weekday windows, hourly/every-N-minutes). Falls back to
+ * the raw expression for anything it doesn't confidently recognize — better a
+ * literal cron than a wrong English gloss. UTC, since the scheduler is UTC.
+ */
+export function describeCron(expr: string): string {
+  if (!isValidCron(expr)) return expr;
+  const [min, hr, dom, mon, dow] = expr.trim().split(/\s+/) as [
+    string,
+    string,
+    string,
+    string,
+    string,
+  ];
+  // Only month="*" is described; specific months fall back to raw.
+  if (mon !== "*") return expr;
+
+  const pad = (s: string) => s.padStart(2, "0");
+  const stepMin = /^\*\/(\d+)$/.exec(min);
+  const stepHr = /^\*\/(\d+)$/.exec(hr);
+  // A comma-list of whole hours, e.g. "9,17" (twice-daily). Single-minute only.
+  const hourList = /^\d+(,\d+)+$/.test(hr) ? hr.split(",") : null;
+
+  let time: string | null = null;
+  if (/^\d+$/.test(min) && /^\d+$/.test(hr)) {
+    time = `at ${hr}:${pad(min)} UTC`;
+  } else if (/^\d+$/.test(min) && hourList) {
+    time = `at ${joinProse(hourList.map((h) => `${h}:${pad(min)}`))} UTC`;
+  } else if (/^\d+$/.test(min) && hr === "*") {
+    time = `at :${pad(min)} past every hour`;
+  } else if (min === "*" && hr === "*") {
+    time = "every minute";
+  } else if (stepMin && hr === "*") {
+    time = `every ${stepMin[1]} minutes`;
+  } else if (/^\d+$/.test(min) && stepHr) {
+    time = `at :${pad(min)} every ${stepHr[1]} hours`;
+  }
+  if (time === null) return expr;
+
+  // Day window: only describe when day-of-month is unrestricted.
+  if (dom !== "*") return expr;
+  let days: string | null = null;
+  if (dow === "*") {
+    days = ""; // every day
+  } else if (dow === "1-5") {
+    days = " on weekdays";
+  } else if (dow === "0,6" || dow === "6,0" || dow === "0,7" || dow === "7,0") {
+    days = " on weekends";
+  } else if (/^\d$/.test(dow)) {
+    days = ` on ${CRON_DAY_NAMES[Number(dow) % 7]}`;
+  } else if (/^\d(,\d)+$/.test(dow)) {
+    days = ` on ${joinProse(dow.split(",").map((d) => CRON_DAY_NAMES[Number(d) % 7]!))}`;
+  }
+  if (days === null) return expr;
+
+  return time + days;
+}
+
 export const createAutomationSchema = z.object({
   name: z.string().min(1).max(120),
-  schedule: z.string().min(1).max(100),
+  schedule: z
+    .string()
+    .min(1)
+    .max(100)
+    .refine(isValidCron, {
+      message:
+        "Schedule must be a valid 5-field cron expression (minute hour day-of-month month weekday).",
+    }),
   prompt: z.string().max(10000).default(""),
 });
 export type CreateAutomationRequest = z.infer<typeof createAutomationSchema>;
+
+/**
+ * Editing an existing automation. Every field is optional (a PATCH may just
+ * flip `enabled`, or just retune the schedule), but a provided schedule must
+ * still be a valid cron and a provided name non-empty.
+ */
+export const updateAutomationSchema = z
+  .object({
+    name: z.string().min(1).max(120),
+    schedule: z.string().min(1).max(100).refine(isValidCron, {
+      message:
+        "Schedule must be a valid 5-field cron expression (minute hour day-of-month month weekday).",
+    }),
+    prompt: z.string().max(10000),
+    enabled: z.boolean(),
+  })
+  .partial()
+  .refine((b) => Object.keys(b).length > 0, {
+    message: "Provide at least one field to update.",
+  });
+export type UpdateAutomationRequest = z.infer<typeof updateAutomationSchema>;
 
 // ---------------------------------------------------------------------------
 // Admin: connections, API keys, audit
@@ -562,6 +821,23 @@ export const createConnectionSchema = z.object({
   configRefreshToken: tokenString.optional(),
 });
 export type CreateConnectionRequest = z.infer<typeof createConnectionSchema>;
+
+// Editing an existing connection. Secrets follow tri-state semantics so an
+// admin can add Socket Mode (or rotate a key) without deleting the
+// connection and cascade-losing its channel/repo surface mappings:
+//   - omitted (undefined) → keep the stored secret
+//   - a non-empty string   → replace it
+//   - null                 → clear it (e.g. turn Socket Mode back off)
+export const updateConnectionSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  roles: z.array(connectionRoleSchema).min(1).optional(),
+  baseUrl: z.string().url().nullable().optional(),
+  tunnel: z.boolean().optional(),
+  token: z.string().max(500).nullable().optional(),
+  signingSecret: z.string().max(500).nullable().optional(),
+  appToken: z.string().max(500).nullable().optional(),
+});
+export type UpdateConnectionRequest = z.infer<typeof updateConnectionSchema>;
 
 export const apiKeyScopeSchema = z.enum(["read", "write", "admin"]);
 export type ApiKeyScope = z.infer<typeof apiKeyScopeSchema>;
@@ -631,21 +907,23 @@ export const sessionEvalResultSchema = z.object({
 });
 export type SessionEvalResult = z.infer<typeof sessionEvalResultSchema>;
 
+const suiteRunSummarySchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(["running", "completed", "failed"]),
+  passed: z.number().int(),
+  total: z.number().int(),
+  startedAt: z.string(),
+});
+
 export const evalSuiteSchema = z.object({
   id: z.string().uuid(),
   agentId: z.string().uuid(),
   name: z.string(),
   gating: z.boolean(),
   caseCount: z.number().int(),
-  lastRun: z
-    .object({
-      id: z.string().uuid(),
-      status: z.enum(["running", "completed", "failed"]),
-      passed: z.number().int(),
-      total: z.number().int(),
-      startedAt: z.string(),
-    })
-    .nullable(),
+  lastRun: suiteRunSummarySchema.nullable(),
+  /** Recent runs oldest→newest — the suite's pass-rate trajectory. */
+  runHistory: z.array(suiteRunSummarySchema).default([]),
   createdAt: z.string(),
 });
 export type EvalSuite = z.infer<typeof evalSuiteSchema>;
@@ -768,6 +1046,8 @@ export type ConnectedAccount = z.infer<typeof connectedAccountSchema>;
 export const agentDirectoryRowSchema = agentSchema.extend({
   domainName: z.string().nullable(),
   evalScore: z.number().nullable(),
+  /** Number of eval results behind evalScore (the trust denominator). */
+  evalCount: z.number().int().default(0),
   toolCount: z.number().int(),
   starred: z.boolean(),
   /** The caller's effective right on this agent (null = none). */

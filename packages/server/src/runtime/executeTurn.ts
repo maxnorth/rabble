@@ -27,6 +27,8 @@ export interface ExecuteTurnInput {
   sessionApproved: boolean;
   interactive: boolean;
   approvalPrompt?: Parameters<typeof runAgentTurn>[0]["approvalPrompt"];
+  /** Delegation call stack, when this turn is itself a delegated sub-agent. */
+  delegationChain?: string[];
 }
 
 export interface ExecuteTurnResult {
@@ -55,25 +57,49 @@ export async function executeTurnAndPersist(
   let inputTokens = 0;
   let outputTokens = 0;
   const toolCalls: ToolCall[] = [];
-  for await (const event of runAgentTurn({
-    agent: input.agent,
-    model: input.model,
-    user: input.user,
-    sessionId: input.sessionId,
-    history,
-    userContent: input.content,
-    requireApproval: input.requireApproval,
-    sessionApproved: input.sessionApproved,
-    interactive: input.interactive,
-    approvalPrompt: input.approvalPrompt,
-  })) {
-    if (event.type === "text") fullText += event.text;
-    else if (event.type === "usage") {
-      inputTokens += event.inputTokens;
-      outputTokens += event.outputTokens;
-    } else if (event.type === "tool-end") {
-      toolCalls.push(event.toolCall);
+  try {
+    for await (const event of runAgentTurn({
+      agent: input.agent,
+      model: input.model,
+      user: input.user,
+      sessionId: input.sessionId,
+      history,
+      userContent: input.content,
+      requireApproval: input.requireApproval,
+      sessionApproved: input.sessionApproved,
+      interactive: input.interactive,
+      approvalPrompt: input.approvalPrompt,
+      delegationChain: input.delegationChain,
+    })) {
+      if (event.type === "text") fullText += event.text;
+      else if (event.type === "usage") {
+        inputTokens += event.inputTokens;
+        outputTokens += event.outputTokens;
+      } else if (event.type === "tool-end") {
+        toolCalls.push(event.toolCall);
+      }
     }
+  } catch (err) {
+    // Keep the failure in the record — a surface session (Slack, GitHub,
+    // automation) is a transcript too — then re-throw so the caller's own
+    // error handling still runs.
+    await db.insert(messages).values({
+      sessionId: input.sessionId,
+      role: "agent",
+      content: fullText,
+      error: err instanceof Error ? err.message : "Agent turn failed",
+      toolCalls,
+      inputTokens,
+      outputTokens,
+      modelId: input.model?.id ?? null,
+      priceInputPerMtok: input.model?.priceInputPerMtok ?? null,
+      priceOutputPerMtok: input.model?.priceOutputPerMtok ?? null,
+    });
+    await db
+      .update(sessions)
+      .set({ updatedAt: new Date() })
+      .where(eq(sessions.id, input.sessionId));
+    throw err;
   }
 
   await db.insert(messages).values({
@@ -84,6 +110,8 @@ export async function executeTurnAndPersist(
     inputTokens,
     outputTokens,
     modelId: input.model?.id ?? null,
+    priceInputPerMtok: input.model?.priceInputPerMtok ?? null,
+    priceOutputPerMtok: input.model?.priceOutputPerMtok ?? null,
   });
   await db
     .update(sessions)

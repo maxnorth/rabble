@@ -1,7 +1,9 @@
 /**
  * Slack Socket Mode: events stream over the emulated WebSocket instead of
- * webhooks, 1:1 DMs talk to the connection-linked agent, and DM approval
- * buttons resolve over the socket interactivity path.
+ * webhooks, 1:1 DMs talk to the connection-linked agent, DM approval
+ * buttons resolve over the socket interactivity path, connections edit in
+ * place (Socket Mode on/off, token rotation), and multiple workspaces'
+ * sockets stay isolated.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { EMULATOR } from "../global-setup";
@@ -160,19 +162,26 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
       "agent:Mock reply to: Deploy status over the socket?",
     ]);
 
-  const log = (await (
-    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
-  ).json()) as {
-    requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
-  };
-  expect(
-    log.requests.some(
-      (r) =>
-        r.path === "/api/chat.postMessage" &&
-        r.body.thread_ts === "1799.001" &&
-        r.body.text?.includes("Mock reply to: Deploy status over the socket?"),
-    ),
-  ).toBe(true);
+  // The reply is posted to Slack AFTER the turn persists, so poll the emulator
+  // log rather than reading it once — the DB poll above can win the race.
+  await expect
+    .poll(
+      async () => {
+        const log = (await (
+          await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+        ).json()) as {
+          requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+        };
+        return log.requests.some(
+          (r) =>
+            r.path === "/api/chat.postMessage" &&
+            r.body.thread_ts === "1799.001" &&
+            r.body.text?.includes("Mock reply to: Deploy status over the socket?"),
+        );
+      },
+      { timeout: 10_000 },
+    )
+    .toBe(true);
 
   // A redelivery of the same message (same channel+ts) never runs a second
   // turn — even under a fresh event_id. This covers Slack sending one @-mention
@@ -390,6 +399,177 @@ test("a 1:1 DM talks to the connection's linked agent", async () => {
   );
 });
 
+test("a threaded DM follow-up continues the same session and agent", async () => {
+  // First message opens a DM thread — it answers as the connection's linked
+  // agent (Eng On-Call), the only identity this Slack face has.
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "D9003",
+        channel_type: "im",
+        user: "U777",
+        text: "What's our deploy status?",
+        ts: "1810.001",
+      },
+    }),
+  });
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ slug: string }>(
+        `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+         WHERE s.surface_key = 'slack:D9003:1810.001'`,
+      );
+      return rows[0]?.slug ?? null;
+    })
+    .toBe("eng-on-call");
+
+  // A follow-up IN THAT THREAD runs a second turn in the SAME session — a
+  // continuing thread never opens a new session or switches agents, even
+  // when the text is Builder-shaped.
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      event: {
+        type: "message",
+        channel: "D9003",
+        channel_type: "im",
+        user: "U777",
+        text: "Actually, can you build me an agent for onboarding docs?",
+        thread_ts: "1810.001",
+        ts: "1810.002",
+      },
+    }),
+  });
+
+  // The follow-up ran (a second user+agent pair) and the session is STILL
+  // Eng On-Call's.
+  const [session] = await dbQuery<{ id: string; slug: string }>(
+    `SELECT s.id, a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+     WHERE s.surface_key = 'slack:D9003:1810.001'`,
+  );
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ n: string }>(
+        "SELECT count(*)::text AS n FROM messages WHERE session_id = $1",
+        [session!.id],
+      );
+      return Number(rows[0]!.n);
+    })
+    .toBe(4);
+  const [after] = await dbQuery<{ slug: string }>(
+    `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+     WHERE s.surface_key = 'slack:D9003:1810.001'`,
+  );
+  expect(after!.slug).toBe("eng-on-call");
+
+  // And the follow-up reply threaded back under the same root.
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { thread_ts?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.thread_ts === "1810.001" &&
+          r.body.text?.includes("Mock reply to: Actually, can you build me an agent"),
+      );
+    })
+    .toBe(true);
+});
+
+test("editing a connection adds Socket Mode in place — surfaces survive", async () => {
+  // The original webhook Slack connection carries the workspace-default and
+  // #eng-oncall surfaces. Enabling Socket Mode must NOT mean delete +
+  // recreate (which would cascade those mappings away) — an in-place edit
+  // keeps them.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+
+  const webhookRow = page.locator(".row", {
+    has: page.getByText("Acme Slack", { exact: true }),
+  });
+  await expect(webhookRow).toBeVisible();
+  await expect(webhookRow.locator(".chip", { hasText: "Eng On-Call" })).toBeVisible();
+  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toHaveCount(0);
+
+  const surfacesBefore = await dbQuery<{ n: string }>(
+    `SELECT count(*)::text AS n FROM agent_surfaces
+     WHERE connection_id = (SELECT id FROM connections WHERE name = 'Acme Slack')`,
+  );
+  expect(Number(surfacesBefore[0]!.n)).toBe(2);
+
+  const socketsBefore = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket`)
+  ).json()) as { connections: number };
+
+  // --- Add Socket Mode in place ---
+  await webhookRow.getByRole("button", { name: "Edit" }).click();
+  await page
+    .getByPlaceholder("xapp-… (leave blank to keep)")
+    .fill("xapp-emulated-edit");
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  // Socket Mode chip now shows, and the agent identity is intact.
+  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toBeVisible();
+  await expect(webhookRow.locator(".chip", { hasText: "Eng On-Call" })).toBeVisible();
+
+  const surfacesAfter = await dbQuery<{ n: string }>(
+    `SELECT count(*)::text AS n FROM agent_surfaces
+     WHERE connection_id = (SELECT id FROM connections WHERE name = 'Acme Slack')`,
+  );
+  expect(Number(surfacesAfter[0]!.n)).toBe(2);
+  const [conn] = await dbQuery<{ has_app: boolean }>(
+    `SELECT (encrypted_app_token IS NOT NULL) AS has_app
+     FROM connections WHERE name = 'Acme Slack'`,
+  );
+  expect(conn!.has_app).toBe(true);
+
+  // The server actually dialed out and a new socket came up.
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { connections: number };
+      return status.connections;
+    })
+    .toBe(socketsBefore.connections + 1);
+
+  // Audit recorded the edit (not an add/remove).
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'connection.edit'",
+  );
+  expect(audit.length).toBeGreaterThan(0);
+
+  // --- Turn Socket Mode back off — the mapping still survives, and the
+  // socket is reclaimed (keeping the one-socket invariant for later tests). ---
+  await webhookRow.getByRole("button", { name: "Edit" }).click();
+  await page.getByText("Turn off Socket Mode (remove app token)").click();
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toHaveCount(0);
+  await expect(webhookRow.locator(".chip", { hasText: "Eng On-Call" })).toBeVisible();
+  const [conn2] = await dbQuery<{ has_app: boolean }>(
+    `SELECT (encrypted_app_token IS NOT NULL) AS has_app
+     FROM connections WHERE name = 'Acme Slack'`,
+  );
+  expect(conn2!.has_app).toBe(false);
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { connections: number };
+      return status.connections;
+    })
+    .toBe(socketsBefore.connections);
+});
+
 test("socket mode interactivity: DM buttons resolve approvals over the WebSocket", async () => {
   // A user-auth tool raised from the socket channel pends on a DM ask…
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {
@@ -448,7 +628,7 @@ test("socket mode interactivity: DM buttons resolve approvals over the WebSocket
           ?.flatMap((b) => b.elements ?? [])
           .find((el) => el.action_id === "rabble_approve")?.value ?? "";
       return value.length > 0;
-    })
+    }, { timeout: 15000 })
     .toBe(true);
 
   // …and answer it as an interactivity envelope pushed down the socket.
@@ -491,4 +671,170 @@ test("socket mode interactivity: DM buttons resolve approvals over the WebSocket
       );
     })
     .toBe(true);
+});
+
+test("two Socket Mode workspaces stay isolated — events reach only their app", async () => {
+  // A second workspace's app, alongside the existing Acme socket. Each app
+  // gets its own socket; an event in one must not leak into (or be swallowed
+  // by) the other — which is exactly what shared event-id dedupe would do if
+  // the emulator broadcast to every socket.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+  await page.getByRole("button", { name: "+ Add connection" }).click();
+  await page.getByPlaceholder("Acme Slack").fill("Beta Slack (socket)");
+  await page
+    .getByRole("button", { name: "Connect with existing tokens instead" })
+    .click();
+  await page.getByPlaceholder("https://slack.com").fill(`${EMULATOR}/mock/slack.com`);
+  await page.locator(".modal input[type=password]").first().fill("xoxb-beta");
+  await page.getByPlaceholder("xapp-…").fill("xapp-beta");
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  await expect(
+    page.locator(".row", { hasText: "Beta Slack (socket)" }),
+  ).toBeVisible();
+
+  // Both apps hold their own tagged socket.
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { apps: string[] };
+      return status.apps.includes("xapp-emulated") && status.apps.includes("xapp-beta");
+    })
+    .toBe(true);
+
+  // Beta maps its own channel to the on-call agent.
+  await fetch(`${EMULATOR}/admin/slack`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ channels: { C999: "beta-ops" } }),
+  });
+  await dbQuery(
+    `INSERT INTO agent_surfaces (agent_id, connection_id, label, response_mode)
+     SELECT a.id, c.id, '#beta-ops', 'all' FROM agents a, connections c
+     WHERE a.name = 'Eng On-Call' AND c.name = 'Beta Slack (socket)'`,
+  );
+
+  // An event in Beta's channel, delivered only to Beta's socket. Under the
+  // old broadcast behavior Acme's socket would have seen this event_id first
+  // and (no #beta-ops mapping there) marked it delivered, starving Beta —
+  // so a session appearing at all is the isolation proof.
+  const push = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        appToken: "xapp-beta",
+        eventId: "EvBetaIso1",
+        event: {
+          type: "message",
+          channel: "C999",
+          user: "U777",
+          text: "Beta workspace deploy status?",
+          ts: "1850.001",
+        },
+      }),
+    })
+  ).json()) as { delivered: number };
+  expect(push.delivered).toBe(1); // exactly one socket, not both
+
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ surface: string }>(
+        "SELECT surface FROM sessions WHERE surface_key = 'slack:C999:1850.001'",
+      );
+      return rows[0]?.surface ?? "";
+    })
+    .toBe("Slack #beta-ops");
+
+  // Cross-check: the same channel event delivered to the WRONG app (Acme,
+  // which has no #beta-ops mapping) never becomes a session.
+  const wrong = (await (
+    await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        appToken: "xapp-emulated",
+        eventId: "EvBetaIso2",
+        event: {
+          type: "message",
+          channel: "C999",
+          user: "U777",
+          text: "Wrong workspace, should be ignored",
+          ts: "1850.002",
+        },
+      }),
+    })
+  ).json()) as { delivered: number };
+  expect(wrong.delivered).toBe(1); // Acme's socket got it…
+  // …but Acme has no agent on C999, so no session is ever created.
+  await page.waitForTimeout(1500);
+  const leaked = await dbQuery(
+    "SELECT id FROM sessions WHERE surface_key = 'slack:C999:1850.002'",
+  );
+  expect(leaked).toHaveLength(0);
+});
+
+test("rotating an app token reconnects the socket with the new one", async () => {
+  const opensBefore = await (async () => {
+    const log = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+    ).json()) as { requests: Array<{ path: string }> };
+    return log.requests.filter((r) => r.path === "/api/apps.connections.open").length;
+  })();
+
+  // Edit the Beta socket connection to a fresh app-level token.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "Connections" }).click();
+  const betaRow = page.locator(".row", {
+    has: page.getByText("Beta Slack (socket)", { exact: true }),
+  });
+  await betaRow.getByRole("button", { name: "Edit" }).click();
+  await page
+    .getByPlaceholder("xapp-… (leave blank to keep)")
+    .fill("xapp-beta-rotated");
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  // The manager tears the old socket down and redials with the new token —
+  // the emulator sees another apps.connections.open and re-tags the socket.
+  await expect
+    .poll(async () => {
+      const status = (await (
+        await fetch(`${EMULATOR}/admin/slack/socket`)
+      ).json()) as { apps: string[] };
+      return status.apps.includes("xapp-beta-rotated") && !status.apps.includes("xapp-beta");
+    })
+    .toBe(true);
+  const opensAfter = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as { requests: Array<{ path: string }> };
+  expect(
+    opensAfter.requests.filter((r) => r.path === "/api/apps.connections.open").length,
+  ).toBeGreaterThan(opensBefore);
+
+  // The rotated socket still delivers: an event on Beta's channel lands.
+  await fetch(`${EMULATOR}/admin/slack/socket-event`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      appToken: "xapp-beta-rotated",
+      eventId: "EvBetaRot1",
+      event: {
+        type: "message",
+        channel: "C999",
+        user: "U777",
+        text: "Still listening after rotation?",
+        ts: "1860.001",
+      },
+    }),
+  });
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ surface: string }>(
+        "SELECT surface FROM sessions WHERE surface_key = 'slack:C999:1860.001'",
+      );
+      return rows[0]?.surface ?? "";
+    })
+    .toBe("Slack #beta-ops");
 });

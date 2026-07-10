@@ -12,7 +12,7 @@ import {
   agentToolConfigs,
   mcpServers,
 } from "../db/schema.js";
-import { requireUser } from "../auth.js";
+import { requireUser, isOrgAdmin } from "../auth.js";
 import { recordAudit } from "../audit.js";
 import { decryptSecret, encryptSecret } from "../crypto.js";
 import { mcpListTools } from "../mcp/client.js";
@@ -39,6 +39,18 @@ function serializeServer(
 
 export async function mcpRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
+  // Org-level MCP servers are shared and secret-bearing: registering,
+  // re-testing, or deleting them is org-admin territory. Per-agent attach/
+  // tool-config routes (/api/agents/...) stay gated on agent `edit` below.
+  app.addHook("preHandler", async (req, reply) => {
+    if (
+      req.method !== "GET" &&
+      (req.url.split("?")[0] ?? "").startsWith("/api/mcp-servers") &&
+      !isOrgAdmin(req.user)
+    ) {
+      return reply.code(403).send({ error: "Org admin access required" });
+    }
+  });
 
   app.get("/api/mcp-servers", async (req) => {
     const rows = await db

@@ -15,6 +15,29 @@ export function relativeTime(iso: string | null | undefined): string {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
+/** Compact relative future: "in 2m", "in 3h", "tomorrow", "in 4d", "in 3w",
+ * "in 5mo". Infrequent cron schedules can project weeks or months out, so
+ * fall back to coarser units rather than "in 400d". */
+export function relativeFuture(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const minutes = Math.round((new Date(iso).getTime() - Date.now()) / 60000);
+  if (minutes <= 0) return "now";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.round(hours / 24);
+  if (days === 1) return "tomorrow";
+  if (days < 14) return `in ${days}d`;
+  if (days < 60) return `in ${Math.round(days / 7)}w`;
+  if (days < 365) return `in ${Math.round(days / 30)}mo`;
+  return `in ${Math.round(days / 365)}y`;
+}
+
+/** "1 tool" / "3 tools" — a count with a correctly pluralized noun. */
+export function count(n: number, singular: string, plural = `${singular}s`): string {
+  return `${n} ${n === 1 ? singular : plural}`;
+}
+
 export const AGENT_COLORS: Record<string, string> = {
   blue: "var(--blue)",
   green: "var(--green)",

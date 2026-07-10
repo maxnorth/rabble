@@ -90,6 +90,19 @@ test("share is one verb: audience, plain-language right, pause/unshare", async (
   await modal.getByRole("button", { name: "Done" }).click();
 });
 
+test("share evidence surfaces the safety half — recent scope violations", async () => {
+  // Eng On-Call recorded an out-of-scope tool attempt in the tools journey.
+  // The Share chip must show that safety signal (not just the eval score) and
+  // flag amber, the same evidence an approver sees in the access queue.
+  await page.goto("/agents");
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "Share", exact: true }).click();
+  const chip = page.locator(".modal h2 .chip");
+  await expect(chip).toContainText("scope violation");
+  await expect(chip).toHaveClass(/amber/);
+  await page.locator(".modal").getByRole("button", { name: "Done" }).click();
+});
+
 test("request access from the agent page (web-native loop)", async ({
   browser,
 }) => {
@@ -233,16 +246,21 @@ test("hitting an access limit becomes a request an admin approves", async ({
   ).toContainText("Approved by Alex Lin");
 
   // The grant materialized and Bea's effective right actually changed.
+  // Poll the DB: the grant row lands just after the "Approved" text renders
+  // (writes trail the UI — same reason the earlier assertions poll).
   const [engOnCall] = await dbQuery<{ id: string }>(
     "SELECT id FROM agents WHERE name = 'Eng On-Call'",
   );
-  const grantRows = await dbQuery<{ access_right: string; subject_type: string }>(
-    `SELECT g.access_right, g.subject_type FROM grants g
-     JOIN users u ON u.id = g.subject_id
-     WHERE u.email = 'bea@acme.com' AND g.target_type = 'agent' AND g.target_id = $1`,
-    [engOnCall!.id],
-  );
-  expect(grantRows).toEqual([{ access_right: "edit", subject_type: "user" }]);
+  await expect
+    .poll(async () =>
+      dbQuery<{ access_right: string; subject_type: string }>(
+        `SELECT g.access_right, g.subject_type FROM grants g
+         JOIN users u ON u.id = g.subject_id
+         WHERE u.email = 'bea@acme.com' AND g.target_type = 'agent' AND g.target_id = $1`,
+        [engOnCall!.id],
+      ),
+    )
+    .toEqual([{ access_right: "edit", subject_type: "user" }]);
   const me = await beaPage.request.get(`/api/agents/${engOnCall!.id}`);
   expect(((await me.json()) as { myRight: string }).myRight).toBe("edit");
 

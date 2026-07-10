@@ -112,6 +112,16 @@ test("admin: register a custom model pointing at the mock endpoint", async () =>
     "SELECT price_input_per_mtok FROM models",
   );
   expect(Number(priced[0]!.price_input_per_mtok)).toBe(3);
+
+  // Registering a model is a control-plane change: it lands in the audit log
+  // with the endpoint (where org traffic now flows) but never the API key.
+  const audit = await dbQuery<{ summary: string; metadata: string }>(
+    "SELECT summary, metadata::text FROM audit_events WHERE action = 'model.register'",
+  );
+  expect(audit).toHaveLength(1);
+  expect(audit[0]!.summary).toContain("Mock Model");
+  expect(audit[0]!.metadata).toContain("localhost:4100/mock/api.openai.com");
+  expect(audit[0]!.metadata).not.toContain("test-key-secret");
 });
 
 test("agents: create, configure, and activate an agent", async () => {
@@ -135,6 +145,9 @@ test("agents: create, configure, and activate an agent", async () => {
     .getByPlaceholder("System instructions that define how this agent behaves")
     .fill("You triage CI failures. Be concise.");
   await page.locator("select").first().selectOption({ label: "Mock Model" });
+  // Identity's visual fields persist too: pick a distinct glyph and color.
+  await page.getByRole("button", { name: "⬢", exact: true }).click();
+  await page.locator("button[title='amber']").click();
   await page.locator(".segmented button", { hasText: "active" }).click();
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("button", { name: "Saved ✓" })).toBeVisible();
@@ -150,12 +163,19 @@ test("agents: create, configure, and activate an agent", async () => {
     status: string;
     model_id: string | null;
     instructions: string;
-  }>("SELECT slug, status, model_id, instructions FROM agents WHERE builtin IS NULL");
+    icon: string;
+    color: string;
+  }>(
+    "SELECT slug, status, model_id, instructions, icon, color FROM agents WHERE builtin IS NULL",
+  );
   expect(agents).toHaveLength(1);
   expect(agents[0]!.slug).toBe("eng-on-call");
   expect(agents[0]!.status).toBe("active");
   expect(agents[0]!.model_id).not.toBeNull();
   expect(agents[0]!.instructions).toContain("triage CI failures");
+  // The picked logo glyph and color round-tripped through save.
+  expect(agents[0]!.icon).toBe("⬢");
+  expect(agents[0]!.color).toBe("amber");
 });
 
 test("sessions: targeted chat streams a reply and persists the transcript", async () => {
@@ -258,7 +278,26 @@ test("a model outage surfaces in the thread and the session recovers", async () 
 
   await page.locator(".thread-composer textarea").fill("Will this survive an outage?");
   await page.locator(".thread-composer button", { hasText: "Send" }).click();
-  await expect(page.locator(".error-text")).toBeVisible({ timeout: 20_000 });
+
+  // The failure surfaces in the thread, and — unlike a transient banner — it's
+  // part of the record: it persists as an agent message carrying the error, so
+  // a reload shows the failure inline, not a dangling question with no reply.
+  await expect(
+    page.locator(".msg-agent .error-text", { hasText: "couldn't finish this turn" }),
+  ).toBeVisible({ timeout: 20_000 });
+  await page.reload();
+  await page
+    .locator(".sidebar-item", { hasText: "What is the deploy status?" })
+    .click();
+  await expect(
+    page.locator(".msg-agent .error-text", { hasText: "upstream rejected the request" }),
+  ).toBeVisible();
+  const failed = await dbQuery<{ role: string; error: string | null; content: string }>(
+    `SELECT role, error, content FROM messages
+     WHERE error IS NOT NULL ORDER BY created_at DESC LIMIT 1`,
+  );
+  expect(failed[0]!.role).toBe("agent");
+  expect(failed[0]!.error).toContain("upstream rejected the request");
 
   // The next turn works — the thread recovers cleanly
   await page.locator(".thread-composer textarea").fill("Trying again after the outage");

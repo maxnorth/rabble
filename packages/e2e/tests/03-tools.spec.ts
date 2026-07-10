@@ -262,6 +262,111 @@ test("an unanswered approval times out and the tool is not run", async () => {
   });
 });
 
+test("sub-agent delegation: a linked agent runs as a governed tool", async () => {
+  // A child agent with a model — created via API for brevity.
+  const modelsRes = (await (await page.request.get("/api/models")).json()) as {
+    models: Array<{ id: string; enabled: boolean }>;
+  };
+  const modelId = (modelsRes.models.find((m) => m.enabled) ?? modelsRes.models[0]!).id;
+  const created = (await (
+    await page.request.post("/api/agents", {
+      data: {
+        name: "Docs Helper",
+        description: "Answers questions about the docs",
+        instructions: "Help with documentation.",
+        modelId,
+        status: "active",
+      },
+    })
+  ).json()) as { agent: { id: string; slug: string } };
+  const childId = created.agent.id;
+
+  try {
+    // Wire it under Eng On-Call through the governed attach UI, note the edge.
+    await page.locator("nav a[title='Agents']").click();
+    await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+    await page.locator(".tabs button", { hasText: "Agents" }).click();
+    await page
+      .locator(".row", { hasText: "Docs Helper" })
+      .getByRole("button", { name: "Attach" })
+      .click();
+    const linkedRow = page
+      .locator(".row", { hasText: "Docs Helper" })
+      .filter({ has: page.locator(".chip.purple") });
+    await expect(linkedRow).toBeVisible();
+    const note = page.locator("input[placeholder*='When is it called']");
+    await note.fill("For anything about the docs");
+    await note.blur();
+
+    // The parent's model delegates on its next call.
+    await enqueueToolCall("ask_docs_helper", { task: "Summarize the deploy runbook" });
+
+    // Start a session targeted at Eng On-Call.
+    await page.locator("nav a[title='Sessions']").click();
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Ask docs helper about the runbook");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    // The delegation surfaces as an inline call, rendered as an agent
+    // hand-off ("Delegated to Docs Helper") rather than a raw tool name.
+    const chip = page
+      .locator(".tool-call", { hasText: "Delegated to Docs Helper" })
+      .first();
+    await expect(chip).toBeVisible({ timeout: 15_000 });
+
+    // The transcript is the source of truth (the tool-call chip's output can
+    // still be catching up in the SSE stream): the persisted call carries the
+    // child's reply, folded back as the delegation tool's output.
+    const toolCall = await pollFirstToolCall("%Ask docs helper about the runbook%");
+    expect(toolCall).toMatchObject({ name: "ask_docs_helper" });
+    expect(String(toolCall.output)).toContain(
+      "Mock reply to: Summarize the deploy runbook",
+    );
+    // …the edge is audited…
+    const audit = await dbQuery<{ action: string }>(
+      "SELECT action FROM audit_events WHERE action = 'agent.delegate'",
+    );
+    expect(audit.length).toBeGreaterThanOrEqual(1);
+    // …and a legitimate delegation is NOT logged as a scope violation.
+    const violations = await dbQuery<{ tool_name: string }>(
+      "SELECT tool_name FROM scope_violations WHERE tool_name = 'ask_docs_helper'",
+    );
+    expect(violations).toHaveLength(0);
+
+    // The delegated turn is a real, auditable session of the child agent —
+    // delegated work lands on the sub-agent's own record, not just an
+    // ephemeral tool call.
+    const [childSession] = await dbQuery<{ id: string; surface: string; content: string }>(
+      `SELECT s.id, s.surface, m.content
+         FROM sessions s
+         JOIN messages m ON m.session_id = s.id AND m.role = 'agent'
+        WHERE s.agent_id = $1 AND s.surface = 'Delegated by Eng On-Call'`,
+      [childId],
+    );
+    expect(childSession).toBeDefined();
+    expect(childSession!.content).toContain(
+      "Mock reply to: Summarize the deploy runbook",
+    );
+    // The delegation call links to that session for click-through tracing.
+    expect(toolCall.childSessionId).toBe(childSession!.id);
+    await chip.click();
+    await expect(
+      page.locator(".drawer").getByRole("link", { name: "view delegated session →" }),
+    ).toBeVisible();
+    await page.locator(".drawer-close").click();
+  } finally {
+    // Tidy up so a lingering agent can't skew later specs' routing. The child
+    // now owns a delegated session, so clear those first (the delete route
+    // refuses an agent with sessions).
+    await dbQuery("DELETE FROM sessions WHERE agent_id = $1", [childId]);
+    await page.request.delete(`/api/agents/${childId}`);
+  }
+});
+
 test("an out-of-scope tool attempt is recorded as a violation", async () => {
   // The model goes rogue: it calls a tool the agent was never given.
   await enqueueToolCall("drop_database", { reason: "cleanup" });
@@ -295,11 +400,140 @@ test("an out-of-scope tool attempt is recorded as a violation", async () => {
       .locator(".dir-table tbody tr", { hasText: "Eng On-Call" })
       .locator(".chip", { hasText: "needs attention" }),
   ).toBeVisible();
+
+  // The governance champion can filter the directory down to flagged agents.
+  await page.getByRole("button", { name: "+ Filter" }).click();
+  await page.getByRole("button", { name: "Needs attention" }).click();
+  await expect(
+    page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".dir-table tbody tr", { hasText: "Builder" }),
+  ).toHaveCount(0);
+
   await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
   await page.getByRole("button", { name: "evals" }).click();
   await expect(
     page.locator("div", { hasText: /^1scope violation · 30d$/ }),
   ).toBeVisible();
+});
+
+test("outbound web access: fetch obeys the network allowlist", async () => {
+  // A dedicated agent whose Advanced tab turns on outbound web access and
+  // allowlists only the emulator host.
+  const modelsRes = (await (await page.request.get("/api/models")).json()) as {
+    models: Array<{ id: string; enabled: boolean }>;
+  };
+  const modelId = (modelsRes.models.find((m) => m.enabled) ?? modelsRes.models[0]!).id;
+  const created = (await (
+    await page.request.post("/api/agents", {
+      data: {
+        name: "Web Fetcher",
+        description: "Fetches allowlisted URLs",
+        instructions: "Fetch pages when asked.",
+        modelId,
+        status: "active",
+      },
+    })
+  ).json()) as { agent: { id: string; slug: string } };
+  const agentId = created.agent.id;
+
+  try {
+    await page.request.patch(`/api/agents/${agentId}`, {
+      data: { capabilities: { outboundWebAccess: true, networkAllowlist: "localhost" } },
+    });
+
+    // 1) An allowlisted host is fetched and its body folds back as tool output.
+    await enqueueToolCall("fetch_url", { url: `${EMULATOR}/mock/web/runbook` });
+    await page.locator("nav a[title='Sessions']").click();
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Fetch the runbook page");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    const chip = page.locator(".tool-call", { hasText: "fetch_url" }).first();
+    await expect(chip).toBeVisible({ timeout: 15_000 });
+
+    const ok = await pollFirstToolCall("%Fetch the runbook page%");
+    expect(ok).toMatchObject({ name: "fetch_url", authType: "service" });
+    expect(String(ok.output)).toContain("Hello from the emulated web");
+    expect(String(ok.output)).toContain("path: runbook");
+    // The emulator actually received the GET.
+    const webLog = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=web`)
+    ).json()) as { requests: Array<{ path: string }> };
+    expect(webLog.requests.some((r) => r.path === "/runbook")).toBe(true);
+
+    // 2) A host outside the allowlist is refused before any network call.
+    await enqueueToolCall("fetch_url", { url: "https://evil.example.com/steal" });
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Fetch the evil page");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+      timeout: 15_000,
+    });
+    const refused = await pollFirstToolCall("%Fetch the evil page%");
+    expect(String(refused.output)).toContain("Refused:");
+    expect(String(refused.output)).toContain("not in this agent's network allowlist");
+    // Nothing left the box: the emulator never saw evil.example.com.
+    const evilLog = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=evil.example.com`)
+    ).json()) as { requests: unknown[] };
+    expect(evilLog.requests).toHaveLength(0);
+
+    // 3) A redirect within the allowlist is followed (localhost -> localhost).
+    await enqueueToolCall("fetch_url", {
+      url: `${EMULATOR}/mock/web/redirect?to=/mock/web/landed`,
+    });
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Follow the good redirect");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+      timeout: 15_000,
+    });
+    const followed = await pollFirstToolCall("%Follow the good redirect%");
+    expect(String(followed.output)).toContain("path: landed");
+
+    // 4) The security-critical case: a redirect that tries to escape the
+    // allowlist is re-checked per hop and refused at the second hop, even
+    // though the first hop (localhost) is allowed.
+    await enqueueToolCall("fetch_url", {
+      url: `${EMULATOR}/mock/web/redirect?to=https://evil.example.com/pwn`,
+    });
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Web Fetcher" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("Follow the escaping redirect");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+      timeout: 15_000,
+    });
+    const escaped = await pollFirstToolCall("%Follow the escaping redirect%");
+    expect(String(escaped.output)).toContain("Refused:");
+    expect(String(escaped.output)).toContain("not in this agent's network allowlist");
+    // The redirect target was never actually fetched.
+    const evilAfter = (await (
+      await fetch(`${EMULATOR}/admin/requests?host=evil.example.com`)
+    ).json()) as { requests: unknown[] };
+    expect(evilAfter.requests).toHaveLength(0);
+  } finally {
+    await dbQuery("DELETE FROM sessions WHERE agent_id = $1", [agentId]);
+    await page.request.delete(`/api/agents/${agentId}`);
+  }
 });
 
 test("audit trail covers the tool governance actions", async () => {

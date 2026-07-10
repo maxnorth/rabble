@@ -21,7 +21,8 @@ full auditability. Product spine and locked naming decisions:
   OpenAI, MCP, Slack) mounted under `/mock/<host>/...` with `/admin/*`
   endpoints. The app never knows it's fake; only base URLs differ. No
   `if test_mode` branches in app code — keep it that way.
-- `packages/e2e` — Playwright suite (5 ordered journey files). Asserts UI
+- `packages/e2e` — Playwright suite (ordered journey files, run
+  alphabetically: 01-journey … 10-admin). Asserts UI
   state, database rows, emulator traffic, and clean server logs.
 
 ## Commands
@@ -63,10 +64,18 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   directory (user id → email, channel id → name) via `PUT /admin/slack`.
 - Slack has two transports sharing one pipeline (`surfaces/slack.ts`):
   Events webhooks and Socket Mode (connection stores an encrypted app
-  token → server dials `apps.connections.open` and acks envelopes by id).
-  Emulator: `POST /admin/slack/socket-event` pushes an event to connected
-  sockets; `GET /admin/slack/socket` shows socket count + sent/ack log.
-  Event-id dedupe spans both transports.
+  token → `surfaces/slackSocket.ts` dials `apps.connections.open` and acks
+  envelopes by id; rotating the app token via edit reconnects immediately).
+  Routing follows the identity link (see the identity bullet below); a
+  threaded reply always continues under its session's agent.
+  Emulator: `POST /admin/slack/socket-event` (optional `appToken` targets
+  one workspace's socket, else broadcasts); `GET /admin/slack/socket` shows
+  socket count, connected `apps`, sent/ack log. Dedup (event ids AND
+  message identity `msg:channel:ts`) is durable in `delivered_events` and
+  spans both transports, processes, and restarts. Connections are editable
+  in place (`PATCH /api/connections/:id`, tri-state secrets: omit=keep,
+  string=set, null=clear) so enabling Socket Mode never deletes surface
+  mappings.
 - The Builder: agents with `builtin = 'builder'` (seeded per org at setup)
   get platform tools (runtime/platformTools.ts) — create_agent_draft,
   add_eval_criterion, attach_mcp_server, request_access — user-auth,
@@ -83,7 +92,7 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   route scope has its own string content-type parser; don't move it under
   the JSON-parsed tree).
 - A connection is one agent's identity: agent_surfaces links exactly one
-  agent per connection (DB exclusion constraint, 0018); an agent may hold
+  agent per connection (DB exclusion constraint, 0025); an agent may hold
   several connections. Everything answers as the linked agent; unlinked
   connections reply to DMs/mentions with a link-me hint (no session) and
   ignore ambient channel messages. No intent routing on Slack (web "Auto"
@@ -96,6 +105,35 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   model) comes from GET /api/agents/:id/trust; scope violations are
   recorded by the runtime when the model calls a tool outside its governed
   set + runtime built-ins (see RUNTIME_BUILTINS in agentTurn.ts).
+- Outbound web access is a capability, not a default (`runtime/webTools.ts`,
+  `buildWebTools`): the agent gets a governed `fetch_url` tool ONLY when its
+  Advanced-tab `capabilities.outboundWebAccess` is on, and every fetch is
+  bound to `capabilities.networkAllowlist`. Fail-closed — no capability or an
+  empty allowlist refuses all fetches. Allowlist matching is exact-host or
+  `*.suffix` (proper subdomains only, never the apex, never a substring, so
+  `evil-example.com` can't ride in on `example.com`); redirects are followed
+  but re-checked per hop; http/https only, with a timeout and size cap. The
+  allowlist IS the authorization boundary (an admin naming a host authorizes
+  egress there, localhost included — which is what lets e2e fetch the
+  emulator). Runs as the org service account (no per-call approval); the tool
+  name joins `allowedTools` so a legit fetch isn't a false scope violation.
+- Sub-agent delegation (bounded delegation pillar): agents linked via the
+  "Agents" tab (`agent_links`; attach needs `use` on the target) become
+  callable tools (`ask_<slug>`) in `buildSubAgentTools`. Each call runs the
+  child as a real, persisted, judged session (surface `Delegated by
+  <parent>`) via `executeTurnAndPersist` under the SAME user — so delegated
+  work lands on the child's own track record and stays fully auditable, and
+  the child's model/MCP tools/auth gates apply so governance composes. The
+  edge note is the tool description; the child's reply folds back as the tool
+  output; each call audits `agent.delegate` (metadata carries the
+  `childSessionId`). The child starts UN-approved (`sessionApproved:false`) —
+  a parent-session consent never authorizes a different agent — so its
+  user-auth tools face their own gate and, being non-interactive, auto-deny.
+  Depth/cycles are bounded (MAX_DELEGATION_DEPTH threaded as `delegationChain`
+  through executeTurn), breadth is capped per turn
+  (MAX_DELEGATIONS_PER_TURN), links are same-org only, and delegation tool
+  names join `allowedTools` so a legitimate call isn't a false scope
+  violation.
 - e2e global-setup refuses to start if :4100/:3178 are already bound —
   kill stale processes (`fuser -k 4100/tcp 3178/tcp`) instead of letting
   tests hit an old build.

@@ -34,19 +34,26 @@ async function uniqueSlug(orgId: string, name: string, excludeId?: string) {
   }
 }
 
-/** Live eval score per agent: pass rate across all criterion results. */
-async function evalScores(orgId: string): Promise<Map<string, number>> {
+/**
+ * Live eval score per agent: pass rate across all criterion results, plus
+ * the number of results behind it — the denominator is the trust signal
+ * (100% from one result is not 100% from fifty).
+ */
+async function evalScores(
+  orgId: string,
+): Promise<Map<string, { score: number; count: number }>> {
   const rows = await db
     .select({
       agentId: evalCriteria.agentId,
       score: sql<number>`round(avg(CASE WHEN ${evalResults.passed} THEN 100.0 ELSE 0.0 END))::int`,
+      count: sql<number>`count(*)::int`,
     })
     .from(evalResults)
     .innerJoin(evalCriteria, eq(evalResults.criterionId, evalCriteria.id))
     .innerJoin(agents, eq(evalCriteria.agentId, agents.id))
     .where(eq(agents.orgId, orgId))
     .groupBy(evalCriteria.agentId);
-  return new Map(rows.map((r) => [r.agentId, r.score]));
+  return new Map(rows.map((r) => [r.agentId, { score: r.score, count: r.count }]));
 }
 
 export async function agentRoutes(app: FastifyInstance) {
@@ -115,7 +122,8 @@ export async function agentRoutes(app: FastifyInstance) {
       agents: visible.map((r) => ({
         ...serializeAgent(r.agent),
         domainName: r.domainName,
-        evalScore: scores.get(r.agent.id) ?? null,
+        evalScore: scores.get(r.agent.id)?.score ?? null,
+        evalCount: scores.get(r.agent.id)?.count ?? 0,
         toolCount: r.toolCount,
         starred: starred.has(r.agent.id),
         myRight: rights.get(r.agent.id) ?? null,
@@ -377,6 +385,7 @@ export async function agentRoutes(app: FastifyInstance) {
               name: candidate.name,
               description: candidate.description,
               instructions: candidate.instructions,
+              tone: candidate.tone,
             },
             model,
           );
@@ -522,10 +531,16 @@ export async function agentRoutes(app: FastifyInstance) {
     const rows = ids.length
       ? await db.select().from(agents).where(inArray(agents.id, ids))
       : [];
+    // A callee runs as a judged session, so it carries a track record —
+    // surface it: wiring an agent as a callable tool is itself an access
+    // decision, and it should be evidence-informed like every other.
+    const scores = await evalScores(req.user!.orgId);
     return {
       subAgents: rows.map((r) => ({
         ...serializeAgent(r),
         note: notes.get(r.id) ?? "",
+        evalScore: scores.get(r.id)?.score ?? null,
+        evalCount: scores.get(r.id)?.count ?? 0,
       })),
     };
   });

@@ -54,6 +54,12 @@ interface EmulatorState {
   slackChannels: Map<string, string>;
   /** Live Socket Mode connections + a log of envelopes sent and acks seen. */
   slackSockets: Set<SlackSocketClient>;
+  /**
+   * socket -> the app-level token it opened with. Real Slack delivers each
+   * event only to the app it belongs to; this lets the fake target one
+   * socket instead of broadcasting to every connected workspace.
+   */
+  slackSocketApp: Map<SlackSocketClient, string>;
   slackSocketLog: SlackSocketLogEntry[];
 }
 
@@ -64,6 +70,7 @@ export const state: EmulatorState = {
   slackUsers: new Map(),
   slackChannels: new Map(),
   slackSockets: new Set(),
+  slackSocketApp: new Map(),
   slackSocketLog: [],
 };
 

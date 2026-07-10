@@ -196,6 +196,54 @@ test("PR conversation comments ride the same surface (PRs are issues)", async ()
   ).toBe(true);
 });
 
+test("PR review-comment threads become their own governed session", async () => {
+  // Inline code-review comments arrive as pull_request_review_comment — a
+  // distinct thread surface with a threaded reply, not the PR conversation.
+  const delivery = await signedGithubPost(
+    {
+      action: "created",
+      repository: { full_name: "acme/api" },
+      pull_request: {
+        number: 42,
+        title: "Add rate limiting to the API gateway",
+      },
+      comment: {
+        id: 555,
+        path: "src/gateway/limits.ts",
+        line: 88,
+        body: "Should this be behind a feature flag?",
+        user: { login: "alexcodes", type: "User" },
+      },
+    },
+    "d-review-001",
+    "pull_request_review_comment",
+  );
+  expect(delivery.status).toBe(200);
+
+  // A review thread is its own session, keyed on the thread's root comment —
+  // separate from the PR conversation session (github:acme/api#42).
+  const [session] = await dbQuery<{ id: string; surface: string }>(
+    "SELECT id, surface FROM sessions WHERE surface_key = 'github-review:acme/api#42#555'",
+  );
+  expect(session).toBeDefined();
+  expect(session!.surface).toBe("GitHub acme/api#42 (review)");
+
+  // The agent replied into the review thread, not the conversation list.
+  const log = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=api.github.com`)
+  ).json()) as { requests: Array<{ path: string; body: { body?: string } }> };
+  // The agent's turn carried the code location (file + line), so it comes
+  // back in the reply — the review agent knows which code it's discussing.
+  expect(
+    log.requests.some(
+      (r) =>
+        r.path === "/repos/acme/api/pulls/42/comments/555/replies" &&
+        r.body.body?.includes("On `src/gateway/limits.ts` line 88") &&
+        r.body.body?.includes("Should this be behind a feature flag?"),
+    ),
+  ).toBe(true);
+});
+
 test("background replies ping the user's Slack DM when opted in", async () => {
   // Alex opts in (the Slack workspace already knows alex@acme.com = U777)
   await page.locator("nav a[title*='profile']").click();

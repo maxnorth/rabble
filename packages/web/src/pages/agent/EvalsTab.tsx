@@ -2,10 +2,42 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
+import { count } from "../../lib/time";
 
 // ---------------------------------------------------------------------------
 // evals
 // ---------------------------------------------------------------------------
+
+// "Agents are born measured" — starter criteria for the manual path (the
+// Builder drafts these conversationally, but a hand-made agent starts blank).
+// Clicking one fills the form for review, not a silent add — human in the loop.
+const CRITERION_STARTERS: Array<{ name: string; description: string }> = [
+  {
+    name: "Stays on topic",
+    description:
+      "The reply addresses what was asked and doesn't wander into unrelated areas.",
+  },
+  {
+    name: "Grounded, not fabricated",
+    description:
+      "Claims are supported by the tools or context; it never invents facts, names, or numbers.",
+  },
+  {
+    name: "Cites its source",
+    description:
+      "When it states a fact or makes a recommendation, it points to where that came from.",
+  },
+  {
+    name: "Respects its scope",
+    description:
+      "It declines requests outside its stated job instead of attempting them.",
+  },
+  {
+    name: "Gives a next step",
+    description:
+      "The reply ends with a concrete action, not just a restatement of the problem.",
+  },
+];
 
 export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
@@ -170,7 +202,7 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
                 <span
                   className={`chip ${c.passRate >= 90 ? "green" : c.passRate >= 70 ? "blue" : "amber"}`}
                 >
-                  {c.passRate}% · {c.sessionCount} sessions
+                  {c.passRate}% · {count(c.sessionCount, "session")}
                 </span>
                 {c.trendDelta !== null && c.trendDelta !== 0 && (
                   <span
@@ -224,6 +256,36 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
             </button>
           </div>
         )}
+        {canEdit &&
+          (() => {
+            const have = new Set(
+              (criteria.data?.criteria ?? []).map((c) => c.name.toLowerCase()),
+            );
+            const starters = CRITERION_STARTERS.filter(
+              (s) => !have.has(s.name.toLowerCase()),
+            );
+            if (starters.length === 0) return null;
+            return (
+              <div
+                className="row"
+                style={{ flexWrap: "wrap", gap: 6, alignItems: "center" }}
+              >
+                <span className="sub" style={{ marginRight: 2 }}>
+                  Starters
+                </span>
+                {starters.map((s) => (
+                  <button
+                    key={s.name}
+                    className="chip"
+                    title={`${s.description} Fills the form; review, then Add`}
+                    onClick={() => setCriterionForm({ ...s })}
+                  >
+                    + {s.name}
+                  </button>
+                ))}
+              </div>
+            );
+          })()}
       </div>
 
       {(trust.data?.openReviews.length ?? 0) > 0 && (
@@ -280,11 +342,39 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
                 {s.name} {s.gating && <span className="chip amber">gating</span>}
               </div>
               <div className="sub">
-                {s.caseCount} cases
+                {count(s.caseCount, "case")}
                 {s.lastRun
                   ? ` · last run ${s.lastRun.passed}/${s.lastRun.total} passed`
                   : " · never run"}
               </div>
+              {s.runHistory.length >= 2 && (
+                <div
+                  className="suite-trend"
+                  style={{ display: "flex", alignItems: "flex-end", gap: 2, height: 18, marginTop: 5 }}
+                  title="Pass rate across recent runs (oldest → newest)"
+                >
+                  {s.runHistory.map((r) => {
+                    const pct = r.total > 0 ? (r.passed / r.total) * 100 : 0;
+                    const color =
+                      pct >= 100 ? "var(--green)" : pct > 0 ? "var(--amber)" : "var(--red)";
+                    return (
+                      <div
+                        key={r.id}
+                        style={{
+                          width: 5,
+                          height: Math.max(3, Math.round((pct / 100) * 16)),
+                          background: color,
+                          borderRadius: 1,
+                          opacity: 0.85,
+                        }}
+                        title={`${r.passed}/${r.total} passed · ${new Date(
+                          r.startedAt,
+                        ).toLocaleDateString()}`}
+                      />
+                    );
+                  })}
+                </div>
+              )}
             </div>
             {canEdit && (
               <label

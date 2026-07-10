@@ -1,11 +1,12 @@
 import type { FastifyInstance } from "fastify";
-import { createAutomationSchema } from "@rabblehq/core";
+import { createAutomationSchema, updateAutomationSchema } from "@rabblehq/core";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { automations } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { recordAudit } from "../audit.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
+import { isSchedulerActive } from "../scheduling/hatchet.js";
 
 function serialize(row: typeof automations.$inferSelect) {
   return {
@@ -30,8 +31,19 @@ function serialize(row: typeof automations.$inferSelect) {
 export async function automationRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
 
-  app.get("/api/agents/:agentId/automations", async (req) => {
+  // Whether the platform scheduler is live. When it isn't, an enabled
+  // automation only fires via "Run now" — the UI says so plainly.
+  app.get("/api/scheduler", async () => ({ active: isSchedulerActive() }));
+
+  app.get("/api/agents/:agentId/automations", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
+    // Scope the read: automations carry a prompt, so only someone with `use`
+    // on this agent (which is org-scoped) may list them — never a bare agent
+    // id from another org.
+    const rights = await rightsForAllAgents(req.user!);
+    if (!hasRight(rights.get(agentId) ?? null, "use")) {
+      return reply.code(403).send({ error: "You need access to this agent" });
+    }
     const rows = await db
       .select()
       .from(automations)
@@ -49,7 +61,7 @@ export async function automationRoutes(app: FastifyInstance) {
     const body = createAutomationSchema.parse(req.body);
     const [row] = await db
       .insert(automations)
-      .values({ agentId, ...body })
+      .values({ agentId, ...body, createdBy: req.user!.id })
       .returning();
     await recordAudit({
       orgId: req.user!.orgId,
@@ -64,7 +76,7 @@ export async function automationRoutes(app: FastifyInstance) {
 
   app.patch("/api/automations/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { enabled } = req.body as { enabled: boolean };
+    const patch = updateAutomationSchema.parse(req.body);
     const [automation] = await db
       .select()
       .from(automations)
@@ -77,9 +89,22 @@ export async function automationRoutes(app: FastifyInstance) {
     }
     const [row] = await db
       .update(automations)
-      .set({ enabled })
+      .set(patch)
       .where(eq(automations.id, id))
       .returning();
+    // A schedule/prompt/name change is a config edit worth auditing; a bare
+    // enable/disable toggle is routine and stays quiet.
+    const changedConfig = Object.keys(patch).some((k) => k !== "enabled");
+    if (changedConfig) {
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "automation.update",
+        targetType: "agent",
+        targetId: automation.agentId,
+        summary: `Edited automation "${row!.name}" (${row!.schedule})`,
+      });
+    }
     return { automation: serialize(row!) };
   });
 

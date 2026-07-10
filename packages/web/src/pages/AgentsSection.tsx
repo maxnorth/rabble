@@ -4,7 +4,12 @@ import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { AgentConfig } from "./AgentConfig";
-import { relativeTime, AGENT_COLORS } from "../lib/time";
+import { relativeTime, count, AGENT_COLORS } from "../lib/time";
+import {
+  filterAndSortAgents,
+  type SortKey,
+  type DirectoryFilters,
+} from "../lib/directory";
 
 export function AgentsSection() {
   const { agentId, domainId } = useParams();
@@ -54,7 +59,7 @@ export function AgentsSection() {
                 <span className="label">
                   {a.name}
                   <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
-                    {a.scope} · {a.toolCount} tools
+                    {a.scope} · {count(a.toolCount, "tool")}
                   </span>
                 </span>
                 <SidebarStar agent={a} />
@@ -157,14 +162,7 @@ function SidebarStar({ agent }: { agent: AgentDirectoryRow }) {
   );
 }
 
-type SortKey = "name" | "domainName" | "evalScore" | "updatedAt" | "toolCount" | "scope";
-
-interface Filters {
-  domain?: string | "none";
-  starred?: boolean;
-  youOwn?: boolean;
-  evalAbove90?: boolean;
-}
+type Filters = DirectoryFilters;
 
 function AgentDirectory() {
   const navigate = useNavigate();
@@ -177,27 +175,16 @@ function AgentDirectory() {
   const [filters, setFilters] = useState<Filters>({});
   const [filterOpen, setFilterOpen] = useState<false | "root" | "domain">(false);
 
-  const rows = useMemo(() => {
-    let list = agents.data?.agents ?? [];
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (a) => a.name.toLowerCase().includes(q) || a.slug.includes(q),
-      );
-    }
-    if (filters.domain === "none") list = list.filter((a) => !a.domainName);
-    else if (filters.domain) list = list.filter((a) => a.domainName === filters.domain);
-    if (filters.starred) list = list.filter((a) => a.starred);
-    if (filters.youOwn) list = list.filter((a) => a.myRight === "admin");
-    if (filters.evalAbove90) list = list.filter((a) => (a.evalScore ?? 0) >= 90);
-
-    const dir = sortAsc ? 1 : -1;
-    return [...list].sort((a, b) => {
-      const va = a[sortKey] ?? "";
-      const vb = b[sortKey] ?? "";
-      return va < vb ? -dir : va > vb ? dir : 0;
-    });
-  }, [agents.data, search, sortKey, sortAsc, filters]);
+  const rows = useMemo(
+    () =>
+      filterAndSortAgents(agents.data?.agents ?? [], {
+        search,
+        filters,
+        sortKey,
+        sortAsc,
+      }),
+    [agents.data, search, sortKey, sortAsc, filters],
+  );
 
   const toggleStar = useMutation({
     mutationFn: async (agent: AgentDirectoryRow) =>
@@ -247,6 +234,13 @@ function AgentDirectory() {
       key: "eval",
       label: "Eval ≥ 90%",
       clear: () => setFilters((f) => ({ ...f, evalAbove90: undefined })),
+    });
+  }
+  if (filters.needsAttention) {
+    activeChips.push({
+      key: "needsAttention",
+      label: "Needs attention",
+      clear: () => setFilters((f) => ({ ...f, needsAttention: undefined })),
     });
   }
 
@@ -299,6 +293,14 @@ function AgentDirectory() {
                 }}
               >
                 Eval ≥ 90%
+              </button>
+              <button
+                onClick={() => {
+                  setFilters((f) => ({ ...f, needsAttention: true }));
+                  setFilterOpen(false);
+                }}
+              >
+                Needs attention
               </button>
             </div>
           )}
@@ -409,6 +411,9 @@ function AgentDirectory() {
                 {a.evalScore !== null ? (
                   <span
                     className={`chip ${a.evalScore >= 90 ? "green" : a.evalScore >= 70 ? "blue" : "amber"}`}
+                    title={`All-time pass rate across ${a.evalCount ?? 0} eval ${
+                      (a.evalCount ?? 0) === 1 ? "result" : "results"
+                    }. Stats › Eval performance shows windowed rates.`}
                   >
                     {a.evalScore}%
                   </span>
@@ -509,7 +514,16 @@ function DomainDetail({ domainId }: { domainId: string }) {
               <div className="title">{a.name}</div>
               <div className="sub mono">{a.slug}</div>
             </div>
-            {a.evalScore !== null && <span className="chip blue">{a.evalScore}%</span>}
+            {a.evalScore !== null && (
+              <span
+                className="chip blue"
+                title={`All-time pass rate across ${a.evalCount ?? 0} eval ${
+                  (a.evalCount ?? 0) === 1 ? "result" : "results"
+                }.`}
+              >
+                {a.evalScore}%
+              </span>
+            )}
           </div>
         ))}
         {members.length === 0 && (

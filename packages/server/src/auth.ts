@@ -24,6 +24,8 @@ const ADMIN_ONLY_PREFIXES = [
   "/api/audit",
   "/api/org",
   "/api/members",
+  // Provider API keys are org secrets — never reachable by a non-admin key.
+  "/api/models/providers",
 ];
 
 /** Enforce API-key scope ceilings; cookie sessions pass through untouched. */
@@ -125,4 +127,29 @@ export async function requireUser(
   if (!req.user) {
     reply.code(401).send({ error: "Not authenticated" });
   }
+}
+
+export function isOrgAdmin(user: AuthedUser | null | undefined): boolean {
+  return user?.role === "owner" || user?.role === "admin";
+}
+
+/**
+ * Guard for org-level resource mutations (teams, domains, models, MCP
+ * servers, provider keys). These are shared, often secret-bearing, and their
+ * grants cascade — so, like grant creation, they're org-admin territory.
+ * Returns true when it has already sent a 401/403 (caller should stop).
+ */
+export function denyIfNotOrgAdmin(
+  req: FastifyRequest,
+  reply: FastifyReply,
+): boolean {
+  if (!req.user) {
+    reply.code(401).send({ error: "Not authenticated" });
+    return true;
+  }
+  if (!isOrgAdmin(req.user)) {
+    reply.code(403).send({ error: "Org admin access required" });
+    return true;
+  }
+  return false;
 }

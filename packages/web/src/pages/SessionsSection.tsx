@@ -8,7 +8,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { Link, NavLink, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, streamMessage } from "../api";
-import { relativeTime, AGENT_COLORS } from "../lib/time";
+import { relativeTime, count, AGENT_COLORS } from "../lib/time";
+import { sessionToMarkdown, exportFilename } from "../lib/sessionExport";
 
 interface PendingApproval {
   approvalId: string;
@@ -365,6 +366,10 @@ function ToolCallChip({
   onClick: () => void;
 }) {
   const auth = toolCall.authType ?? "service";
+  // A sub-agent delegation (buildSubAgentTools names them ask_<slug>) is a
+  // governed agent-to-agent call, not an MCP tool — render it as such so the
+  // bounded-delegation story reads clearly in the transcript.
+  const isDelegation = toolCall.name.startsWith("ask_") && !!toolCall.serverName;
   return (
     <div className="tool-call" onClick={onClick}>
       {running ? (
@@ -383,8 +388,10 @@ function ToolCallChip({
       )}
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className="tool-name">{toolCall.name}</span>
-          {toolCall.serverName && (
+          <span className="tool-name">
+            {isDelegation ? `Delegated to ${toolCall.serverName}` : toolCall.name}
+          </span>
+          {!isDelegation && toolCall.serverName && (
             <span className="tool-server">{toolCall.serverName}</span>
           )}
           <span style={{ flex: 1 }} />
@@ -393,7 +400,11 @@ function ToolCallChip({
               {(toolCall.durationMs / 1000).toFixed(1)}s · details
             </span>
           )}
-          <span className={`chip ${auth === "service" ? "green" : "amber"}`}>{auth}</span>
+          {isDelegation ? (
+            <span className="chip purple">agent</span>
+          ) : (
+            <span className={`chip ${auth === "service" ? "green" : "amber"}`}>{auth}</span>
+          )}
         </span>
         {typeof toolCall.output === "string" && toolCall.output && (
           <span
@@ -581,6 +592,19 @@ function SessionThread({ sessionId }: { sessionId: string }) {
   const [drawer, setDrawer] = useState<DrawerContent | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentInitial = useRef(false);
+  const streamAbort = useRef<AbortController | null>(null);
+  const judgeTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Abandon any in-flight stream and pending judge-refetch timers when the
+  // session changes or the thread unmounts — the POST is cancelled (no wasted
+  // turn) and no timer fires an invalidate against a session that's gone.
+  useEffect(() => {
+    return () => {
+      streamAbort.current?.abort();
+      for (const t of judgeTimers.current) clearTimeout(t);
+      judgeTimers.current = [];
+    };
+  }, [sessionId]);
 
   useEffect(() => {
     // Merge instead of overwrite: the query snapshot may be stale if a reply
@@ -605,6 +629,8 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     setStreamingText("");
     setLiveTools([]);
     setApprovals([]);
+    const abort = new AbortController();
+    streamAbort.current = abort;
     try {
       await streamMessage(sessionId, content, (event) => {
         if (event.type === "user-message") {
@@ -647,21 +673,42 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
           // Live judging lands a few seconds AFTER the turn — refetch so the
           // criteria chip reflects the fresh verdict, not the previous one.
+          // Tracked so they're cancelled if the session changes/unmounts.
           for (const delay of [2500, 7000]) {
-            setTimeout(() => {
-              void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
-            }, delay);
+            judgeTimers.current.push(
+              setTimeout(() => {
+                void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+              }, delay),
+            );
           }
         } else if (event.type === "error") {
           setError(event.error);
           setStreamingText(null);
+          setLiveTools([]);
+          setApprovals([]);
+          // The failed turn was persisted — refetch so it renders inline in
+          // the thread (and survives the next reload), not just as a banner.
+          void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
         }
-      });
+      }, abort.signal);
       void queryClient.invalidateQueries({ queryKey: ["sessions"] });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Message failed");
-      setStreamingText(null);
+      // A user-initiated abort (navigated away / switched session) isn't an
+      // error to surface — the thread is unmounting anyway.
+      if (!abort.signal.aborted) {
+        setError(err instanceof Error ? err.message : "Message failed");
+        // The stream dropped with no terminal event — reconcile with whatever
+        // the server persisted (a completed reply, or a failed-turn record).
+        void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
+      }
     } finally {
+      // Always clear streaming state — a stream that closes without a
+      // done/error event must not leave a permanent typing indicator or
+      // spinning tool chips.
+      setStreamingText(null);
+      setLiveTools([]);
+      setApprovals([]);
+      if (streamAbort.current === abort) streamAbort.current = null;
       setBusy(false);
     }
   };
@@ -790,26 +837,17 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             onClick={() => {
               const data = session.data;
               if (!data) return;
-              const lines = [
-                `# ${data.session.title || "Session"}`,
-                "",
-                `Agent: ${data.session.agentName} · Surface: ${data.session.surface} · Exported ${new Date().toLocaleString()}`,
-                "",
-                ...messages.flatMap((m) => [
-                  `## ${m.role === "user" ? "User" : data.session.agentName}`,
-                  ...m.toolCalls.map(
-                    (tc) =>
-                      `> tool: \`${tc.name}\` (${tc.authType ?? "service"} auth${tc.approval ? `, ${tc.approval.status}` : ""})`,
-                  ),
-                  m.content,
-                  "",
-                ]),
-              ];
-              const blob = new Blob([lines.join("\n")], { type: "text/markdown" });
+              const md = sessionToMarkdown(
+                data.session,
+                messages,
+                evalResults,
+                new Date().toLocaleString(),
+              );
+              const blob = new Blob([md], { type: "text/markdown" });
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
               a.href = url;
-              a.download = `${(data.session.title || "session").replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}.md`;
+              a.download = exportFilename(data.session.title);
               a.click();
               URL.revokeObjectURL(url);
             }}
@@ -883,7 +921,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           >
             <span style={{ fontSize: 13, fontWeight: 500 }}>{agentName}</span>
             <span style={{ display: "block", fontSize: 11, color: "var(--text-muted)" }}>
-              {agentRow ? `${agentRow.toolCount} tools · ` : ""}view agent →
+              {agentRow ? `${count(agentRow.toolCount, "tool")} · ` : ""}view agent →
             </span>
           </button>
         </div>
@@ -955,6 +993,14 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                         ),
                       )}
                     {m.content}
+                    {m.error && (
+                      <div
+                        className="error-text"
+                        style={{ marginTop: m.content ? 6 : 0 }}
+                      >
+                        ⚠ The agent couldn't finish this turn: {m.error}
+                      </div>
+                    )}
                   </div>
                 </div>
               ),
@@ -1077,6 +1123,15 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                   ? drawer.toolCall.output
                   : JSON.stringify(drawer.toolCall.output, null, 2)}
               </pre>
+              {drawer.toolCall.childSessionId && (
+                <Link
+                  to={`/sessions/${drawer.toolCall.childSessionId}`}
+                  style={{ color: "var(--accent-text)", fontSize: 13 }}
+                  onClick={() => setDrawer(null)}
+                >
+                  view delegated session →
+                </Link>
+              )}
             </>
           ) : (
             <>
@@ -1149,7 +1204,7 @@ function AgentProfileDrawer({
             eval {agent.evalScore}%
           </span>
         )}
-        <span className="chip">{agent.toolCount} tools</span>
+        <span className="chip">{count(agent.toolCount, "tool")}</span>
       </div>
       {agent.description && (
         <>

@@ -49,7 +49,9 @@ firewall, on localhost, or anywhere without a public HTTPS endpoint.
   event `message.channels` (no Request URL is needed in Socket Mode, but
   the subscription itself still is — without it Slack sends nothing)
 - Paste the token into the connection's **App-level token (Socket Mode)**
-  field when registering it in Rabble
+  field when registering it in Rabble — or **Edit** an existing Slack
+  connection to add it later (surface mappings are preserved; removing the
+  token switches back to webhooks)
 
 Events and the Approve/Deny interactivity payloads stream over the
 socket. Rabble acks each envelope immediately, reconnects with backoff,
@@ -173,7 +175,10 @@ delivery id; `ping` is answered automatically.
 - Slack: public channels only (`message.channels`); DMs and private
   channels need additional scopes/events and aren't wired yet.
 - GitHub: issue and PR *conversation* comments (both arrive as
-  `issue_comment`); PR review threads and discussions aren't wired yet.
+  `issue_comment`) and inline PR *review* comments
+  (`pull_request_review_comment`) — a review thread is its own session
+  (`github-review:<repo>#<pr>#<root>`) and the agent replies into the
+  thread. Discussions aren't wired yet.
 - Approvals can't be answered from an unattended surface — run those
   actions from the web app.
 - One workspace/installation per connection; use multiple connections for

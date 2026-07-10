@@ -8,21 +8,29 @@ import type { FastifyInstance } from "fastify";
 import { logRequest, state } from "./state.js";
 
 /**
- * Push one Socket Mode envelope to every connected client. Returns how many
- * sockets received it (0 = nobody is connected, the test should fail loudly).
+ * Push one Socket Mode envelope to connected clients. With `appToken`, only
+ * the socket that opened with that app-level token receives it — mirroring
+ * how real Slack delivers an event solely to the app it belongs to. Without
+ * one, it broadcasts (back-compat for single-workspace tests). Returns how
+ * many sockets received it (0 = nobody matched, the test should fail loudly).
  */
-export function pushSlackSocketEnvelope(envelope: {
-  envelope_id: string;
-  type: string;
-  payload: unknown;
-}): number {
+export function pushSlackSocketEnvelope(
+  envelope: {
+    envelope_id: string;
+    type: string;
+    payload: unknown;
+  },
+  appToken?: string,
+): number {
   let delivered = 0;
   for (const socket of state.slackSockets) {
+    if (appToken && state.slackSocketApp.get(socket) !== appToken) continue;
     try {
       socket.send(JSON.stringify(envelope));
       delivered += 1;
     } catch {
       state.slackSockets.delete(socket);
+      state.slackSocketApp.delete(socket);
     }
   }
   if (delivered > 0) {
@@ -44,12 +52,22 @@ export function mountSlack(app: FastifyInstance): void {
     if (!auth.startsWith("Bearer xapp-")) {
       return { ok: false, error: "invalid_auth" };
     }
+    // Carry the app token into the ws URL so the socket can be tagged to its
+    // workspace (real Slack scopes the socket to the app implicitly).
+    const appToken = auth.slice("Bearer ".length);
     const host = req.headers.host ?? "localhost:4100";
-    return { ok: true, url: `ws://${host}/mock/slack.com/socket` };
+    return {
+      ok: true,
+      url: `ws://${host}/mock/slack.com/socket?app=${encodeURIComponent(appToken)}`,
+    };
   });
 
-  app.get("/mock/slack.com/socket", { websocket: true }, (socket) => {
+  app.get("/mock/slack.com/socket", { websocket: true }, (socket, req) => {
+    const appToken = new URL(req.url ?? "", "http://localhost").searchParams.get(
+      "app",
+    );
     state.slackSockets.add(socket);
+    if (appToken) state.slackSocketApp.set(socket, appToken);
     socket.send(
       JSON.stringify({ type: "hello", num_connections: state.slackSockets.size }),
     );
@@ -69,6 +87,7 @@ export function mountSlack(app: FastifyInstance): void {
     });
     socket.on("close", () => {
       state.slackSockets.delete(socket);
+      state.slackSocketApp.delete(socket);
     });
   });
 

@@ -203,6 +203,36 @@ test("enforcement: the member can use the agent but not configure it", async ({
     { data: { description: "hacked" } },
   );
   expect(res.status()).toBe(403);
+
+  // Org-level resource routes are admin-only: a plain member can't escalate
+  // by self-joining a team, nor write org secrets / register models.
+  const [team] = await dbQuery<{ id: string }>(
+    "SELECT id FROM teams WHERE is_everyone = false LIMIT 1",
+  );
+  const [me] = await dbQuery<{ id: string }>(
+    "SELECT id FROM users WHERE email = $1",
+    [memberEmail],
+  );
+  const selfJoin = await memberPage.request.post(
+    `/api/teams/${team!.id}/members`,
+    { data: { userId: me!.id } },
+  );
+  expect(selfJoin.status()).toBe(403);
+  const providerWrite = await memberPage.request.put("/api/models/providers", {
+    data: { provider: "anthropic", apiKey: "sk-should-be-rejected" },
+  });
+  expect(providerWrite.status()).toBe(403);
+  const modelCreate = await memberPage.request.post("/api/models/custom", {
+    data: {
+      displayName: "Rogue",
+      protocol: "openai",
+      modelId: "x",
+      apiBase: "http://attacker.example",
+      apiKey: "k",
+    },
+  });
+  expect(modelCreate.status()).toBe(403);
+
   await memberPage.close();
 });
 
@@ -224,5 +254,15 @@ test("drafts are invisible to non-editors", async ({ browser }) => {
   await expect(
     memberPage.locator(".dir-table tbody tr", { hasText: "Secret Draft" }),
   ).toHaveCount(0);
+
+  // Invisible means invisible through the eval routes too — a draft's
+  // criteria/suites/trust must not leak to a member who can't see the agent.
+  const [draft] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Secret Draft' AND status = 'draft'",
+  );
+  for (const path of ["criteria", "suites", "trust"]) {
+    const res = await memberPage.request.get(`/api/agents/${draft!.id}/${path}`);
+    expect(res.status(), `GET /api/agents/:id/${path} on a hidden draft`).toBe(404);
+  }
   await memberPage.close();
 });

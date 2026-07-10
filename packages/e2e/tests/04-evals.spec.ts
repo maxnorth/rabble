@@ -37,7 +37,19 @@ test("add a live criterion to the agent", async () => {
     .getByPlaceholder("What the judge should check (optional)")
     .fill("The reply addresses the user's question directly");
   await page.getByRole("button", { name: "+ Add", exact: true }).first().click();
-  await expect(page.locator(".row", { hasText: "Stays on topic" })).toBeVisible();
+  await expect(page.locator(".row .title", { hasText: "Stays on topic" })).toBeVisible();
+
+  // "Born measured": a starter template fills the form for review (not a silent
+  // add) — the manual path toward measuring an agent. Adding is the same
+  // (already-tested) path, so just prove the starter populates both fields; we
+  // don't persist a second criterion onto the shared agent here.
+  await page.getByRole("button", { name: "+ Cites its source" }).click();
+  await expect(
+    page.getByPlaceholder("Criterion, e.g. Cites a runbook link"),
+  ).toHaveValue("Cites its source");
+  await expect(
+    page.getByPlaceholder("What the judge should check (optional)"),
+  ).toHaveValue(/points to where/);
 });
 
 test("a session gets judged and shows eval chips", async () => {
@@ -71,6 +83,25 @@ test("a session gets judged and shows eval chips", async () => {
   await criteriaChip.click();
   await expect(page.locator(".drawer")).toContainText("Stays on topic");
   await expect(page.locator(".drawer")).toContainText("PASS");
+
+  // Exporting the transcript includes the eval verdicts — the record of how
+  // the session graded, not just what was said.
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("button[title='Export transcript (Markdown)']").click();
+  const download = await downloadPromise;
+  const { readFileSync } = await import("node:fs");
+  const exported = readFileSync((await download.path())!, "utf8");
+  expect(exported).toContain("## Evals · 1/1 criteria passed");
+  expect(exported).toMatch(/\*\*PASS\*\* Stays on topic/);
+
+  // The directory eval-score chip carries the trust denominator (how many
+  // results back the score) in its tooltip — 100% from one result reads
+  // very differently from 100% from fifty.
+  await page.locator("nav a[title='Agents']").click();
+  const scoreChip = page
+    .locator(".dir-table tbody tr", { hasText: "Eng On-Call" })
+    .locator(".chip", { hasText: "%" });
+  await expect(scoreChip).toHaveAttribute("title", /across \d+ eval result/);
 });
 
 test("suites: create, add a case, run it", async () => {
@@ -107,6 +138,15 @@ test("suites: create, add a case, run it", async () => {
   expect(results).toHaveLength(1);
   expect(results[0]!.passed).toBe(true);
   expect(results[0]!.output).toContain("Mock reply to:");
+
+  // One run shows no trajectory yet.
+  await expect(suiteRow.locator(".suite-trend")).toHaveCount(0);
+
+  // A second run builds the pass-rate trend — the regression signal.
+  await page.getByRole("button", { name: "Run suite" }).click();
+  await expect(suiteRow.locator(".suite-trend > div")).toHaveCount(2, {
+    timeout: 30_000,
+  });
 });
 
 test("suites: marking a suite as gating persists and shows the chip", async () => {
@@ -176,6 +216,11 @@ test("gating: a regressing change is blocked before it saves", async () => {
   await expect(page.locator(".error-text")).toContainText(
     'Blocked by gating suite "Smoke"',
     { timeout: 30_000 },
+  );
+  // The block spells out which case regressed and the judge's reasoning —
+  // enough to fix the change without hunting through the suite.
+  await expect(page.locator(".error-text")).toContainText(
+    "The reply ignores the deployment question.",
   );
 
   // The change was NOT saved, and the block is on the audit trail
@@ -350,6 +395,9 @@ test("sub-agents: link an agent and annotate the edge", async () => {
   await linkable.getByRole("button", { name: "Attach" }).click();
   const linked = page.locator(".row", { hasText: "claude-agent" });
   await expect(linked.locator(".chip", { hasText: "agent" })).toBeVisible();
+  // The callee's track record shows on the wiring — evidence for the edge.
+  // Claude Agent hasn't been judged yet, so it reads "no track record".
+  await expect(linked.locator(".chip", { hasText: "no track record" })).toBeVisible();
 
   await linked
     .getByPlaceholder("When is it called? e.g. Before any deploy action")

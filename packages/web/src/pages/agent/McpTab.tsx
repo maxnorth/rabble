@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api";
+import { count } from "../../lib/time";
 
 // ---------------------------------------------------------------------------
 // mcp
@@ -148,7 +149,7 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
                 <div className="grow">
                   <div className="title">{s.name}</div>
                   <div className="sub">
-                    {s.category} · {s.tools.length} tools
+                    {s.category} · {count(s.tools.length, "tool")}
                   </div>
                 </div>
                 <button className="btn" onClick={() => attach.mutate(s.id)}>

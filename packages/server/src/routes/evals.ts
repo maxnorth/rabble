@@ -20,7 +20,7 @@ import {
 } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { recordAudit } from "../audit.js";
-import { agentInOrg, hasRight, rightsForAllAgents } from "../rights.js";
+import { hasRight, rightsForAllAgents } from "../rights.js";
 import { chatModelFor } from "../models/chat.js";
 import { judgeText } from "../evals/judge.js";
 import { executeSuiteCases, recordSuiteRun } from "../evals/suiteRunner.js";
@@ -30,6 +30,30 @@ async function requireEdit(req: { user: unknown }, agentId: string) {
   return hasRight(rights.get(agentId) ?? null, "edit");
 }
 
+/**
+ * Read gate for an agent's eval data — the same visibility rule the agent
+ * itself uses (routes/agents.ts): the agent must be in the caller's org, and
+ * a DRAFT is visible only to someone with edit on it. Without this a member
+ * could read a hidden draft's criteria, frozen case inputs, rubrics, and
+ * trust through the eval routes, which check only org membership.
+ */
+async function canReadAgentEvals(
+  req: { user: { orgId: string } | null },
+  agentId: string,
+): Promise<boolean> {
+  if (!req.user) return false;
+  const [agent] = await db
+    .select({ status: agents.status, orgId: agents.orgId })
+    .from(agents)
+    .where(eq(agents.id, agentId))
+    .limit(1);
+  if (!agent || agent.orgId !== req.user.orgId) return false;
+  if (agent.status === "draft" && !(await requireEdit(req, agentId))) {
+    return false;
+  }
+  return true;
+}
+
 export async function evalRoutes(app: FastifyInstance) {
   app.addHook("preHandler", requireUser);
 
@@ -37,7 +61,7 @@ export async function evalRoutes(app: FastifyInstance) {
 
   app.get("/api/agents/:agentId/criteria", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
-    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+    if (!(await canReadAgentEvals(req, agentId))) {
       return reply.code(404).send({ error: "Agent not found" });
     }
     const rows = await db
@@ -125,7 +149,7 @@ export async function evalRoutes(app: FastifyInstance) {
 
   app.get("/api/agents/:agentId/suites", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
-    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+    if (!(await canReadAgentEvals(req, agentId))) {
       return reply.code(404).send({ error: "Agent not found" });
     }
     const rows = await db
@@ -140,36 +164,41 @@ export async function evalRoutes(app: FastifyInstance) {
         .select({ count: sql<number>`count(*)::int` })
         .from(evalCases)
         .where(eq(evalCases.suiteId, suite.id));
-      const [lastRun] = await db
-        .select()
+      // Last runs with their pass tallies, newest first — one grouped query
+      // instead of a per-run round trip. The history is the regression signal:
+      // is this suite's pass rate climbing or sliding over successive runs?
+      const runRows = await db
+        .select({
+          id: suiteRuns.id,
+          status: suiteRuns.status,
+          startedAt: suiteRuns.startedAt,
+          passed: sql<number>`count(*) FILTER (WHERE ${caseResults.passed})::int`,
+          total: sql<number>`count(${caseResults.id})::int`,
+        })
         .from(suiteRuns)
+        .leftJoin(caseResults, eq(caseResults.runId, suiteRuns.id))
         .where(eq(suiteRuns.suiteId, suite.id))
+        .groupBy(suiteRuns.id, suiteRuns.status, suiteRuns.startedAt)
         .orderBy(desc(suiteRuns.startedAt))
-        .limit(1);
-      let runSummary = null;
-      if (lastRun) {
-        const [tally] = await db
-          .select({
-            passed: sql<number>`count(*) FILTER (WHERE passed)::int`,
-            total: sql<number>`count(*)::int`,
-          })
-          .from(caseResults)
-          .where(eq(caseResults.runId, lastRun.id));
-        runSummary = {
-          id: lastRun.id,
-          status: lastRun.status,
-          passed: tally?.passed ?? 0,
-          total: tally?.total ?? 0,
-          startedAt: lastRun.startedAt.toISOString(),
-        };
-      }
+        .limit(10);
+      // Oldest → newest, so the UI can draw a left-to-right trend.
+      const runHistory = runRows
+        .map((r) => ({
+          id: r.id,
+          status: r.status,
+          passed: r.passed,
+          total: r.total,
+          startedAt: r.startedAt.toISOString(),
+        }))
+        .reverse();
       suites.push({
         id: suite.id,
         agentId: suite.agentId,
         name: suite.name,
         gating: suite.gating,
         caseCount: caseCount?.count ?? 0,
-        lastRun: runSummary,
+        lastRun: runHistory[runHistory.length - 1] ?? null,
+        runHistory,
         createdAt: suite.createdAt.toISOString(),
       });
     }
@@ -278,7 +307,7 @@ export async function evalRoutes(app: FastifyInstance) {
   // Trust panel: review queue + scope violations + judge disclosure.
   app.get("/api/agents/:agentId/trust", async (req, reply) => {
     const { agentId } = req.params as { agentId: string };
-    if (!(await agentInOrg(req.user!.orgId, agentId))) {
+    if (!(await canReadAgentEvals(req, agentId))) {
       return reply.code(404).send({ error: "Agent not found" });
     }
     const { scopeViolations } = await import("../db/schema.js");
@@ -383,8 +412,18 @@ export async function evalRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  app.get("/api/suites/:suiteId/cases", async (req) => {
+  app.get("/api/suites/:suiteId/cases", async (req, reply) => {
     const { suiteId } = req.params as { suiteId: string };
+    // Scope by the suite's agent: cases carry input/rubric, so a suite id from
+    // another org must not read them.
+    const [suite] = await db
+      .select({ agentId: evalSuites.agentId })
+      .from(evalSuites)
+      .where(eq(evalSuites.id, suiteId))
+      .limit(1);
+    if (!suite || !(await canReadAgentEvals(req, suite.agentId))) {
+      return reply.code(404).send({ error: "Suite not found" });
+    }
     const rows = await db
       .select()
       .from(evalCases)
@@ -512,7 +551,12 @@ export async function evalRoutes(app: FastifyInstance) {
 
     const outcomes = await executeSuiteCases(
       suiteId,
-      { name: agent.name, description: agent.description, instructions: agent.instructions },
+      {
+        name: agent.name,
+        description: agent.description,
+        instructions: agent.instructions,
+        tone: agent.tone,
+      },
       model,
     );
     const runId = await recordSuiteRun(suiteId, outcomes);

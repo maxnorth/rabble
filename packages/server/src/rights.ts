@@ -15,9 +15,29 @@ import { db } from "./db/client.js";
 import { agents, grants, teamMembers, teams } from "./db/schema.js";
 import type { AuthedUser } from "./auth.js";
 
-function maxRight(a: AccessRight | null, b: AccessRight): AccessRight {
+export function maxRight(a: AccessRight | null, b: AccessRight): AccessRight {
   if (!a) return b;
   return RIGHT_ORDER[b] > RIGHT_ORDER[a] ? b : a;
+}
+
+/**
+ * Every team whose grant reaches a member of `directTeamIds`: each of those
+ * teams plus all of its ancestors, since grants cascade down the hierarchy.
+ * Pure and cycle-safe (a malformed parent cycle terminates, never loops).
+ */
+export function collectTeamAncestors(
+  directTeamIds: string[],
+  parentOf: Map<string, string | null>,
+): string[] {
+  const covered = new Set<string>();
+  for (const teamId of directTeamIds) {
+    let cursor: string | null | undefined = teamId;
+    while (cursor && !covered.has(cursor)) {
+      covered.add(cursor);
+      cursor = parentOf.get(cursor);
+    }
+  }
+  return [...covered];
 }
 
 /**
@@ -40,16 +60,7 @@ export async function grantSubjectsFor(userId: string, orgId: string): Promise<{
     .from(teams)
     .where(eq(teams.orgId, orgId));
   const parentOf = new Map(allTeams.map((t) => [t.id, t.parentTeamId]));
-
-  const covered = new Set<string>();
-  for (const teamId of direct) {
-    let cursor: string | null | undefined = teamId;
-    while (cursor && !covered.has(cursor)) {
-      covered.add(cursor);
-      cursor = parentOf.get(cursor);
-    }
-  }
-  return { userIds: [userId], teamIds: [...covered] };
+  return { userIds: [userId], teamIds: collectTeamAncestors(direct, parentOf) };
 }
 
 /** Effective right for every agent in the org the user can see, in bulk. */

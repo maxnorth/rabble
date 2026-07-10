@@ -59,12 +59,40 @@ test("automations: Run now executes a governed session on the Automation surface
   await page.getByRole("button", { name: "+ Add automation" }).click();
   const row = page.locator(".row", { hasText: "Morning digest" });
   await expect(row).toBeVisible();
+  // The cron is rendered in plain language, not a bare "0 9 * * 1-5".
+  await expect(row).toContainText("at 9:00 UTC on weekdays");
+  // A new automation is disabled by default, so no next-run is projected,
+  // and the scheduler-off notice stays hidden (nothing is scheduled yet).
+  await expect(row).not.toContainText("next");
+  await expect(page.getByText("The platform scheduler")).toBeHidden();
+  // Enabling it surfaces the projected next run. Since e2e runs without a
+  // configured scheduler, the honest "won't fire on schedule yet" notice
+  // now appears.
+  await row.locator(".toggle").click();
+  await expect(row).toContainText("next");
+  await expect(page.getByText("The platform scheduler")).toBeVisible();
 
   await row.getByRole("button", { name: "Run now" }).click();
   await expect(row.getByRole("link", { name: "view session →" })).toBeVisible({
     timeout: 20_000,
   });
   await expect(row).toContainText("last ran");
+
+  // Editing an automation in place: retune the schedule and the plain-language
+  // summary updates without a delete-and-recreate. Once in edit mode the name
+  // lives in an input value, so drive the form with page-level locators.
+  await row.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("Automation schedule").fill("0 * * * *");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(row).toContainText("at :00 past every hour");
+  const [edited] = await dbQuery<{ schedule: string }>(
+    "SELECT schedule FROM automations WHERE name = 'Morning digest'",
+  );
+  expect(edited!.schedule).toBe("0 * * * *");
+  const editAudit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'automation.update'",
+  );
+  expect(editAudit).toHaveLength(1);
 
   const [session] = await dbQuery<{ id: string; surface: string }>(
     "SELECT id, surface FROM sessions WHERE surface LIKE 'Automation%'",
@@ -81,6 +109,14 @@ test("automations: Run now executes a governed session on the Automation surface
     "SELECT action FROM audit_events WHERE action = 'automation.run'",
   );
   expect(audit).toHaveLength(1);
+
+  // The automation records its creator — the identity a scheduled (Hatchet)
+  // run acts as, since a cron tick has no request user.
+  const [owner] = await dbQuery<{ email: string }>(
+    `SELECT u.email FROM automations a JOIN users u ON u.id = a.created_by
+     WHERE a.name = 'Morning digest'`,
+  );
+  expect(owner!.email).toBe("alex@acme.com");
 
   // The run's session opens like any other, on its surface
   await row.getByRole("link", { name: "view session →" }).click();
@@ -130,6 +166,17 @@ test("audit log viewer shows the accumulated control-plane history", async () =>
   await expect(page.locator(".row", { hasText: "Registered MCP server" })).toBeVisible();
   await expect(page.locator(".row", { hasText: "Created API key" })).toBeVisible();
 
+  // Rows with metadata expand to reveal the detail behind the summary — the
+  // gating block from 04 shows which case regressed and the judge's reasoning.
+  await page.locator("select").selectOption("eval");
+  const gateRow = page.locator(".row", { hasText: "blocked a change" }).first();
+  await expect(gateRow).toBeVisible();
+  await gateRow.click();
+  await expect(
+    page.getByText("The reply ignores the deployment question."),
+  ).toBeVisible();
+  await page.locator("select").selectOption("");
+
   // Filter by action prefix
   await page.locator("select").selectOption("grant");
   await expect(page.locator(".row", { hasText: "Granted" }).first()).toBeVisible();
@@ -149,6 +196,12 @@ test("stats dashboards reflect real usage", async () => {
   await expect(page.locator(".chart-card", { hasText: "Sessions per agent" })).toContainText(
     "Eng On-Call",
   );
+
+  // Sessions-per-day is a dense, zero-filled timeline — most days in the
+  // window have no sessions, so a gap bar (title "…: 0") must be present.
+  // (Without zero-fill the chart collapses to one equal bar per active day.)
+  const perDayCard = page.locator(".chart-card", { hasText: "Sessions per day" });
+  await expect(perDayCard.locator('[title$=": 0"]').first()).toBeAttached();
 
   // Skill use tab: auth-type split from the MCP calls in 03-tools
   await page.locator(".sidebar-item", { hasText: "Skill use" }).click();
@@ -196,6 +249,22 @@ test("stats dashboards reflect real usage", async () => {
   await expect(
     page.locator(".chart-card", { hasText: "Token use by model" }),
   ).toContainText("Mock Model");
+
+  // Spend is priced at use time: each agent message snapshots its model's rate
+  // so deleting or re-pricing the model later can't rewrite history. Every
+  // priced agent message carries a snapshot equal to its model's live rate.
+  const snapshotMismatch = await dbQuery<{ n: string }>(
+    `SELECT count(*) AS n FROM messages m
+     JOIN models mo ON mo.id = m.model_id
+     WHERE m.role = 'agent' AND mo.price_input_per_mtok IS NOT NULL
+       AND (m.price_input_per_mtok IS DISTINCT FROM mo.price_input_per_mtok
+         OR m.price_output_per_mtok IS DISTINCT FROM mo.price_output_per_mtok)`,
+  );
+  expect(Number(snapshotMismatch[0]!.n)).toBe(0);
+  const snapshotCount = await dbQuery<{ n: string }>(
+    "SELECT count(*) AS n FROM messages WHERE role = 'agent' AND price_input_per_mtok IS NOT NULL",
+  );
+  expect(Number(snapshotCount[0]!.n)).toBeGreaterThan(0);
   await expect(
     page.locator(".chart-card", { hasText: "Turns per session" }).locator(".bar-row").first(),
   ).toBeVisible();
@@ -246,6 +315,12 @@ test("profile: connected account and approval posture persist", async () => {
     "SELECT preferences FROM users WHERE email = 'alex@acme.com'",
   );
   expect(prefs[0]!.preferences.approvalPosture).toBe("trust");
+
+  // Approval posture is a governance control, so the change is on the record.
+  const postureAudit = await dbQuery<{ summary: string }>(
+    "SELECT summary FROM audit_events WHERE action = 'profile.posture'",
+  );
+  expect(postureAudit.some((a) => a.summary.includes("trust"))).toBe(true);
 });
 
 test("preferences: collapsed tool calls hide chips until expanded", async () => {
@@ -546,6 +621,10 @@ test("audit log exports as CSV", async () => {
   expect(res.headers()["content-type"]).toContain("text/csv");
   const body = await res.text();
   expect(body).toContain("agent.surface.add");
+  // The export carries the metadata column so a records copy is as complete
+  // as the viewer — the gating block's failing case travels with it.
+  expect(body.split("\n")[0]).toContain("metadata");
+  expect(body).toContain("ignores the deployment question");
 });
 
 test("server log contains no errors across the whole suite", async () => {

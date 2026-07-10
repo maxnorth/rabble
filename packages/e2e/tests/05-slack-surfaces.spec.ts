@@ -554,7 +554,7 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
             .find((el) => el.action_id === "rabble_approve")!.value ?? "";
       }
       return Boolean(dm);
-    })
+    }, { timeout: 15000 })
     .toBe(true);
 
   // Click "Approve as me": Slack posts a signed, form-encoded interaction

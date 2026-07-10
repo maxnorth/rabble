@@ -78,6 +78,20 @@ describe("gateUserAuth", () => {
     }
   });
 
+  it("trust posture does not auto-approve where the user can't see it", async () => {
+    // A delegated sub-agent / automation turn is non-interactive with no
+    // out-of-band prompt. Even under trust, the write must be refused, not
+    // run silently as the user in a turn they never saw.
+    const result = await gateUserAuth(
+      ctx({ approvalPosture: "trust", interactive: false, approvalPrompt: undefined }),
+      call,
+    );
+    expect(result.outcome).toBe("refused");
+    if (result.outcome === "refused") {
+      expect(result.approval.status).toBe("denied");
+    }
+  });
+
   it("a denial resolves as refused with the decider's name", async () => {
     const emitted: Array<{ approvalId: string }> = [];
     const pending = gateUserAuth(ctx({ emit: (e) => emitted.push(e) }), call);

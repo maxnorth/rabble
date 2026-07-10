@@ -10,6 +10,10 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       # Optional: default key for built-in Claude models
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Optional: enable recurring background work (retention sweeps, and —
+      # once wired — automation schedules) via the Hatchet engine below.
+      # Unset ⇒ scheduler stays off and retention still runs once at boot.
+      HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,6 +48,21 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # Recurring scheduler engine (opt-in). Start with:
+  #   docker compose --profile hatchet up
+  # then generate a client token from the Hatchet dashboard (:8888) and set
+  # HATCHET_CLIENT_TOKEN for the app. Left in its own profile so the default
+  # `docker compose up` stays a lean app + Postgres.
+  hatchet:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:latest
+    profiles: ["hatchet"]
+    ports:
+      - "8888:8888" # dashboard + API
+      - "7077:7077" # gRPC engine
+    environment:
+      RABBLE_NOTE: "Configure per Hatchet docs; hatchet-lite bundles its own Postgres + RabbitMQ."
+    restart: unless-stopped
 
 volumes:
   pgdata:

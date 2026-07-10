@@ -324,6 +324,44 @@ function SessionLanding() {
           {error}
         </p>
       )}
+      {usable.length > 0 && (
+        <div className="agent-quick">
+          <div className="agent-quick-head">
+            <span>Your agents</span>
+            <Link to="/agents">view all →</Link>
+          </div>
+          <div className="agent-quick-grid">
+            {[...usable]
+              .sort((a, b) => (b.lastUsedAt ?? "").localeCompare(a.lastUsedAt ?? ""))
+              .slice(0, 4)
+              .map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  className={`agent-quick-card${target?.id === a.id ? " selected" : ""}`}
+                  title={`Start a session with ${a.name}`}
+                  onClick={() => setTarget(target?.id === a.id ? null : a)}
+                >
+                  <span
+                    className="agent-quick-glyph"
+                    style={{ color: AGENT_COLORS[a.color] ?? "var(--accent-text)" }}
+                  >
+                    {a.icon || a.name[0]}
+                  </span>
+                  <span className="agent-quick-name">{a.name}</span>
+                  <span className="agent-quick-desc">{a.description || " "}</span>
+                  {a.evalScore !== null && (
+                    <span
+                      className={`chip ${a.evalScore >= 90 ? "green" : a.evalScore >= 70 ? "blue" : "amber"}`}
+                    >
+                      {a.evalScore}% eval
+                    </span>
+                  )}
+                </button>
+              ))}
+          </div>
+        </div>
+      )}
       {(() => {
         const builder = (agents.data?.agents ?? []).find(
           (a) => a.builtin === "builder" && a.myRight,

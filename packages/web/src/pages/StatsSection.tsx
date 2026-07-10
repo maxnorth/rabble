@@ -118,9 +118,7 @@ function Kpi({
       <div className="value">{value}</div>
       <div className="label">
         {label}
-        {delta && (
-          <span style={{ marginLeft: 6, color: "var(--text-muted)" }}>{delta}</span>
-        )}
+        {delta && <span className="delta">{delta}</span>}
       </div>
     </div>
   );
@@ -135,7 +133,8 @@ function fmtTokens(n: number): string {
 function deltaVsPrior(current: number, prior: number): string | undefined {
   if (prior === 0) return undefined;
   const pct = Math.round((100 * (current - prior)) / prior);
-  return pct === 0 ? "· flat vs prior" : `· ${pct > 0 ? "↑" : "↓"} ${Math.abs(pct)}% vs prior`;
+  // Rendered as a chip, so no separator prefix needed.
+  return pct === 0 ? "flat vs prior" : `${pct > 0 ? "↑" : "↓"} ${Math.abs(pct)}% vs prior`;
 }
 const sessionsDelta = deltaVsPrior;
 

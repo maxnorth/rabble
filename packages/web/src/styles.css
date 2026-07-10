@@ -123,6 +123,7 @@ input:focus,
 textarea:focus,
 select:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
 }
 
 a {
@@ -132,6 +133,53 @@ a {
 
 ::placeholder {
   color: var(--text-muted);
+}
+
+/* ---- Interaction polish ---- */
+
+/* Gentle state transitions on everything interactive; instant for anyone
+   who asks for reduced motion. */
+.btn,
+.rail-btn,
+.sidebar-item,
+.chip,
+.tabs button,
+.segmented button,
+.row,
+.dir-table tbody tr,
+input,
+textarea,
+select {
+  transition:
+    background-color 0.13s ease,
+    border-color 0.13s ease,
+    color 0.13s ease,
+    box-shadow 0.13s ease;
+}
+
+.btn:active {
+  transform: translateY(0.5px);
+}
+
+/* Keyboard focus is always visible (mouse clicks stay clean). */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  outline-offset: 1px;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none; /* the accent border + ring above already marks focus */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
 }
 
 /* ---- Layout shell ---- */
@@ -588,6 +636,93 @@ a {
 }
 
 /* ---- Sessions ---- */
+
+/* Agent quick-pick on the landing: the org's agents, with their trust
+   signal, one click from a session. Selecting a card targets the composer. */
+.agent-quick {
+  width: 100%;
+  max-width: 680px;
+  margin-top: 26px;
+}
+
+.agent-quick-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-label);
+}
+
+.agent-quick-head a {
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  font-size: 12px;
+}
+
+.agent-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.agent-quick-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  padding: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  transition: border-color 0.13s ease, box-shadow 0.13s ease, background-color 0.13s ease;
+}
+
+.agent-quick-card:hover {
+  border-color: var(--border-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.agent-quick-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+
+.agent-quick-glyph {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  background: var(--surface-tool);
+  border: 1px solid var(--border-1);
+  margin-bottom: 2px;
+}
+
+.agent-quick-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.agent-quick-desc {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  min-height: 2.8em;
+}
+
 
 .session-landing {
   flex: 1;
@@ -1267,6 +1402,24 @@ a {
   border: 1px solid var(--border-1);
   border-radius: 10px;
   padding: 14px;
+  transition: border-color 0.13s ease, box-shadow 0.13s ease;
+}
+
+.kpi:hover {
+  border-color: var(--border-2);
+  box-shadow: var(--shadow-pop);
+}
+
+.kpi .delta {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--border-1);
+  background: var(--surface-group);
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 
 .kpi .value {

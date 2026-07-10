@@ -232,6 +232,82 @@ export async function modelRoutes(app: FastifyInstance) {
     return { model: serializeModel(row!) };
   });
 
+  // Edit a model in place. Custom models: name, endpoint, model id, prices,
+  // and a tri-state API key (omit = keep, string = replace). Built-ins:
+  // only the price overrides (identity comes from the catalog). Agents
+  // reference models by id, so nothing re-wires.
+  app.patch("/api/models/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      displayName?: string;
+      baseUrl?: string | null;
+      modelId?: string;
+      apiKey?: string;
+      priceInputPerMtok?: number | null;
+      priceOutputPerMtok?: number | null;
+    };
+    const [model] = await db
+      .select()
+      .from(models)
+      .where(and(eq(models.id, id), eq(models.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!model) return reply.code(404).send({ error: "Model not found" });
+
+    const updates: Partial<typeof models.$inferInsert> = {};
+    if (body.priceInputPerMtok !== undefined) {
+      updates.priceInputPerMtok =
+        body.priceInputPerMtok != null ? String(body.priceInputPerMtok) : null;
+    }
+    if (body.priceOutputPerMtok !== undefined) {
+      updates.priceOutputPerMtok =
+        body.priceOutputPerMtok != null ? String(body.priceOutputPerMtok) : null;
+    }
+    if (model.kind === "custom") {
+      if (body.displayName !== undefined) {
+        const trimmed = body.displayName.trim();
+        if (!trimmed) return reply.code(400).send({ error: "A name is required" });
+        updates.displayName = trimmed;
+      }
+      if (body.baseUrl !== undefined) updates.baseUrl = body.baseUrl;
+      if (body.modelId !== undefined && body.modelId.trim()) {
+        updates.modelId = body.modelId.trim();
+      }
+      if (body.apiKey !== undefined && body.apiKey !== "") {
+        updates.encryptedKey = encryptSecret(body.apiKey);
+      }
+    } else if (
+      body.displayName !== undefined ||
+      body.baseUrl !== undefined ||
+      body.modelId !== undefined ||
+      body.apiKey !== undefined
+    ) {
+      return reply
+        .code(400)
+        .send({ error: "Built-in models only allow price overrides" });
+    }
+    if (Object.keys(updates).length === 0) {
+      return reply.code(400).send({ error: "Nothing to update" });
+    }
+
+    const [row] = await db
+      .update(models)
+      .set(updates)
+      .where(eq(models.id, id))
+      .returning();
+    const changed = Object.keys(updates).map((k) =>
+      k === "encryptedKey" ? "apiKey" : k,
+    );
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "model.update",
+      targetType: "model",
+      targetId: id,
+      summary: `Updated ${changed.join(", ")} on the model "${row!.displayName}"`,
+    });
+    return { model: serializeModel(row!) };
+  });
+
   app.delete("/api/models/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const deleted = await db

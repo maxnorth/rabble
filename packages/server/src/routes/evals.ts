@@ -130,6 +130,47 @@ export async function evalRoutes(app: FastifyInstance) {
     return { criterion: row };
   });
 
+  // Criteria evolve with the job — edit the name/description in place.
+  // Past results keep pointing at the same criterion id, so the track
+  // record survives a wording cleanup (deleting + re-adding would zero it).
+  app.patch("/api/criteria/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as { name?: string; description?: string };
+    const [criterion] = await db
+      .select()
+      .from(evalCriteria)
+      .where(eq(evalCriteria.id, id))
+      .limit(1);
+    if (!criterion) return reply.code(404).send({ error: "Criterion not found" });
+    if (!(await requireEdit(req, criterion.agentId))) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    const updates: Partial<{ name: string; description: string }> = {};
+    if (body.name !== undefined) {
+      const trimmed = body.name.trim();
+      if (!trimmed) return reply.code(400).send({ error: "A name is required" });
+      updates.name = trimmed;
+    }
+    if (body.description !== undefined) updates.description = body.description;
+    if (Object.keys(updates).length === 0) {
+      return reply.code(400).send({ error: "Nothing to update" });
+    }
+    const [row] = await db
+      .update(evalCriteria)
+      .set(updates)
+      .where(eq(evalCriteria.id, id))
+      .returning();
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "eval.criterion.update",
+      targetType: "agent",
+      targetId: criterion.agentId,
+      summary: `Edited eval criterion "${row!.name}"`,
+    });
+    return { criterion: row };
+  });
+
   app.delete("/api/criteria/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const [criterion] = await db

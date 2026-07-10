@@ -66,6 +66,36 @@ export async function domainRoutes(app: FastifyInstance) {
     return { domain: serializeDomain(row!, 0) };
   });
 
+  // Rename in place — the slug stays stable (grants and membership key on ids).
+  app.patch("/api/domains/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { name } = (req.body ?? {}) as { name?: string };
+    const trimmed = (name ?? "").trim();
+    if (!trimmed) return reply.code(400).send({ error: "A name is required" });
+    const [domain] = await db
+      .select()
+      .from(domains)
+      .where(and(eq(domains.id, id), eq(domains.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!domain) return reply.code(404).send({ error: "Domain not found" });
+    if (trimmed !== domain.name) {
+      await db.update(domains).set({ name: trimmed }).where(eq(domains.id, id));
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "domain.update",
+        targetType: "domain",
+        targetId: id,
+        summary: `Renamed domain "${domain.name}" to "${trimmed}"`,
+      });
+    }
+    const [agentCount] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(agents)
+      .where(eq(agents.domainId, id));
+    return { domain: serializeDomain({ ...domain, name: trimmed }, agentCount?.n ?? 0) };
+  });
+
   app.delete("/api/domains/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const [domain] = await db

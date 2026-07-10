@@ -3,6 +3,7 @@ import { useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
 import { count } from "../lib/time";
+import { EditableTitle } from "../components/EditableTitle";
 
 export function TeamsSection() {
   const { teamId } = useParams();
@@ -263,7 +264,17 @@ function TeamDetail({ teamId }: { teamId: string }) {
 
   return (
     <div className="content-col">
-      <h1 className="page-title">{team.name}</h1>
+      <h1 className="page-title">
+        <EditableTitle
+          value={team.name}
+          canEdit={!team.isEveryone}
+          onSave={async (name) => {
+            await api.updateTeam(teamId, { name });
+            refresh();
+            void queryClient.invalidateQueries({ queryKey: ["teams"] });
+          }}
+        />
+      </h1>
       <p className="page-subtitle">
         {team.isEveryone
           ? "The pinned org-wide team. Every member of the org belongs here automatically."

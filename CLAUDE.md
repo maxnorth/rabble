@@ -51,6 +51,12 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   domain grants apply to member agents. Enforce via `rightsForAllAgents` /
   `hasRight`; never invent an "owner" concept.
 - Every control-plane mutation calls `recordAudit(...)`.
+- No one-way doors: every entity a user can create, they can edit in
+  place — teams/domains (rename, `EditableTitle` pencil), MCP servers
+  (PATCH re-verifies the URL before saving), eval criteria (edit keeps the
+  criterion id so its track record survives), custom models, connections.
+  Slugs stay stable across renames (references key on ids). All edits
+  audited (`*.update`).
 - Secrets (API keys, tokens) are AES-GCM encrypted via `crypto.ts`; never
   store or log plaintext, never return them from the API.
 - Session SSE contract in core (`streamEventSchema`): user-message, delta,

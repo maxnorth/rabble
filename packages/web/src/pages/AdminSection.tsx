@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, NavLink, useParams } from "react-router-dom";
 import { api } from "../api";
+import { EditableTitle } from "../components/EditableTitle";
 import { GrantEditor } from "./AgentsSection";
 import { relativeTime, count } from "../lib/time";
 
@@ -51,6 +52,126 @@ export function AdminSection() {
         {page === "settings" && <SettingsPage />}
       </main>
     </>
+  );
+}
+
+function EditModelModal({
+  model,
+  onClose,
+  onDone,
+}: {
+  model: {
+    id: string;
+    displayName: string;
+    modelId: string;
+    baseUrl: string | null;
+    priceInputPerMtok: number | null;
+    priceOutputPerMtok: number | null;
+  };
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [form, setForm] = useState({
+    displayName: model.displayName,
+    baseUrl: model.baseUrl ?? "",
+    modelId: model.modelId,
+    apiKey: "",
+    priceIn: model.priceInputPerMtok != null ? String(model.priceInputPerMtok) : "",
+    priceOut: model.priceOutputPerMtok != null ? String(model.priceOutputPerMtok) : "",
+  });
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateModel(model.id, {
+        displayName: form.displayName,
+        baseUrl: form.baseUrl.trim() || null,
+        modelId: form.modelId,
+        // Blank keeps the stored key.
+        ...(form.apiKey ? { apiKey: form.apiKey } : {}),
+        priceInputPerMtok: form.priceIn ? Number(form.priceIn) : null,
+        priceOutputPerMtok: form.priceOut ? Number(form.priceOut) : null,
+      }),
+    onSuccess: () => {
+      onDone();
+      onClose();
+    },
+  });
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Edit {model.displayName}</h2>
+        <p className="page-subtitle">
+          Agents reference this model by id, so nothing re-wires when you
+          change the endpoint or pricing.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save.mutate();
+          }}
+        >
+          <div className="field">
+            <label>Display name</label>
+            <input
+              required
+              value={form.displayName}
+              onChange={(e) => setForm({ ...form, displayName: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Base URL</label>
+            <input
+              className="mono"
+              value={form.baseUrl}
+              onChange={(e) => setForm({ ...form, baseUrl: e.target.value })}
+              placeholder="https://llm.internal.acme.dev/v1"
+            />
+          </div>
+          <div className="field">
+            <label>Model id</label>
+            <input
+              required
+              className="mono"
+              value={form.modelId}
+              onChange={(e) => setForm({ ...form, modelId: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>API key (set — leave blank to keep)</label>
+            <input
+              type="password"
+              value={form.apiKey}
+              onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            <div className="field" style={{ flex: 1 }}>
+              <label>$ / M input tokens</label>
+              <input
+                value={form.priceIn}
+                onChange={(e) => setForm({ ...form, priceIn: e.target.value })}
+              />
+            </div>
+            <div className="field" style={{ flex: 1 }}>
+              <label>$ / M output tokens</label>
+              <input
+                value={form.priceOut}
+                onChange={(e) => setForm({ ...form, priceOut: e.target.value })}
+              />
+            </div>
+          </div>
+          {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={save.isPending}>
+              Save changes
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }
 
@@ -873,6 +994,7 @@ function McpServersPage() {
   const servers = useQuery({ queryKey: ["mcp-servers"], queryFn: api.listMcpServers });
   const [showAdd, setShowAdd] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
+  const [editingServer, setEditingServer] = useState(false);
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteMcpServer(id),
@@ -894,9 +1016,20 @@ function McpServersPage() {
           </button>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
             <div style={{ flex: 1 }}>
-              <h1 className="page-title">{selected.name}</h1>
+              <h1 className="page-title">
+                <EditableTitle
+                  value={selected.name}
+                  onSave={async (name) => {
+                    await api.updateMcpServer(selected.id, { name });
+                    void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+                  }}
+                />
+              </h1>
               <p className="page-subtitle mono">{selected.url}</p>
             </div>
+            <button className="btn" onClick={() => setEditingServer(true)}>
+              Edit
+            </button>
             <button
               className="btn"
               disabled={refresh.isPending}
@@ -905,6 +1038,12 @@ function McpServersPage() {
               {refresh.isPending ? "Testing…" : "Test connection"}
             </button>
           </div>
+          {editingServer && (
+            <EditMcpServerModal
+              server={selected}
+              onClose={() => setEditingServer(false)}
+            />
+          )}
           {refresh.isError && (
             <p className="error-text">{(refresh.error as Error).message}</p>
           )}
@@ -1101,6 +1240,107 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+function EditMcpServerModal({
+  server,
+  onClose,
+}: {
+  server: { id: string; name: string; url: string; category: string; hasToken: boolean };
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    url: server.url,
+    category: server.category,
+    token: "",
+    clearToken: false,
+  });
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateMcpServer(server.id, {
+        url: form.url !== server.url ? form.url : undefined,
+        category: form.category !== server.category ? form.category : undefined,
+        // Tri-state: blank field keeps the current token unless cleared.
+        token: form.clearToken ? null : form.token ? form.token : undefined,
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+      onClose();
+    },
+  });
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h2>Edit {server.name}</h2>
+        <p className="page-subtitle">
+          Changing the URL or token re-discovers the tool list against the
+          new endpoint before saving — agents keep their attachments.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            save.mutate();
+          }}
+        >
+          <div className="field">
+            <label>URL</label>
+            <input
+              required
+              className="mono"
+              value={form.url}
+              onChange={(e) => setForm({ ...form, url: e.target.value })}
+            />
+          </div>
+          <div className="field">
+            <label>Category</label>
+            <select
+              value={form.category}
+              onChange={(e) => setForm({ ...form, category: e.target.value })}
+            >
+              {["Code", "Project", "Comms", "Ops", "Internal", "Tools"].map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>
+              Bearer token{" "}
+              {server.hasToken ? "(set — leave blank to keep)" : "(none set)"}
+            </label>
+            <input
+              type="password"
+              disabled={form.clearToken}
+              value={form.token}
+              onChange={(e) => setForm({ ...form, token: e.target.value })}
+            />
+            {server.hasToken && (
+              <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={form.clearToken}
+                  onChange={(e) =>
+                    setForm({ ...form, clearToken: e.target.checked, token: "" })
+                  }
+                />
+                Clear the stored token
+              </label>
+            )}
+          </div>
+          {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button className="btn primary" disabled={save.isPending}>
+              {save.isPending ? "Verifying…" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Models (unchanged behavior from the first slice)
 // ---------------------------------------------------------------------------
@@ -1111,6 +1351,7 @@ function ModelsPage() {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: api.modelCatalog });
   const providers = useQuery({ queryKey: ["providers"], queryFn: api.providerStatus });
   const [showCustom, setShowCustom] = useState(false);
+  const [editModel, setEditModel] = useState<string | null>(null);
   const [keyDraft, setKeyDraft] = useState<Record<string, string>>({});
   const [openModel, setOpenModel] = useState<string | null>(null);
 
@@ -1246,6 +1487,17 @@ function ModelsPage() {
               )}
               {!m.canUse && <span className="chip amber">restricted</span>}
               <span className={`chip ${m.kind === "built-in" ? "blue" : "purple"}`}>{m.kind}</span>
+              {m.kind === "custom" && (
+                <button
+                  className="btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditModel(m.id);
+                  }}
+                >
+                  Edit
+                </button>
+              )}
               <button
                 className="btn danger"
                 disabled={removeModel.isPending}
@@ -1272,6 +1524,17 @@ function ModelsPage() {
       {showCustom && (
         <CustomModelModal onClose={() => setShowCustom(false)} onDone={refresh} />
       )}
+      {editModel &&
+        (() => {
+          const m = registered.find((r) => r.id === editModel);
+          return m ? (
+            <EditModelModal
+              model={m}
+              onClose={() => setEditModel(null)}
+              onDone={refresh}
+            />
+          ) : null;
+        })()}
     </div>
   );
 }

@@ -266,3 +266,53 @@ test("drafts are invisible to non-editors", async ({ browser }) => {
   }
   await memberPage.close();
 });
+
+test("teams and domains are two-way doors: rename in place, audited", async () => {
+  // A throwaway team, renamed through the title's pencil affordance.
+  await page.locator("nav a[title='Teams']").click();
+  await page.locator("aside").getByRole("button", { name: "+ New team" }).click();
+  await page.getByPlaceholder("Platform").fill("Growth");
+  await page.getByRole("button", { name: "Create team" }).click();
+  await page.locator(".sidebar-item", { hasText: "Growth" }).click();
+  await expect(page.locator(".editable-title", { hasText: "Growth" })).toBeVisible();
+
+  await page.locator(".editable-title .rename-btn").click();
+  const input = page.locator(".editable-title input");
+  await input.fill("Growth & Marketing");
+  await page.locator(".editable-title button", { hasText: "Save" }).click();
+  await expect(
+    page.locator(".editable-title", { hasText: "Growth & Marketing" }),
+  ).toBeVisible();
+
+  const [team] = await dbQuery<{ name: string; slug: string }>(
+    "SELECT name, slug FROM teams WHERE slug = 'growth'",
+  );
+  expect(team!.name).toBe("Growth & Marketing"); // slug stays stable
+  const teamAudit = await dbQuery<{ summary: string }>(
+    "SELECT summary FROM audit_events WHERE action = 'team.update'",
+  );
+  expect(teamAudit.some((a) => a.summary.includes("Growth & Marketing"))).toBe(true);
+  page.once("dialog", (d) => void d.accept());
+  await page.getByRole("button", { name: "Delete team" }).click();
+  await expect(page.locator(".sidebar-item", { hasText: "Growth" })).toHaveCount(0);
+
+  // Domains rename over the same shape of route — exercised at the API
+  // level to keep this test self-contained.
+  const created = (await (
+    await page.request.post("/api/domains", { data: { name: "Field Ops" } })
+  ).json()) as { domain: { id: string } };
+  const renamed = await page.request.patch(`/api/domains/${created.domain.id}`, {
+    data: { name: "Field Operations" },
+  });
+  expect(renamed.ok()).toBe(true);
+  const [domain] = await dbQuery<{ name: string }>(
+    "SELECT name FROM domains WHERE id = $1",
+    [created.domain.id],
+  );
+  expect(domain!.name).toBe("Field Operations");
+  const domainAudit = await dbQuery<{ summary: string }>(
+    "SELECT summary FROM audit_events WHERE action = 'domain.update'",
+  );
+  expect(domainAudit.some((a) => a.summary.includes("Field Operations"))).toBe(true);
+  await page.request.delete(`/api/domains/${created.domain.id}`);
+});

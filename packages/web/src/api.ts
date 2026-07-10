@@ -201,6 +201,17 @@ export const api = {
   createCustomModel: (body: CreateCustomModelRequest) =>
     post<{ model: Model }>("/api/models/custom", body),
   deleteModel: (id: string) => del<{ ok: true }>(`/api/models/${id}`),
+  updateModel: (
+    id: string,
+    body: Partial<{
+      displayName: string;
+      baseUrl: string | null;
+      modelId: string;
+      apiKey: string;
+      priceInputPerMtok: number | null;
+      priceOutputPerMtok: number | null;
+    }>,
+  ) => patch<{ model: Model }>(`/api/models/${id}`, body),
 
   // sessions
   listSessions: () => get<{ sessions: SessionWithAgent[] }>("/api/sessions"),
@@ -244,6 +255,8 @@ export const api = {
   removeTeamMember: (teamId: string, userId: string) =>
     del<{ ok: true }>(`/api/teams/${teamId}/members/${userId}`),
   deleteTeam: (id: string) => del<{ ok: true }>(`/api/teams/${id}`),
+  updateTeam: (id: string, body: { name: string }) =>
+    patch<{ team: Team }>(`/api/teams/${id}`, body),
   listUsers: () =>
     get<{
       users: Array<{
@@ -263,6 +276,8 @@ export const api = {
   listDomains: () => get<{ domains: Domain[] }>("/api/domains"),
   createDomain: (name: string) => post<{ domain: Domain }>("/api/domains", { name }),
   deleteDomain: (id: string) => del<{ ok: true }>(`/api/domains/${id}`),
+  updateDomain: (id: string, body: { name: string }) =>
+    patch<{ domain: Domain }>(`/api/domains/${id}`, body),
 
   // grants
   listGrants: (targetType: "agent" | "domain" | "model", targetId: string) =>
@@ -286,6 +301,10 @@ export const api = {
   refreshMcpServer: (id: string) =>
     post<{ server: McpServer }>(`/api/mcp-servers/${id}/refresh`),
   deleteMcpServer: (id: string) => del<{ ok: true }>(`/api/mcp-servers/${id}`),
+  updateMcpServer: (
+    id: string,
+    body: Partial<{ name: string; url: string; category: string; token: string | null }>,
+  ) => patch<{ server: McpServer }>(`/api/mcp-servers/${id}`, body),
 
   // evals
   listCriteria: (agentId: string) =>
@@ -293,6 +312,8 @@ export const api = {
   createCriterion: (agentId: string, body: { name: string; description: string }) =>
     post<{ criterion: unknown }>(`/api/agents/${agentId}/criteria`, body),
   deleteCriterion: (id: string) => del<{ ok: true }>(`/api/criteria/${id}`),
+  updateCriterion: (id: string, body: Partial<{ name: string; description: string }>) =>
+    patch<{ criterion: EvalCriterion }>(`/api/criteria/${id}`, body),
   listSuites: (agentId: string) =>
     get<{ suites: EvalSuite[] }>(`/api/agents/${agentId}/suites`),
   disputeEvalResult: (resultId: string) =>

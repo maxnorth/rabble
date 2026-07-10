@@ -380,43 +380,75 @@ select:focus-visible {
   cursor: default;
 }
 
+/* Chips are soft tinted pills — quiet metadata, not bordered mono boxes.
+   The tint comes from the same accent token as the text, so both themes
+   stay correct by construction. */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border-1);
-  background: var(--surface-group);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--text-dim) 11%, transparent);
   color: var(--text-dim);
 }
 
 .chip.green {
   color: var(--green);
-  border-color: color-mix(in srgb, var(--green) 30%, transparent);
+  background: color-mix(in srgb, var(--green) 13%, transparent);
 }
 
 .chip.amber {
   color: var(--amber);
-  border-color: color-mix(in srgb, var(--amber) 30%, transparent);
+  background: color-mix(in srgb, var(--amber) 13%, transparent);
 }
 
 .chip.blue {
   color: var(--blue);
-  border-color: color-mix(in srgb, var(--blue) 30%, transparent);
+  background: color-mix(in srgb, var(--blue) 13%, transparent);
 }
 
 .chip.purple {
   color: var(--purple);
-  border-color: color-mix(in srgb, var(--purple) 30%, transparent);
+  background: color-mix(in srgb, var(--purple) 13%, transparent);
 }
 
 .card {
   background: var(--surface-1);
   border: 1px solid var(--border-1);
   border-radius: 10px;
+}
+
+/* Inline rename: the pencil appears on hover so titles read as editable. */
+.editable-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.editable-title .rename-btn {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.13s ease, background-color 0.13s ease;
+}
+
+.editable-title:hover .rename-btn,
+.rename-btn:focus-visible {
+  opacity: 1;
+}
+
+.rename-btn:hover {
+  background: var(--hover-2);
+  color: var(--text-1);
 }
 
 /* An empty collection reads as an open slot, not a broken table. */

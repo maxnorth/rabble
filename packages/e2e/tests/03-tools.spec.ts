@@ -548,3 +548,27 @@ test("audit trail covers the tool governance actions", async () => {
     "mcp.register",
   ]);
 });
+
+test("mcp servers are editable in place — category changes, tools survive", async () => {
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await page.locator(".row", { hasText: "GitHub" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+
+  // Same URL (re-verified against the emulator on save), new category.
+  await page.locator(".modal select").selectOption("Ops");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect(page.locator(".chip", { hasText: "Ops" })).toBeVisible();
+
+  const [server] = await dbQuery<{ category: string; tools: unknown[] }>(
+    "SELECT category, tools FROM mcp_servers WHERE slug = 'github'",
+  );
+  expect(server!.category).toBe("Ops");
+  expect(server!.tools).toHaveLength(2); // tool list re-discovered, intact
+  const audit = await dbQuery<{ summary: string }>(
+    "SELECT summary FROM audit_events WHERE action = 'mcp.update'",
+  );
+  expect(audit.length).toBeGreaterThanOrEqual(1);
+  await page.getByRole("button", { name: "‹ MCP servers" }).click();
+});

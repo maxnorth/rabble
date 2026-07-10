@@ -118,6 +118,80 @@ export async function mcpRoutes(app: FastifyInstance) {
     return { server: serializeServer(row!, 0) };
   });
 
+  // Edit in place — registered servers aren't one-way doors. Changing the
+  // URL (or token) re-discovers the tool list against the new endpoint
+  // before anything is saved, so a typo can't silently strand the agents
+  // using it. Token is tri-state: omit = keep, string = replace, null =
+  // clear. The slug stays stable (attachments key on ids).
+  app.patch("/api/mcp-servers/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      name?: string;
+      url?: string;
+      category?: string;
+      token?: string | null;
+    };
+    const [server] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, id), eq(mcpServers.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!server) return reply.code(404).send({ error: "Server not found" });
+
+    const updates: Partial<typeof mcpServers.$inferInsert> = {};
+    if (body.name !== undefined) {
+      const trimmed = body.name.trim();
+      if (!trimmed) return reply.code(400).send({ error: "A name is required" });
+      updates.name = trimmed;
+    }
+    if (body.category !== undefined) updates.category = body.category;
+    if (body.token !== undefined) {
+      updates.encryptedToken = body.token === null ? null : encryptSecret(body.token);
+    }
+
+    const url = body.url !== undefined ? body.url : server.url;
+    const tokenForCheck =
+      body.token !== undefined
+        ? body.token
+        : server.encryptedToken
+          ? decryptSecret(server.encryptedToken)
+          : null;
+    if (body.url !== undefined || body.token !== undefined) {
+      try {
+        updates.tools = await mcpListTools(url, tokenForCheck);
+        updates.url = url;
+        updates.status = "connected";
+      } catch (err) {
+        return reply.code(422).send({
+          error: `Couldn't reach the MCP server at that URL: ${err instanceof Error ? err.message : "unknown error"}`,
+        });
+      }
+    }
+    if (Object.keys(updates).length === 0) {
+      return reply.code(400).send({ error: "Nothing to update" });
+    }
+
+    const [row] = await db
+      .update(mcpServers)
+      .set(updates)
+      .where(eq(mcpServers.id, id))
+      .returning();
+    const changed = Object.keys(updates).filter((k) => k !== "tools" && k !== "status");
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "mcp.update",
+      targetType: "mcp-server",
+      targetId: id,
+      summary: `Updated ${changed.map((k) => (k === "encryptedToken" ? "token" : k)).join(", ")} on MCP server "${row!.name}"`,
+    });
+    const [usedBy] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(agentMcpServers)
+      .where(eq(agentMcpServers.serverId, id));
+    return { server: serializeServer(row!, usedBy?.n ?? 0) };
+  });
+
   // Re-discover the tool list
   app.post("/api/mcp-servers/:id/refresh", async (req, reply) => {
     const { id } = req.params as { id: string };

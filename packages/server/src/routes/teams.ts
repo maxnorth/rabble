@@ -100,6 +100,37 @@ export async function teamRoutes(app: FastifyInstance) {
     return { team: serializeTeam(row!, 0) };
   });
 
+  // Rename in place — teams aren't one-way doors. The slug stays stable
+  // (grants and links key on ids; the slug is cosmetic after creation).
+  app.patch("/api/teams/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { name } = (req.body ?? {}) as { name?: string };
+    const trimmed = (name ?? "").trim();
+    if (!trimmed) return reply.code(400).send({ error: "A name is required" });
+    const [team] = await db
+      .select()
+      .from(teams)
+      .where(and(eq(teams.id, id), eq(teams.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!team) return reply.code(404).send({ error: "Team not found" });
+    if (team.isEveryone) {
+      return reply.code(400).send({ error: "The Everyone team can't be renamed" });
+    }
+    if (trimmed !== team.name) {
+      await db.update(teams).set({ name: trimmed }).where(eq(teams.id, id));
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "team.update",
+        targetType: "team",
+        targetId: id,
+        summary: `Renamed team "${team.name}" to "${trimmed}"`,
+      });
+    }
+    const counts = await memberCounts(req.user!.orgId);
+    return { team: serializeTeam({ ...team, name: trimmed }, counts.get(id) ?? 0) };
+  });
+
   app.get("/api/teams/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const [team] = await db

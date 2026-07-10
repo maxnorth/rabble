@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { NavLink, useNavigate, useParams } from "react-router-dom";
 import { api } from "../api";
+import { EditableTitle } from "../components/EditableTitle";
 import { AgentConfig } from "./AgentConfig";
 import { relativeTime, count, AGENT_COLORS } from "../lib/time";
 import {
@@ -488,7 +489,15 @@ function DomainDetail({ domainId }: { domainId: string }) {
 
   return (
     <div className="content-col">
-      <h1 className="page-title">{domain.name}</h1>
+      <h1 className="page-title">
+        <EditableTitle
+          value={domain.name}
+          onSave={async (name) => {
+            await api.updateDomain(domainId, { name });
+            void queryClient.invalidateQueries({ queryKey: ["domains"] });
+          }}
+        />
+      </h1>
       <p className="page-subtitle">
         Flat, optional collection of agents. Grants set here apply to every
         agent in the domain. The domain itself carries no inherent

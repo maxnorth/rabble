@@ -192,37 +192,12 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
       </div>
       <div className="row-group" style={{ marginBottom: 12 }}>
         {criteria.data?.criteria.map((c) => (
-          <div className="row" key={c.id}>
-            <div className="grow">
-              <div className="title">{c.name}</div>
-              <div className="sub">{c.description || "—"}</div>
-            </div>
-            {c.passRate !== null ? (
-              <>
-                <span
-                  className={`chip ${c.passRate >= 90 ? "green" : c.passRate >= 70 ? "blue" : "amber"}`}
-                >
-                  {c.passRate}% · {count(c.sessionCount, "session")}
-                </span>
-                {c.trendDelta !== null && c.trendDelta !== 0 && (
-                  <span
-                    className={`chip ${c.trendDelta > 0 ? "green" : "amber"}`}
-                    title="Pass rate: last 30 days vs the 30 before"
-                  >
-                    {c.trendDelta > 0 ? "+" : ""}
-                    {c.trendDelta}% vs prior
-                  </span>
-                )}
-              </>
-            ) : (
-              <span className="chip">no data yet</span>
-            )}
-            {canEdit && (
-              <button className="btn danger" onClick={() => removeCriterion.mutate(c.id)}>
-                Delete
-              </button>
-            )}
-          </div>
+          <CriterionRow
+            key={c.id}
+            criterion={c}
+            canEdit={canEdit}
+            onDelete={() => removeCriterion.mutate(c.id)}
+          />
         ))}
         {criteria.data?.criteria.length === 0 && (
           <div className="row">
@@ -438,5 +413,118 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
         </p>
       )}
     </>
+  );
+}
+
+/**
+ * One live criterion. Criteria evolve with the job, so the row is editable
+ * in place — Edit swaps name/description into inputs and PATCHes; past
+ * results keep pointing at the same criterion, so the track record
+ * survives a wording cleanup.
+ */
+function CriterionRow({
+  criterion,
+  canEdit,
+  onDelete,
+}: {
+  criterion: {
+    id: string;
+    name: string;
+    description: string;
+    passRate: number | null;
+    sessionCount: number;
+    trendDelta: number | null;
+  };
+  canEdit: boolean;
+  onDelete: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(criterion.name);
+  const [description, setDescription] = useState(criterion.description);
+  const save = useMutation({
+    mutationFn: () => api.updateCriterion(criterion.id, { name, description }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["criteria"] });
+      setEditing(false);
+    },
+  });
+
+  if (editing) {
+    return (
+      <div className="row">
+        <div className="grow" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <input
+            autoFocus
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Criterion name"
+          />
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What the judge should check"
+          />
+          {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
+        </div>
+        <button
+          className="btn primary"
+          disabled={save.isPending || !name.trim()}
+          onClick={() => save.mutate()}
+        >
+          Save
+        </button>
+        <button
+          className="btn"
+          disabled={save.isPending}
+          onClick={() => {
+            setEditing(false);
+            setName(criterion.name);
+            setDescription(criterion.description);
+          }}
+        >
+          Cancel
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="row">
+      <div className="grow">
+        <div className="title">{criterion.name}</div>
+        <div className="sub">{criterion.description || "—"}</div>
+      </div>
+      {criterion.passRate !== null ? (
+        <>
+          <span
+            className={`chip ${criterion.passRate >= 90 ? "green" : criterion.passRate >= 70 ? "blue" : "amber"}`}
+          >
+            {criterion.passRate}% · {count(criterion.sessionCount, "session")}
+          </span>
+          {criterion.trendDelta !== null && criterion.trendDelta !== 0 && (
+            <span
+              className={`chip ${criterion.trendDelta > 0 ? "green" : "amber"}`}
+              title="Pass rate: last 30 days vs the 30 before"
+            >
+              {criterion.trendDelta > 0 ? "+" : ""}
+              {criterion.trendDelta}% vs prior
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="chip">no data yet</span>
+      )}
+      {canEdit && (
+        <>
+          <button className="btn" onClick={() => setEditing(true)}>
+            Edit
+          </button>
+          <button className="btn danger" onClick={onDelete}>
+            Delete
+          </button>
+        </>
+      )}
+    </div>
   );
 }

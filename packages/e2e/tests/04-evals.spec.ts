@@ -488,3 +488,40 @@ test("a fresh judgment updates the open session without a reload", async () => {
   );
   expect(results).toEqual([{ passed: true, review_status: null }]);
 });
+
+test("criteria are editable in place — the track record survives a rewording", async () => {
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "evals" }).click();
+
+  const row = page.locator(".row", { hasText: "Stays on topic" }).first();
+  const [before] = await dbQuery<{ id: string; n: number }>(
+    `SELECT c.id, (SELECT count(*)::int FROM eval_results r WHERE r.criterion_id = c.id) AS n
+       FROM eval_criteria c WHERE c.name = 'Stays on topic'`,
+  );
+  await row.getByRole("button", { name: "Edit", exact: true }).click();
+  // Scoped to the editing row — the add-criterion form below shares the
+  // placeholder prefix.
+  const editRow = page.locator(".row", { has: page.getByPlaceholder("Criterion name") });
+  await editRow
+    .getByPlaceholder("What the judge should check", { exact: true })
+    .fill("The reply answers the question asked, without wandering.");
+  await editRow.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.locator(".row", { hasText: "without wandering" }),
+  ).toBeVisible();
+
+  // Same criterion id, same results behind it — the record survived.
+  const [after] = await dbQuery<{ id: string; description: string; n: number }>(
+    `SELECT c.id, c.description,
+            (SELECT count(*)::int FROM eval_results r WHERE r.criterion_id = c.id) AS n
+       FROM eval_criteria c WHERE c.name = 'Stays on topic'`,
+  );
+  expect(after!.id).toBe(before!.id);
+  expect(after!.n).toBe(before!.n);
+  expect(after!.description).toContain("without wandering");
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'eval.criterion.update'",
+  );
+  expect(audit.length).toBeGreaterThanOrEqual(1);
+});

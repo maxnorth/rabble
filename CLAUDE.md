@@ -16,7 +16,12 @@ full auditability. Product spine and locked naming decisions:
   LLM judge in `src/evals/`, migrations in `src/db/migrations/*.sql`
   (forward-only, hand-written, applied by `src/db/migrate.ts`).
 - `packages/web` — React + Vite. Design tokens in `src/styles.css` (from the
-  handoff — do not invent colors). Sections in `src/pages/`.
+  handoff — do not invent colors). Sections in `src/pages/`. Two themes:
+  dark (default) + `[data-theme="light"]` override the SAME semantic
+  tokens — components must only reference tokens (or `color-mix` on them),
+  never raw hex/rgba, or they'll break in one theme. Theme applied
+  pre-paint by an inline script in index.html; switched via `lib/theme.ts`
+  (System/Light/Dark on Profile, sun/moon on the rail).
 - `packages/emulator` — scriptable fakes of external services (Anthropic,
   OpenAI, MCP, Slack) mounted under `/mock/<host>/...` with `/admin/*`
   endpoints. The app never knows it's fake; only base URLs differ. No

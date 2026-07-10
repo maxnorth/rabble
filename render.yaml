@@ -1,4 +1,5 @@
 # Render Blueprint: one web service (Docker) + managed Postgres.
+# Resources are owned by the Blueprint instance; edit here, not the dashboard.
 # https://render.com/docs/blueprint-spec
 #
 # The app listens on Render's injected PORT, serves the web UI and API from

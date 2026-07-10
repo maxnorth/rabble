@@ -483,7 +483,7 @@ function ApprovalCard({
             display: "flex",
             alignItems: "center",
             gap: 8,
-            borderTop: "1px solid rgba(251, 191, 36, 0.25)",
+            borderTop: "1px solid color-mix(in srgb, var(--amber) 30%, transparent)",
             paddingTop: 10,
             marginBottom: 10,
             fontSize: 12,

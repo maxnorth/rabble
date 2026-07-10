@@ -54,6 +54,10 @@ function Bars({
 
 function Columns({ rows }: { rows: Array<{ label: string; value: number }> }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
+  // At most ~6 x-axis ticks — a label under every one of 30 columns just
+  // collides into noise. First, last, and every `step`th in between.
+  const step = Math.max(1, Math.ceil(rows.length / 6));
+  const showLabel = (i: number) => i % step === 0 || i === rows.length - 1;
   return (
     <div
       style={{
@@ -84,11 +88,12 @@ function Columns({ rows }: { rows: Array<{ label: string; value: number }> }) {
               fontSize: 8.5,
               color: "var(--text-muted)",
               textAlign: "center",
-              overflow: "hidden",
+              overflow: "visible",
               whiteSpace: "nowrap",
+              minHeight: 13,
             }}
           >
-            {r.label.slice(5)}
+            {showLabel(i) ? r.label.slice(5) : ""}
           </span>
         </div>
       ))}

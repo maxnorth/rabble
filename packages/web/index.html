@@ -10,6 +10,24 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
+    <script>
+      // Apply the theme before first paint so there is no flash. Stored
+      // preference wins; otherwise follow the OS. Kept inline & tiny — the
+      // React app reads/writes the same key via lib/theme.ts.
+      (function () {
+        try {
+          var t = localStorage.getItem("rabble-theme");
+          if (t !== "light" && t !== "dark") {
+            t = window.matchMedia("(prefers-color-scheme: light)").matches
+              ? "light"
+              : "dark";
+          }
+          document.documentElement.dataset.theme = t;
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

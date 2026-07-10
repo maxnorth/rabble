@@ -1502,7 +1502,7 @@ function ApiKeysPage() {
       {freshToken && (
         <div
           className="card"
-          style={{ padding: 14, marginBottom: 16, borderColor: "rgba(52,211,153,0.4)" }}
+          style={{ padding: 14, marginBottom: 16, borderColor: "color-mix(in srgb, var(--green) 45%, transparent)" }}
         >
           <div style={{ fontSize: 13, marginBottom: 6 }}>
             Copy this key now. It won't be shown again.
@@ -1951,7 +1951,7 @@ function SettingsPage() {
       {tempCredentials && (
         <div
           className="card"
-          style={{ padding: 14, marginBottom: 12, borderColor: "rgba(52,211,153,0.4)" }}
+          style={{ padding: 14, marginBottom: 12, borderColor: "color-mix(in srgb, var(--green) 45%, transparent)" }}
         >
           <div style={{ fontSize: 13, marginBottom: 6 }}>
             Share these sign-in details. The temporary password won't be shown again.

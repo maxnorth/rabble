@@ -100,7 +100,7 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
         style={{
           padding: 12,
           marginBottom: 18,
-          borderColor: "rgba(107, 159, 212, 0.35)",
+          borderColor: "color-mix(in srgb, var(--blue) 40%, transparent)",
           fontSize: 12.5,
           color: "var(--text-dim)",
         }}

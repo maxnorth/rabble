@@ -106,7 +106,7 @@ function ConnectedAccounts() {
         style={{
           padding: 12,
           marginBottom: 16,
-          borderColor: "rgba(107, 159, 212, 0.35)",
+          borderColor: "color-mix(in srgb, var(--blue) 40%, transparent)",
           fontSize: 12.5,
           color: "var(--text-dim)",
         }}

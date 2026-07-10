@@ -1,5 +1,10 @@
-/* Design tokens from the design handoff — use these exactly, do not invent. */
+/* Design tokens from the design handoff — use these exactly, do not invent.
+   Dark is the default theme; [data-theme="light"] swaps the same semantic
+   tokens for a light palette (set pre-paint by the inline script in
+   index.html, toggled from the rail). Components only ever reference the
+   semantic tokens, so they are theme-agnostic. */
 :root {
+  color-scheme: dark;
   --bg-app: #0e0f11;
   --bg-panel: #121317;
   --bg-rail: #0b0c0e;
@@ -27,8 +32,48 @@
   --amber: #fbbf24;
   --red: #f87171;
   --danger: #e5484d;
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --overlay: rgba(0, 0, 0, 0.55);
+  --grid-line: rgba(255, 255, 255, 0.022);
   --font-ui: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Light theme: same cool-slate family, inverted. Off-white canvas (never
+   pure white) with white cards on top; accents shift darker so 11px chip
+   text still clears WCAG AA on light surfaces. */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-app: #f4f5f7;
+  --bg-panel: #fafbfc;
+  --bg-rail: #eceef2;
+  --surface-1: #ffffff;
+  --surface-2: #fafbfc;
+  --surface-group: #f2f3f6;
+  --surface-tool: #f6f7f9;
+  --hover-1: #eff1f4;
+  --hover-2: #edeff3;
+  --hover-3: #e5e8ee;
+  --border-1: #e2e5ea;
+  --border-2: #d3d8e0;
+  --border-row: #e8eaef;
+  --border-rail: #dfe2e8;
+  --text-1: #191e26;
+  --text-2: #3c4451;
+  --text-dim: #5a6270;
+  --text-muted: #858e9c;
+  --text-label: #98a0ab;
+  --accent: #4a6fa5;
+  --accent-text: #35608f;
+  --green: #0f9d6c;
+  --blue: #2f6cb3;
+  --purple: #6d51c9;
+  --amber: #b45309;
+  --red: #dc2626;
+  --danger: #d92d20;
+  --shadow-pop: 0 8px 24px rgba(16, 24, 40, 0.14);
+  --overlay: rgba(15, 20, 30, 0.4);
+  --grid-line: rgba(16, 24, 40, 0.035);
 }
 
 * {
@@ -275,22 +320,22 @@ a {
 
 .chip.green {
   color: var(--green);
-  border-color: rgba(52, 211, 153, 0.25);
+  border-color: color-mix(in srgb, var(--green) 30%, transparent);
 }
 
 .chip.amber {
   color: var(--amber);
-  border-color: rgba(251, 191, 36, 0.25);
+  border-color: color-mix(in srgb, var(--amber) 30%, transparent);
 }
 
 .chip.blue {
   color: var(--blue);
-  border-color: rgba(107, 159, 212, 0.25);
+  border-color: color-mix(in srgb, var(--blue) 30%, transparent);
 }
 
 .chip.purple {
   color: var(--purple);
-  border-color: rgba(167, 139, 250, 0.25);
+  border-color: color-mix(in srgb, var(--purple) 30%, transparent);
 }
 
 .card {
@@ -371,6 +416,177 @@ a {
   font-size: 16px;
 }
 
+/* ---- Split sign-in (brand story + form) ---- */
+
+.auth-split {
+  position: relative;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1.15fr 1fr;
+}
+
+.auth-theme-toggle {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 5;
+}
+
+.btn.icon-only {
+  padding: 7px 9px;
+  color: var(--text-dim);
+}
+
+.auth-brand {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  padding: 56px;
+  background:
+    radial-gradient(120% 80% at 12% 8%, color-mix(in srgb, var(--blue) 16%, transparent), transparent 60%),
+    radial-gradient(90% 70% at 92% 100%, color-mix(in srgb, var(--purple) 14%, transparent), transparent 55%),
+    var(--bg-rail);
+  border-right: 1px solid var(--border-1);
+}
+
+/* Faint grid texture so the panel reads as a crafted surface, not flat black. */
+.auth-brand::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
+  background-size: 40px 40px;
+  mask-image: radial-gradient(120% 100% at 20% 0%, #000 30%, transparent 75%);
+  pointer-events: none;
+}
+
+.auth-brand-inner {
+  position: relative;
+  max-width: 460px;
+}
+
+.auth-brand-mark {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 40px;
+}
+
+.auth-brand-logo {
+  width: 38px;
+  height: 38px;
+  font-size: 19px;
+  margin-bottom: 0;
+  box-shadow: 0 6px 22px rgba(74, 111, 165, 0.45);
+}
+
+.auth-brand-word {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-1);
+}
+
+.auth-brand-headline {
+  font-size: 34px;
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text-1);
+  margin-bottom: 16px;
+}
+
+.auth-brand-sub {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  margin-bottom: 38px;
+}
+
+.auth-pillars {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.auth-pillar {
+  display: flex;
+  gap: 14px;
+}
+
+.auth-pillar-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-top: 5px;
+}
+
+.auth-pillar-dot.green {
+  background: var(--green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--green) 16%, transparent);
+}
+.auth-pillar-dot.blue {
+  background: var(--blue);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--blue) 16%, transparent);
+}
+.auth-pillar-dot.purple {
+  background: var(--purple);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--purple) 16%, transparent);
+}
+
+.auth-pillar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 3px;
+}
+
+.auth-pillar-body {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.auth-form-pane {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.auth-form-pane .auth-card {
+  border: none;
+  background: none;
+  padding: 0;
+  width: 340px;
+}
+
+.auth-card-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: -12px;
+  margin-bottom: 22px;
+}
+
+@media (max-width: 860px) {
+  .auth-split {
+    grid-template-columns: 1fr;
+  }
+  .auth-brand {
+    display: none;
+  }
+  .auth-form-pane .auth-card {
+    background: var(--surface-1);
+    border: 1px solid var(--border-1);
+    padding: 28px;
+  }
+}
+
 /* ---- Sessions ---- */
 
 .session-landing {
@@ -441,7 +657,7 @@ a {
   border-radius: 10px;
   padding: 4px;
   z-index: 20;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-pop);
 }
 
 .target-menu button {
@@ -740,7 +956,7 @@ a {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -836,7 +1052,7 @@ a {
 
 .approval-card {
   background: var(--surface-1);
-  border: 1px solid rgba(251, 191, 36, 0.35);
+  border: 1px solid color-mix(in srgb, var(--amber) 40%, transparent);
   border-radius: 10px;
   padding: 14px;
   margin: 8px 0;
@@ -967,7 +1183,7 @@ a {
   border-radius: 10px;
   padding: 4px;
   z-index: 30;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-pop);
 }
 
 .filter-popup button {

@@ -335,7 +335,9 @@ export const api = {
       gradedCount: number;
       judgeModel: string | null;
     }>(`/api/agents/${agentId}/trust`),
-  updateSuite: (suiteId: string, body: { gating: boolean }) =>
+  updateCase: (id: string, body: Partial<{ name: string; input: string; rubric: string }>) =>
+    patch<{ case: EvalCase }>(`/api/cases/${id}`, body),
+  updateSuite: (suiteId: string, body: { gating?: boolean; name?: string }) =>
     patch<{ ok: true }>(`/api/suites/${suiteId}`, body),
   createSuite: (agentId: string, body: { name: string; gating?: boolean }) =>
     post<{ suite: unknown }>(`/api/agents/${agentId}/suites`, body),

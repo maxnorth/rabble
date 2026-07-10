@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../api";
 import { count } from "../../lib/time";
+import { EditableTitle } from "../../components/EditableTitle";
 
 // ---------------------------------------------------------------------------
 // evals
@@ -41,6 +42,7 @@ const CRITERION_STARTERS: Array<{ name: string; description: string }> = [
 
 export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
+  const [openSuite, setOpenSuite] = useState<string | null>(null);
   const criteria = useQuery({
     queryKey: ["criteria", agentId],
     queryFn: () => api.listCriteria(agentId),
@@ -311,10 +313,20 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
       </div>
       <div className="row-group">
         {suites.data?.suites.map((s) => (
-          <div className="row" key={s.id}>
+          <Fragment key={s.id}>
+          <div className="row">
             <div className="grow">
-              <div className="title">
-                {s.name} {s.gating && <span className="chip amber">gating</span>}
+              <div className="title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <EditableTitle
+                  value={s.name}
+                  canEdit={canEdit}
+                  inputWidth={180}
+                  onSave={async (name) => {
+                    await api.updateSuite(s.id, { name });
+                    void queryClient.invalidateQueries({ queryKey: ["suites"] });
+                  }}
+                />
+                {s.gating && <span className="chip amber">gating</span>}
               </div>
               <div className="sub">
                 {count(s.caseCount, "case")}
@@ -351,6 +363,14 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
                 </div>
               )}
             </div>
+            {s.caseCount > 0 && (
+              <button
+                className="btn"
+                onClick={() => setOpenSuite(openSuite === s.id ? null : s.id)}
+              >
+                {openSuite === s.id ? "Hide cases" : "Cases"}
+              </button>
+            )}
             {canEdit && (
               <label
                 style={{
@@ -381,6 +401,8 @@ export function EvalsTab({ agentId, canEdit }: { agentId: string; canEdit: boole
               </button>
             )}
           </div>
+          {openSuite === s.id && <SuiteCases suiteId={s.id} canEdit={canEdit} />}
+          </Fragment>
         ))}
         {suites.data?.suites.length === 0 && (
           <div className="row">
@@ -524,6 +546,109 @@ function CriterionRow({
             Delete
           </button>
         </>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The cases inside a suite — previously invisible after creation (frozen
+ * from sessions or added by the Builder, then a black box). Listed with
+ * their input/rubric, editable in place so a sloppy rubric is a fix, not
+ * a delete-and-refreeze.
+ */
+function SuiteCases({ suiteId, canEdit }: { suiteId: string; canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const cases = useQuery({
+    queryKey: ["cases", suiteId],
+    queryFn: () => api.listCases(suiteId),
+  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [form, setForm] = useState({ name: "", input: "", rubric: "" });
+  const save = useMutation({
+    mutationFn: () => api.updateCase(editingId!, form),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["cases", suiteId] });
+      setEditingId(null);
+    },
+  });
+
+  return (
+    <div className="row" style={{ display: "block", background: "var(--surface-2)" }}>
+      {cases.data?.cases.map((c) =>
+        editingId === c.id ? (
+          <div
+            key={c.id}
+            style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 0" }}
+          >
+            <input
+              autoFocus
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              placeholder="Case name"
+            />
+            <textarea
+              rows={2}
+              value={form.input}
+              onChange={(e) => setForm({ ...form, input: e.target.value })}
+              placeholder="The user message this case replays"
+            />
+            <textarea
+              rows={2}
+              value={form.rubric}
+              onChange={(e) => setForm({ ...form, rubric: e.target.value })}
+              placeholder="What a good reply must do"
+            />
+            {save.isError && (
+              <p className="error-text">{(save.error as Error).message}</p>
+            )}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button className="btn" onClick={() => setEditingId(null)}>
+                Cancel
+              </button>
+              <button
+                className="btn primary"
+                disabled={save.isPending || !form.name.trim()}
+                onClick={() => save.mutate()}
+              >
+                Save case
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div
+            key={c.id}
+            style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 0" }}
+          >
+            <div className="grow" style={{ minWidth: 0 }}>
+              <div className="title" style={{ fontSize: 12.5 }}>
+                {c.name}
+                {c.sourceSessionId && (
+                  <span className="chip" style={{ marginLeft: 6 }} title="Frozen from a real session">
+                    frozen
+                  </span>
+                )}
+              </div>
+              <div className="sub" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                “{c.input}” → {c.rubric}
+              </div>
+            </div>
+            {canEdit && (
+              <button
+                className="btn"
+                onClick={() => {
+                  setEditingId(c.id);
+                  setForm({ name: c.name, input: c.input, rubric: c.rubric });
+                }}
+              >
+                Edit
+              </button>
+            )}
+          </div>
+        ),
+      )}
+      {cases.data?.cases.length === 0 && (
+        <div className="sub">No cases in this suite yet.</div>
       )}
     </div>
   );

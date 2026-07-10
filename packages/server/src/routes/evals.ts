@@ -437,20 +437,76 @@ export async function evalRoutes(app: FastifyInstance) {
     if (!(await requireEdit(req, suite.agentId))) {
       return reply.code(403).send({ error: "You need edit access on this agent" });
     }
-    const { gating } = req.body as { gating?: boolean };
-    if (typeof gating !== "boolean") {
-      return reply.code(400).send({ error: "gating (boolean) is required" });
+    const { gating, name } = req.body as { gating?: boolean; name?: string };
+    const updates: Partial<{ gating: boolean; name: string }> = {};
+    if (typeof gating === "boolean") updates.gating = gating;
+    if (name !== undefined) {
+      const trimmed = name.trim();
+      if (!trimmed) return reply.code(400).send({ error: "A name is required" });
+      updates.name = trimmed;
     }
-    await db.update(evalSuites).set({ gating }).where(eq(evalSuites.id, suiteId));
+    if (Object.keys(updates).length === 0) {
+      return reply.code(400).send({ error: "Nothing to update" });
+    }
+    await db.update(evalSuites).set(updates).where(eq(evalSuites.id, suiteId));
     await recordAudit({
       orgId: req.user!.orgId,
       actorUserId: req.user!.id,
       action: "eval.suite.update",
       targetType: "agent",
       targetId: suite.agentId,
-      summary: `${gating ? "Marked" : "Unmarked"} eval suite "${suite.name}" as gating`,
+      summary:
+        updates.gating !== undefined
+          ? `${updates.gating ? "Marked" : "Unmarked"} eval suite "${updates.name ?? suite.name}" as gating`
+          : `Renamed eval suite "${suite.name}" to "${updates.name}"`,
     });
     return { ok: true };
+  });
+
+  // Cases are editable too — a frozen session with a sloppy rubric should
+  // be fixable without deleting the case (and its run history with it).
+  app.patch("/api/cases/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = (req.body ?? {}) as {
+      name?: string;
+      input?: string;
+      rubric?: string;
+    };
+    const [row] = await db
+      .select({ caseRow: evalCases, agentId: evalSuites.agentId })
+      .from(evalCases)
+      .innerJoin(evalSuites, eq(evalCases.suiteId, evalSuites.id))
+      .where(eq(evalCases.id, id))
+      .limit(1);
+    if (!row) return reply.code(404).send({ error: "Case not found" });
+    if (!(await requireEdit(req, row.agentId))) {
+      return reply.code(403).send({ error: "You need edit access on this agent" });
+    }
+    const updates: Partial<{ name: string; input: string; rubric: string }> = {};
+    if (body.name !== undefined) {
+      const trimmed = body.name.trim();
+      if (!trimmed) return reply.code(400).send({ error: "A name is required" });
+      updates.name = trimmed;
+    }
+    if (body.input !== undefined) updates.input = body.input;
+    if (body.rubric !== undefined) updates.rubric = body.rubric;
+    if (Object.keys(updates).length === 0) {
+      return reply.code(400).send({ error: "Nothing to update" });
+    }
+    const [updated] = await db
+      .update(evalCases)
+      .set(updates)
+      .where(eq(evalCases.id, id))
+      .returning();
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "eval.case.update",
+      targetType: "agent",
+      targetId: row.agentId,
+      summary: `Edited test case "${updated!.name}"`,
+    });
+    return { case: updated };
   });
 
   app.get("/api/suites/:suiteId/cases", async (req, reply) => {

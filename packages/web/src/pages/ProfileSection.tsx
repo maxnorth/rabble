@@ -2,6 +2,32 @@ import type { UserPreferences } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { setThemePref, useThemePref } from "../lib/theme";
+
+/** System / Light / Dark. Device-local (not synced to the server), applied
+ * instantly — the rail's sun/moon button flips the same preference. */
+function AppearancePicker() {
+  const pref = useThemePref();
+  return (
+    <div className="segmented">
+      {(
+        [
+          ["system", "System"],
+          ["light", "Light"],
+          ["dark", "Dark"],
+        ] as const
+      ).map(([value, label]) => (
+        <button
+          key={value}
+          className={pref === value ? "active" : ""}
+          onClick={() => setThemePref(value)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 const VENDORS = [
   { vendor: "github", scope: "Repos · pull requests · Actions" },
@@ -245,6 +271,15 @@ function AgentPreferences() {
         Controls how often you're prompted before an agent uses your identity
         for a write action. An org-wide approval floor can override this.
       </p>
+
+      <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
+        Appearance
+      </div>
+      <div className="row-group" style={{ marginBottom: 18 }}>
+        <div className="row">
+          <AppearancePicker />
+        </div>
+      </div>
 
       <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
         Response style

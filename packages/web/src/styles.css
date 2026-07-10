@@ -173,6 +173,33 @@ select:focus-visible {
   outline: none; /* the accent border + ring above already marks focus */
 }
 
+/* Slim, theme-aware scrollbars. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-2) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-2);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-label);
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -1088,6 +1115,26 @@ select:focus-visible {
 
 /* ---- Modal ---- */
 
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1096,6 +1143,7 @@ select:focus-visible {
   align-items: center;
   justify-content: center;
   z-index: 50;
+  animation: fade-in 0.12s ease;
 }
 
 .modal {
@@ -1106,6 +1154,8 @@ select:focus-visible {
   border: 1px solid var(--border-2);
   border-radius: 12px;
   padding: 22px;
+  box-shadow: var(--shadow-pop);
+  animation: modal-in 0.16s ease;
 }
 
 .modal h2 {

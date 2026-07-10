@@ -132,10 +132,8 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
         );
       })}
       {byServer.size === 0 && (
-        <div className="row-group" style={{ marginBottom: 20 }}>
-          <div className="row">
-            <div className="sub">No MCP servers attached yet.</div>
-          </div>
+        <div className="empty-slot" style={{ marginBottom: 20 }}>
+          No MCP servers attached yet.
         </div>
       )}
       {canEdit && attachable.length > 0 && (

@@ -376,11 +376,7 @@ function ConnectionsPage() {
         ));
       })()}
       {connections.data?.connections.length === 0 && (
-        <div className="row-group">
-          <div className="row">
-            <div className="sub">No connections yet.</div>
-          </div>
-        </div>
+        <div className="empty-slot">No connections yet.</div>
       )}
       {showAdd && <AddConnectionModal onClose={() => setShowAdd(false)} />}
       {editing && (

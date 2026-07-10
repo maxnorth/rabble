@@ -215,8 +215,15 @@ function VendorTile({ vendor }: { vendor: string }) {
         justifyContent: "center",
         flexShrink: 0,
         fontSize: 13,
-        color: "#fff",
-        background: tile?.bg ?? "var(--surface-tool)",
+        // White only reads on a brand-colored tile; the neutral fallback
+        // needs theme text + a border to stay visible in light mode.
+        ...(tile
+          ? { color: "#fff", background: tile.bg }
+          : {
+              color: "var(--text-dim)",
+              background: "var(--surface-tool)",
+              border: "1px solid var(--border-1)",
+            }),
       }}
     >
       {tile?.glyph || vendor[0]?.toUpperCase()}

@@ -175,7 +175,15 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
                 height: 34,
                 fontSize: 13,
                 marginBottom: 0,
-                background: u.role === "member" ? "var(--surface-tool)" : "var(--purple)",
+                // Members get a neutral tile; #fff initials only read on
+                // the colored admin/owner tile, in either theme.
+                ...(u.role === "member"
+                  ? {
+                      background: "var(--surface-tool)",
+                      border: "1px solid var(--border-1)",
+                      color: "var(--text-dim)",
+                    }
+                  : { background: "var(--purple)" }),
               }}
             >
               {u.name

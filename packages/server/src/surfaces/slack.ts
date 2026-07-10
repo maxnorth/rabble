@@ -103,6 +103,55 @@ export function shouldEngageSlack(opts: {
   return isDm || isMention || mode === "all" || (mode === "thread" && hasThreadSession);
 }
 
+/** The slice of a surface row the routing decisions need. */
+export interface SurfaceRow {
+  label: string;
+  responseMode: string;
+  dmEnabled: boolean;
+}
+
+/**
+ * Whether the message addresses the bot. A tag arrives as app_mention OR as
+ * a plain message whose text contains `<@BOT>` (when both event types are
+ * subscribed) — both must read as a mention so dedup can't drop the one
+ * that would have engaged.
+ */
+export function detectMention(
+  eventType: string,
+  text: string,
+  botUserId: string | undefined,
+): boolean {
+  if (eventType === "app_mention") return true;
+  if (!botUserId) return false;
+  return text.includes(`<@${botUserId}>`) || text.includes(`<@${botUserId}|`);
+}
+
+/**
+ * A channel's response mode: its own surface row wins, else the
+ * workspace-level surface (empty label) applies, else mention-only.
+ */
+export function resolveChannelMode<T extends SurfaceRow>(
+  surfaces: T[],
+  channelName: string,
+  channelId: string,
+): { matched: T | undefined; mode: string } {
+  const matched = surfaces.find((s) => {
+    const label = s.label.replace(/^#/, "");
+    return label !== "" && (label === channelName || label === channelId);
+  });
+  const workspace = surfaces.find((s) => s.label === "");
+  return {
+    matched,
+    mode: matched?.responseMode ?? workspace?.responseMode ?? "mention",
+  };
+}
+
+/** DMs are a workspace-level surface setting; no workspace row means on. */
+export function dmAllowed(surfaces: SurfaceRow[]): boolean {
+  const workspace = surfaces.find((s) => s.label === "");
+  return workspace?.dmEnabled ?? true;
+}
+
 // [diag] TEMPORARY Slack diagnostics. Every step logs via the app logger AND
 // mirrors to a file so the whole event lifecycle can be tailed while we
 // root-cause delivery/threading. Remove this block + all slackDiag() calls
@@ -246,11 +295,7 @@ export async function processSlackEvent(
   // contains `<@BOT>` — treat both as a mention so the dedup can't drop the one
   // that would have engaged.
   const botUserId = await resolveBotUserId(connection.id, slack);
-  const isMention =
-    event.type === "app_mention" ||
-    (!!botUserId &&
-      (event.text.includes(`<@${botUserId}>`) ||
-        event.text.includes(`<@${botUserId}|`)));
+  const isMention = detectMention(event.type, event.text, botUserId);
 
   // A connection is an agent's Slack identity. Until an agent is linked (an
   // agent_surfaces row exists) there's no one to answer as — anyone who
@@ -271,11 +316,11 @@ export async function processSlackEvent(
     return { ok: true, ignored: "connection not linked to an agent" };
   }
   const linkedAgent = surfaceRows[0]!.agent;
-  const workspaceSurface = surfaceRows.find((r) => r.surface.label === "");
+  const rows = surfaceRows.map((r) => r.surface);
 
   // DMs are a surface setting (workspace-level row). Off means a 1:1 message
   // gets a short pointer, never a session.
-  if (isDm && workspaceSurface?.surface.dmEnabled === false) {
+  if (isDm && !dmAllowed(rows)) {
     diag("refused: DMs disabled on this surface");
     await post(
       `${linkedAgent.name} doesn't take direct messages. Reach it in a channel instead.`,
@@ -316,12 +361,8 @@ export async function processSlackEvent(
     .where(eq(sessions.surfaceKey, surfaceKey))
     .limit(1);
 
-  // Resolve the channel's response mode (channels only): a channel-labeled
-  // surface wins, else the workspace-level surface (empty label) applies,
-  // else mention-only.
-  let matched:
-    | { surface: typeof agentSurfaces.$inferSelect; agent: typeof agents.$inferSelect }
-    | undefined;
+  // Resolve the channel's response mode (channels only).
+  let matched: (typeof rows)[number] | undefined;
   let channelName = "";
   let mode = "mention";
   if (!isDm) {
@@ -331,20 +372,13 @@ export async function processSlackEvent(
         .then((r) => r.channel?.name ?? "")
         .catch(() => "")
     ).replace(/^#/, "");
-    matched = surfaceRows.find((r) => {
-      const label = r.surface.label.replace(/^#/, "");
-      return label === channelName || label === event.channel;
-    });
-    mode =
-      matched?.surface.responseMode ??
-      workspaceSurface?.surface.responseMode ??
-      "mention";
+    ({ matched, mode } = resolveChannelMode(rows, channelName, event.channel));
   }
   diag("surface resolved", {
     isDm,
     isMention,
     channelName,
-    matchedSurface: matched?.surface.label ?? null,
+    matchedSurface: matched?.label ?? null,
     mode,
     hasThreadSession: !!existingSession,
   });

@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { shouldEngageSlack } from "./slack.js";
+import {
+  detectMention,
+  dmAllowed,
+  resolveChannelMode,
+  shouldEngageSlack,
+  type SurfaceRow,
+} from "./slack.js";
+
+const row = (label: string, responseMode = "thread", dmEnabled = true): SurfaceRow => ({
+  label,
+  responseMode,
+  dmEnabled,
+});
 
 /**
  * The per-surface response-mode gating: whether a given Slack message gets a
@@ -43,5 +55,68 @@ describe("shouldEngageSlack", () => {
   it("unmapped channels (default mode) only answer mentions", () => {
     // Non-mention, no session, default 'mention' mode → ignored.
     expect(shouldEngageSlack({ ...base })).toBe(false);
+  });
+});
+
+describe("detectMention", () => {
+  it("app_mention events are mentions even without a bot id", () => {
+    expect(detectMention("app_mention", "hi", undefined)).toBe(true);
+  });
+
+  it("message events mention when the text tags the bot (both tag forms)", () => {
+    expect(detectMention("message", "hey <@U0BOT> status?", "U0BOT")).toBe(true);
+    expect(detectMention("message", "hey <@U0BOT|garth> status?", "U0BOT")).toBe(true);
+  });
+
+  it("plain messages and tags of other users are not mentions", () => {
+    expect(detectMention("message", "just chatting", "U0BOT")).toBe(false);
+    expect(detectMention("message", "ask <@U0OTHER> instead", "U0BOT")).toBe(false);
+    // Without a resolved bot id a message can never read as a mention.
+    expect(detectMention("message", "hey <@U0BOT>", undefined)).toBe(false);
+  });
+});
+
+describe("resolveChannelMode", () => {
+  it("a channel-labeled surface wins, matching with or without '#'", () => {
+    const rows = [row("", "thread"), row("#eng", "all")];
+    expect(resolveChannelMode(rows, "eng", "C1").mode).toBe("all");
+    expect(resolveChannelMode([row("eng", "all")], "eng", "C1").mode).toBe("all");
+  });
+
+  it("channel ids match too (directory lookup can fail)", () => {
+    expect(resolveChannelMode([row("C1", "all")], "", "C1").mode).toBe("all");
+  });
+
+  it("channels without their own row inherit the workspace surface's mode", () => {
+    const rows = [row("", "thread"), row("#other", "all")];
+    const { matched, mode } = resolveChannelMode(rows, "eng", "C1");
+    expect(matched).toBeUndefined();
+    expect(mode).toBe("thread");
+  });
+
+  it("with no workspace row either, channels are mention-only", () => {
+    expect(resolveChannelMode([row("#other", "all")], "eng", "C1").mode).toBe("mention");
+    expect(resolveChannelMode([], "eng", "C1").mode).toBe("mention");
+  });
+
+  it("the workspace row never matches a channel by label", () => {
+    // A channel literally named like the empty label can't exist, but the
+    // workspace row must also never win the `matched` slot.
+    const { matched } = resolveChannelMode([row("", "all")], "", "C1");
+    expect(matched).toBeUndefined();
+  });
+});
+
+describe("dmAllowed", () => {
+  it("defaults on when no workspace row exists", () => {
+    expect(dmAllowed([])).toBe(true);
+    expect(dmAllowed([row("#eng")])).toBe(true);
+  });
+
+  it("follows the workspace row's dm_enabled", () => {
+    expect(dmAllowed([row("", "thread", true)])).toBe(true);
+    expect(dmAllowed([row("", "thread", false)])).toBe(false);
+    // Channel rows never carry the DM decision.
+    expect(dmAllowed([row("#eng", "all", false), row("", "thread", true)])).toBe(true);
   });
 });

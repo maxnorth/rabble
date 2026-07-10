@@ -86,6 +86,23 @@ export function AgentConfig({ agentId }: { agentId: string }) {
                 {row.scope}
               </span>
             )}
+            {/* Trust at a glance, where share/config decisions get made. */}
+            {row && row.evalScore !== null && (
+              <span
+                className={`chip ${row.evalScore >= 90 ? "green" : row.evalScore >= 70 ? "blue" : "amber"}`}
+                title={`${row.evalScore}% pass rate across ${row.evalCount} eval result${row.evalCount === 1 ? "" : "s"} — details on the Evals tab`}
+              >
+                {row.evalScore}% eval
+              </span>
+            )}
+            {row?.needsAttention && (
+              <span
+                className="chip amber"
+                title="An open spot-check review or a scope violation in the last 30 days"
+              >
+                needs attention
+              </span>
+            )}
           </h1>
           <p className="page-subtitle mono" style={{ marginBottom: 0 }}>
             {agent.data.agent.slug}

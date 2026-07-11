@@ -1743,7 +1743,7 @@ select:focus-visible {
     position: fixed;
     top: 0;
     left: 0;
-    bottom: 58px;
+    bottom: 0;
     z-index: 45;
     width: min(300px, 84vw);
     transform: translateX(-105%);
@@ -1765,10 +1765,11 @@ select:focus-visible {
     gap: 4px;
     position: fixed;
     left: 0;
-    bottom: 58px;
+    bottom: 0;
     z-index: 46;
     width: min(300px, 84vw);
-    padding: 10px 12px;
+    /* reach the true bottom, clearing an iOS home indicator when present */
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
     background: var(--bg-panel);
     border-top: 1px solid var(--border-1);
     border-right: 1px solid var(--border-1);

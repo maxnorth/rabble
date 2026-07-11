@@ -151,3 +151,107 @@ export async function routePrimaryInterface(
   const chosenId = await routeByIntent(platformUser.orgId, intent, candidates);
   return candidates.find((c) => c.id === chosenId) ?? candidates[0]!;
 }
+
+const ORCHESTRATOR_SYSTEM =
+  "You are the invisible orchestrator of a multi-party conversation between " +
+  "a user and a roster of agents. You never speak yourself. Given the " +
+  "conversation so far and the latest user message, decide which agent(s) " +
+  "should respond. Reply with one or two agent slugs from the roster, " +
+  "comma-separated, best first — nothing else. Pick two only when the " +
+  "message genuinely spans two agents' jobs. Prefer agents already in the " +
+  "conversation for follow-ups. Requests to create, configure, or improve " +
+  "AGENTS THEMSELVES belong to the builder when it is on the roster.";
+
+/**
+ * The reaction layer for a multi-party "Auto" session (DECISIONS.md): on
+ * each user message, decide which agent(s) respond. A direct user ask
+ * always gets at least one responder; agents never self-select. Never
+ * throws — falls back to the intent router's single pick.
+ */
+export async function decideResponders(
+  platformUser: { id: string; orgId: string; role: string },
+  history: Array<{ role: string; content: string; agentId?: string | null }>,
+  latest: string,
+): Promise<Array<typeof agents.$inferSelect>> {
+  const { rightsForAllAgents, hasRight } = await import("../rights.js");
+  const rights = await rightsForAllAgents(platformUser as never);
+  const rows = await db
+    .select()
+    .from(agents)
+    .where(
+      and(
+        eq(agents.orgId, platformUser.orgId),
+        eq(agents.status, "active"),
+        eq(agents.webEnabled, true),
+      ),
+    )
+    .orderBy(agents.name);
+  const candidates = orderAutoRoster(
+    rows.filter(
+      (r) =>
+        (!r.builtin || r.builtin === "builder") &&
+        hasRight(rights.get(r.id) ?? null, "use"),
+    ),
+  );
+  if (candidates.length === 0) return [];
+  if (candidates.length === 1 || !latest.trim()) return [candidates[0]!];
+
+  const [routerModel] = await db
+    .select()
+    .from(models)
+    .where(and(eq(models.orgId, platformUser.orgId), eq(models.enabled, true)))
+    .orderBy(models.createdAt)
+    .limit(1);
+  if (!routerModel) return [candidates[0]!];
+
+  const roster: RouteCandidate[] = candidates.map((c) => ({
+    id: c.id,
+    slug: c.slug,
+    name: c.name,
+    description: c.description,
+  }));
+  const participants = new Set(
+    history.map((m) => m.agentId).filter((x): x is string => Boolean(x)),
+  );
+  const tail = history
+    .slice(-8)
+    .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content.slice(0, 300)}`)
+    .join("\n");
+  try {
+    const chat = await chatModelFor(routerModel);
+    const reply = await chat.invoke([
+      new SystemMessage(ORCHESTRATOR_SYSTEM),
+      new HumanMessage(
+        `Conversation so far:\n${tail || "(none)"}\n\n` +
+          `Latest user message:\n${latest.slice(0, 2000)}\n\n` +
+          `Agent roster:\n${roster
+            .map(
+              (c) =>
+                `- ${c.slug} — ${c.name}${participants.has(c.id) ? " (already in this conversation)" : ""}: ${c.description || "no description"}`,
+            )
+            .join("\n")}\n\n` +
+          "Reply with one or two slugs, comma-separated.",
+      ),
+    ]);
+    const text =
+      typeof reply.content === "string"
+        ? reply.content
+        : reply.content
+            .map((b) => (typeof b === "string" ? b : ((b as { text?: string }).text ?? "")))
+            .join("");
+    const picked: Array<typeof agents.$inferSelect> = [];
+    for (const token of text.split(",")) {
+      const match = matchAgentReply(token, roster);
+      if (!match) continue;
+      const row = candidates.find((c) => c.id === match.id);
+      if (row && !picked.some((p) => p.id === row.id)) picked.push(row);
+      if (picked.length === 2) break;
+    }
+    if (picked.length > 0) return picked;
+    const whole = matchAgentReply(text, roster);
+    const row = whole ? candidates.find((c) => c.id === whole.id) : undefined;
+    return [row ?? candidates[0]!];
+  } catch {
+    return [candidates[0]!];
+  }
+}

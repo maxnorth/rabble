@@ -154,6 +154,19 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   the Builder's update tools return `{blocked:true, failures}` instead of
   saving. Remember this when e2e edits a gated agent (each gate run
   consumes emulator LLM calls).
+- Multi-party Auto (DECISIONS.md): an Auto session has `sessions.agent_id`
+  NULL — never pinned. Each user message runs the reaction layer
+  (`decideResponders`, router.ts): 1-2 responders reply in sequence, each
+  as its own governed turn; `messages.agent_id` records authorship (UI
+  identity, judging, spend). Later responders see earlier replies
+  author-attributed ("[Name (agent) replied]: …" — agentTurn history
+  mapping; `userContent` rides history for them). SSE gains `turn-start`
+  (who speaks next); one `done` per responder. Judging fires AFTER the
+  whole round (a judge call must not steal the next responder's scripted
+  e2e reply). Pinned sessions and all Slack threads keep single-voice
+  behavior. Web shows "Auto" in sidebar/composer; per-bubble identity from
+  the message. Stats bucket unpinned sessions as "Auto"; spend follows the
+  message author.
 - Sessions carry `surface`/`surface_key`; inbound Slack events land at
   POST /api/inbound/slack (Slack v0 HMAC signing over the RAW body — the
   route scope has its own string content-type parser; don't move it under

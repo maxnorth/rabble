@@ -7,7 +7,7 @@
  */
 export interface ExportSession {
   title: string;
-  agentName: string;
+  agentName: string | null;
   surface: string;
 }
 export interface ExportMessage {
@@ -36,10 +36,10 @@ export function sessionToMarkdown(
   const lines = [
     `# ${session.title || "Session"}`,
     "",
-    `Agent: ${session.agentName} · Surface: ${session.surface} · Exported ${exportedAt}`,
+    `Agent: ${(session.agentName ?? "Auto")} · Surface: ${session.surface} · Exported ${exportedAt}`,
     "",
     ...messages.flatMap((m) => [
-      `## ${m.role === "user" ? "User" : session.agentName}`,
+      `## ${m.role === "user" ? "User" : (session.agentName ?? "Auto")}`,
       ...m.toolCalls.map(
         (tc) =>
           `> tool: \`${tc.name}\` (${tc.authType ?? "service"} auth${

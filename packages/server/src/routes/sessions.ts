@@ -50,7 +50,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         agentColor: agents.color,
       })
       .from(sessions)
-      .innerJoin(agents, eq(sessions.agentId, agents.id))
+      .leftJoin(agents, eq(sessions.agentId, agents.id))
       .where(
         and(
           eq(sessions.orgId, req.user!.orgId),
@@ -93,10 +93,10 @@ export async function sessionRoutes(app: FastifyInstance) {
           .send({ error: "This agent isn't available in web sessions" });
       }
     } else {
-      // "Auto": route by intent across the agents the user can actually use.
-      // The Builder rides the roster LAST (orderAutoRoster): "help me build
-      // an agent" must land on it, while the no-intent fallback stays on a
-      // regular agent.
+      // "Auto": a multi-party session with NO pinned agent (DECISIONS.md).
+      // The invisible orchestrator decides who responds to each message at
+      // message time (decideResponders); creation only checks that the
+      // user has at least one usable agent to talk to.
       const candidates = await db
         .select()
         .from(agents)
@@ -108,19 +108,16 @@ export async function sessionRoutes(app: FastifyInstance) {
           ),
         )
         .orderBy(agents.name);
-      const usable = orderAutoRoster(
-        candidates.filter(
-          (c) =>
-            (!c.builtin || c.builtin === "builder") &&
-            hasRight(rights.get(c.id) ?? null, "use"),
-        ),
+      const usable = candidates.filter(
+        (c) =>
+          (!c.builtin || c.builtin === "builder") &&
+          hasRight(rights.get(c.id) ?? null, "use"),
       );
       if (usable.length === 0) {
         return reply
           .code(409)
           .send({ error: "No agents available to you. Ask for access or create one." });
       }
-      agentId = await routeByIntent(req.user!.orgId, body.intent, usable);
     }
 
     const [row] = await db
@@ -141,7 +138,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         agentColor: agents.color,
       })
       .from(sessions)
-      .innerJoin(agents, eq(sessions.agentId, agents.id))
+      .leftJoin(agents, eq(sessions.agentId, agents.id))
       .where(
         and(
           eq(sessions.id, id),
@@ -153,9 +150,16 @@ export async function sessionRoutes(app: FastifyInstance) {
     if (!row) return reply.code(404).send({ error: "Session not found" });
 
     const history = await db
-      .select({ message: messages, authorName: users.name })
+      .select({
+        message: messages,
+        authorName: users.name,
+        msgAgentName: agents.name,
+        msgAgentIcon: agents.icon,
+        msgAgentColor: agents.color,
+      })
       .from(messages)
       .leftJoin(users, eq(messages.authorUserId, users.id))
+      .leftJoin(agents, eq(messages.agentId, agents.id))
       .where(eq(messages.sessionId, id))
       .orderBy(messages.createdAt);
 
@@ -183,7 +187,16 @@ export async function sessionRoutes(app: FastifyInstance) {
         agentColor: row.agentColor ?? "",
       },
       messages: history.map((h) => ({
-        ...serializeMessage(h.message),
+        ...serializeMessage(
+          h.message,
+          h.msgAgentName
+            ? {
+                name: h.msgAgentName,
+                icon: h.msgAgentIcon ?? "",
+                color: h.msgAgentColor ?? "",
+              }
+            : null,
+        ),
         authorName: h.authorName,
       })),
       evalResults: evals,
@@ -266,7 +279,7 @@ export async function sessionRoutes(app: FastifyInstance) {
     const [row] = await db
       .select({ session: sessions, agent: agents })
       .from(sessions)
-      .innerJoin(agents, eq(sessions.agentId, agents.id))
+      .leftJoin(agents, eq(sessions.agentId, agents.id))
       .where(
         and(
           eq(sessions.id, id),
@@ -278,7 +291,6 @@ export async function sessionRoutes(app: FastifyInstance) {
     if (!row) return reply.code(404).send({ error: "Session not found" });
 
     const { resolveAgentModel } = await import("../models/resolve.js");
-    const model = await resolveAgentModel(row.agent);
 
     reply.raw.writeHead(200, {
       "content-type": "text/event-stream",
@@ -290,7 +302,9 @@ export async function sessionRoutes(app: FastifyInstance) {
     let fullText = "";
     let inputTokens = 0;
     let outputTokens = 0;
-    const toolCalls: ToolCall[] = [];
+    let toolCalls: ToolCall[] = [];
+    let currentModel: Awaited<ReturnType<typeof resolveAgentModel>> | undefined;
+    let currentAgent: typeof row.agent = row.agent;
 
     try {
       const history = await db
@@ -332,77 +346,142 @@ export async function sessionRoutes(app: FastifyInstance) {
         await db.update(sessions).set({ title }).where(eq(sessions.id, id));
       }
 
-      for await (const event of runAgentTurn({
-        agent: row.agent,
-        model,
-        user: req.user!,
-        sessionId: id,
-        history,
-        userContent: body.content,
-        requireApproval: orgSettings.requireApprovalForUserTools,
-        sessionApproved,
-        interactive: true,
-      })) {
-        if (event.type === "usage") {
-          inputTokens += event.inputTokens;
-          outputTokens += event.outputTokens;
-        } else if (event.type === "text") {
-          fullText += event.text;
-          sendEvent(reply, { type: "delta", text: event.text });
-        } else if (event.type === "tool-start") {
-          sendEvent(reply, { type: "tool-start", toolCall: event.toolCall });
-        } else if (event.type === "tool-end") {
-          toolCalls.push(event.toolCall);
-          sendEvent(reply, { type: "tool-end", toolCall: event.toolCall });
-        } else if (event.type === "approval-request") {
+      // Who responds? A pinned session answers as its agent. An Auto
+      // session asks the invisible orchestrator, which may pull several
+      // agents into this round (DECISIONS.md "Sessions are multi-party").
+      let responders: NonNullable<typeof row.agent>[];
+      if (row.agent) {
+        responders = [row.agent];
+      } else {
+        const { decideResponders } = await import("../runtime/router.js");
+        responders = await decideResponders(req.user!, history, body.content);
+        if (responders.length === 0) {
           sendEvent(reply, {
-            type: "approval-request",
-            approvalId: event.approvalId,
-            toolName: event.toolName,
-            serverName: event.serverName,
-            input: event.input,
+            type: "error",
+            error: "No agents available to you. Ask for access or create one.",
           });
-        } else if (event.type === "connect-request") {
-          sendEvent(reply, {
-            type: "connect-request",
-            connectId: event.connectId,
-            serverId: event.serverId,
-            serverName: event.serverName,
-            requiresOAuth: event.requiresOAuth,
-          });
+          return;
         }
       }
 
-      const [agentMessage] = await db
-        .insert(messages)
-        .values({
+      // Later responders in the round see the shared transcript including
+      // earlier replies (author-attributed inside the turn runtime).
+      const roundHistory = [...history];
+      let sawUserContent = false;
+      const judged: Array<{
+        agent: NonNullable<typeof row.agent>;
+        model: Awaited<ReturnType<typeof resolveAgentModel>>;
+      }> = [];
+
+      for (const responder of responders) {
+        currentAgent = responder;
+        sendEvent(reply, {
+          type: "turn-start",
+          agentId: responder.id,
+          agentName: responder.name,
+          agentIcon: responder.icon ?? "",
+          agentColor: responder.color ?? "",
+        });
+        const model = await resolveAgentModel(responder);
+        currentModel = model;
+        fullText = "";
+        inputTokens = 0;
+        outputTokens = 0;
+        toolCalls = [];
+
+        for await (const event of runAgentTurn({
+          agent: responder,
+          model,
+          user: req.user!,
           sessionId: id,
-          role: "agent",
-          content: fullText,
-          toolCalls,
-          inputTokens,
-          outputTokens,
-          modelId: model?.id ?? null,
-          priceInputPerMtok: model?.priceInputPerMtok ?? null,
-          priceOutputPerMtok: model?.priceOutputPerMtok ?? null,
-        })
-        .returning();
+          history: roundHistory,
+          // The user message rides history for every responder after the
+          // first, so it isn't duplicated in the prompt.
+          userContent: sawUserContent ? "" : body.content,
+          requireApproval: orgSettings.requireApprovalForUserTools,
+          sessionApproved,
+          interactive: true,
+        })) {
+          if (event.type === "usage") {
+            inputTokens += event.inputTokens;
+            outputTokens += event.outputTokens;
+          } else if (event.type === "text") {
+            fullText += event.text;
+            sendEvent(reply, { type: "delta", text: event.text });
+          } else if (event.type === "tool-start") {
+            sendEvent(reply, { type: "tool-start", toolCall: event.toolCall });
+          } else if (event.type === "tool-end") {
+            toolCalls.push(event.toolCall);
+            sendEvent(reply, { type: "tool-end", toolCall: event.toolCall });
+          } else if (event.type === "approval-request") {
+            sendEvent(reply, {
+              type: "approval-request",
+              approvalId: event.approvalId,
+              toolName: event.toolName,
+              serverName: event.serverName,
+              input: event.input,
+            });
+          } else if (event.type === "connect-request") {
+            sendEvent(reply, {
+              type: "connect-request",
+              connectId: event.connectId,
+              serverId: event.serverId,
+              serverName: event.serverName,
+              requiresOAuth: event.requiresOAuth,
+            });
+          }
+        }
+
+        const [agentMessage] = await db
+          .insert(messages)
+          .values({
+            sessionId: id,
+            role: "agent",
+            agentId: responder.id,
+            content: fullText,
+            toolCalls,
+            inputTokens,
+            outputTokens,
+            modelId: model?.id ?? null,
+            priceInputPerMtok: model?.priceInputPerMtok ?? null,
+            priceOutputPerMtok: model?.priceOutputPerMtok ?? null,
+          })
+          .returning();
+        sendEvent(reply, {
+          type: "done",
+          message: {
+            ...serializeMessage(agentMessage!, {
+              name: responder.name,
+              icon: responder.icon ?? "",
+              color: responder.color ?? "",
+            }),
+            authorName: null,
+          },
+        });
+
+        if (!sawUserContent) {
+          roundHistory.push(userMessage!);
+          sawUserContent = true;
+        }
+        roundHistory.push(agentMessage!);
+        judged.push({ agent: responder, model });
+      }
+
       await db
         .update(sessions)
         .set({ updatedAt: new Date() })
         .where(eq(sessions.id, id));
-      sendEvent(reply, {
-        type: "done",
-        message: { ...serializeMessage(agentMessage!), authorName: null },
-      });
 
-      // Live evals: judge this session against the agent's criteria in the
-      // background — results appear on the session when it's next loaded.
-      void judgeSession({
-        sessionId: id,
-        agent: row.agent,
-        model,
-      }).catch((err) => req.log.warn({ err }, "live eval failed"));
+      // Live evals: judge each responder against ITS OWN criteria — AFTER
+      // the whole round, so a judge's model calls can't interleave with a
+      // later responder's turn.
+      for (const j of judged) {
+        void judgeSession({
+          sessionId: id,
+          agent: j.agent,
+          model: j.model,
+        }).catch((err) => req.log.warn({ err }, "live eval failed"));
+      }
     } catch (err) {
       // Operational, not a server bug: the failure is surfaced to the user
       // in the thread. warn keeps the log-cleanliness gate meaningful.
@@ -415,14 +494,15 @@ export async function sessionRoutes(app: FastifyInstance) {
         await db.insert(messages).values({
           sessionId: id,
           role: "agent",
+          agentId: currentAgent?.id ?? null,
           content: fullText,
           error: message,
           toolCalls,
           inputTokens,
           outputTokens,
-          modelId: model?.id ?? null,
-          priceInputPerMtok: model?.priceInputPerMtok ?? null,
-          priceOutputPerMtok: model?.priceOutputPerMtok ?? null,
+          modelId: currentModel?.id ?? null,
+          priceInputPerMtok: currentModel?.priceInputPerMtok ?? null,
+          priceOutputPerMtok: currentModel?.priceOutputPerMtok ?? null,
         });
         await db
           .update(sessions)

@@ -317,14 +317,21 @@ test("auto routes by intent across usable agents", async () => {
     "Routed correctly",
     { timeout: 15_000 },
   );
-  // The thread is pinned to the routed agent
-  await expect(page.locator(".thread-composer .composer-agent")).toHaveText(
-    "Eng On-Call",
-  );
+  // Multi-party Auto: the session stays UNPINNED (the orchestrator decides
+  // per message); the reply bubble carries the responder's own identity.
+  await expect(page.locator(".thread-composer .composer-agent")).toHaveText("Auto");
+  await expect(
+    page.locator(".msg-agent .agent-name", { hasText: "Eng On-Call" }),
+  ).toBeVisible();
 
+  const [autoSession] = await dbQuery<{ agent_id: string | null; id: string }>(
+    "SELECT id, agent_id FROM sessions WHERE title LIKE 'The CI pipeline is failing%'",
+  );
+  expect(autoSession!.agent_id).toBeNull();
   const routed = await dbQuery<{ slug: string }>(
-    `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
-     WHERE s.title LIKE 'The CI pipeline is failing%'`,
+    `SELECT a.slug FROM messages m JOIN agents a ON a.id = m.agent_id
+     WHERE m.session_id = $1 AND m.role = 'agent'`,
+    [autoSession!.id],
   );
   expect(routed).toEqual([{ slug: "eng-on-call" }]);
 });
@@ -373,14 +380,72 @@ test("auto reaches the Builder for build-an-agent asks", async () => {
     "what should the agent do",
     { timeout: 15_000 },
   );
-  await expect(page.locator(".thread-composer .composer-agent")).toHaveText(
-    "Builder",
-  );
+  await expect(
+    page.locator(".msg-agent .agent-name", { hasText: "Builder" }),
+  ).toBeVisible();
   const routedToBuilder = await dbQuery<{ builtin: string | null }>(
-    `SELECT a.builtin FROM sessions s JOIN agents a ON a.id = s.agent_id
-     WHERE s.title LIKE 'Help me build an agent%'`,
+    `SELECT a.builtin FROM messages m
+     JOIN sessions s ON s.id = m.session_id
+     JOIN agents a ON a.id = m.agent_id
+     WHERE s.title LIKE 'Help me build an agent%' AND m.role = 'agent'`,
   );
   expect(routedToBuilder).toEqual([{ builtin: "builder" }]);
+});
+
+test("multi-party: the orchestrator pulls two agents into one round", async () => {
+  // Wait out the Builder round's judging (the Builder has no criteria, but
+  // Eng On-Call's earlier round may still be grading) before scripting.
+  await new Promise((r) => setTimeout(r, 800));
+
+  // Script: orchestrator picks BOTH agents; each replies in sequence.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([
+      { type: "text", text: "eng-on-call, claude-agent" },
+      { type: "text", text: "Deploys are green; the docs side is yours." },
+      { type: "text", text: "Docs updated to match the release." },
+    ]),
+  });
+
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await expect(page.locator(".session-greeting")).toBeVisible();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("Check deploys and update the release docs");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // Two distinct voices answer the same message, each under its own name.
+  await expect(
+    page.locator(".msg-agent .agent-name", { hasText: "Eng On-Call" }),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.locator(".msg-agent .agent-name", { hasText: "Claude Agent" }),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Docs updated",
+  );
+
+  // Authorship is recorded per message; the session stays unpinned.
+  const [mp] = await dbQuery<{ id: string; agent_id: string | null }>(
+    "SELECT id, agent_id FROM sessions WHERE title LIKE 'Check deploys and update%'",
+  );
+  expect(mp!.agent_id).toBeNull();
+  const authors = await dbQuery<{ slug: string }>(
+    `SELECT a.slug FROM messages m JOIN agents a ON a.id = m.agent_id
+     WHERE m.session_id = $1 AND m.role = 'agent' ORDER BY m.created_at`,
+    [mp!.id],
+  );
+  expect(authors).toEqual([{ slug: "eng-on-call" }, { slug: "claude-agent" }]);
+
+  // The second responder SAW the first one's reply, author-attributed —
+  // the shared-transcript guarantee (DECISIONS.md).
+  const anthropicLog = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=api.anthropic.com`)
+  ).json()) as { requests: Array<{ body: unknown }> };
+  expect(
+    JSON.stringify(anthropicLog.requests.at(-1)?.body ?? {}),
+  ).toContain("[Eng On-Call (agent) replied]");
 });
 
 test("spot-check: a disputed verdict queues for review; overturn flips it", async () => {

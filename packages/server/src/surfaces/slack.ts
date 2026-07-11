@@ -428,7 +428,7 @@ export async function processSlackEvent(
   // roster — the general-purpose Rabble interface ("build me an agent
   // that…" works from Slack).
   let agent: typeof agents.$inferSelect;
-  if (existingSession) {
+  if (existingSession?.agentId) {
     const [owner] = await db
       .select()
       .from(agents)

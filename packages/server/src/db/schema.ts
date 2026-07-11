@@ -187,9 +187,9 @@ export const sessions = pgTable("sessions", {
   userId: uuid("user_id")
     .notNull()
     .references(() => users.id),
-  agentId: uuid("agent_id")
-    .notNull()
-    .references(() => agents.id),
+  /** NULL = a multi-party "Auto" session: no pinned agent, the orchestrator
+   * decides who responds to each message (DECISIONS.md). */
+  agentId: uuid("agent_id").references(() => agents.id),
   title: text("title").notNull().default(""),
   // Where the session originates: "Web" or a delivery point like "Slack #eng-oncall"
   surface: text("surface").notNull().default("Web"),
@@ -214,6 +214,12 @@ export const messages = pgTable("messages", {
     .notNull()
     .references(() => sessions.id, { onDelete: "cascade" }),
   role: text("role", { enum: ["user", "agent"] }).notNull(),
+  /** The agent that authored this message (role 'agent'); NULL for user
+   * rows. In multi-party sessions this is the source of per-bubble
+   * identity, judging, and spend attribution. */
+  agentId: uuid("agent_id").references(() => agents.id, {
+    onDelete: "set null",
+  }),
   content: text("content").notNull(),
   // Set on an agent message when its turn failed — the record keeps the error
   // rather than dropping the turn, so a reload shows the failure inline.

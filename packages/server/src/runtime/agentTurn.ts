@@ -630,12 +630,44 @@ export async function* runAgentTurn(
     tools: governedTools,
   });
 
+  // Multi-party transcripts: another agent's reply is attributed user-role
+  // context, never this agent's own voice — each participant sees the full
+  // shared conversation with authorship intact (DECISIONS.md).
+  const otherAgentIds = [
+    ...new Set(
+      input.history
+        .filter((m) => m.role === "agent" && m.agentId && m.agentId !== input.agent.id)
+        .map((m) => m.agentId!),
+    ),
+  ];
+  const otherNames = new Map<string, string>(
+    otherAgentIds.length
+      ? (
+          await db
+            .select({ id: agentsTable.id, name: agentsTable.name })
+            .from(agentsTable)
+            .where(inArray(agentsTable.id, otherAgentIds))
+        ).map((r) => [r.id, r.name] as [string, string])
+      : [],
+  );
   const turnMessages = [
-    ...input.history.map((m) => ({
-      role: m.role === "user" ? ("user" as const) : ("assistant" as const),
-      content: m.content,
-    })),
-    { role: "user" as const, content: input.userContent },
+    ...input.history.map((m) => {
+      if (m.role !== "agent") {
+        return { role: "user" as const, content: m.content };
+      }
+      if (m.agentId && m.agentId !== input.agent.id) {
+        return {
+          role: "user" as const,
+          content: `[${otherNames.get(m.agentId) ?? "Another agent"} (agent) replied]: ${m.content}`,
+        };
+      }
+      return { role: "assistant" as const, content: m.content };
+    }),
+    // Empty when the triggering user message already sits in history (a
+    // later responder in the same multi-party round).
+    ...(input.userContent
+      ? [{ role: "user" as const, content: input.userContent }]
+      : []),
   ];
 
   // Drive the graph in the background; all events flow through the channel.

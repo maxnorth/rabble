@@ -77,11 +77,16 @@ export function serializeSession(row: typeof sessions.$inferSelect): Session {
 
 export function serializeMessage(
   row: typeof messages.$inferSelect,
+  agent?: { name: string; icon: string; color: string } | null,
 ): Omit<Message, "authorName"> {
   return {
     id: row.id,
     sessionId: row.sessionId,
     role: row.role,
+    agentId: row.agentId ?? null,
+    agentName: agent?.name ?? null,
+    agentIcon: agent?.icon ?? null,
+    agentColor: agent?.color ?? null,
     content: row.content,
     toolCalls: (row.toolCalls ?? []) as ToolCall[],
     error: row.error ?? null,

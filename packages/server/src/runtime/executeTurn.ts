@@ -86,6 +86,7 @@ export async function executeTurnAndPersist(
     await db.insert(messages).values({
       sessionId: input.sessionId,
       role: "agent",
+      agentId: input.agent.id,
       content: fullText,
       error: err instanceof Error ? err.message : "Agent turn failed",
       toolCalls,
@@ -105,6 +106,7 @@ export async function executeTurnAndPersist(
   await db.insert(messages).values({
     sessionId: input.sessionId,
     role: "agent",
+    agentId: input.agent.id,
     content: fullText,
     toolCalls,
     inputTokens,

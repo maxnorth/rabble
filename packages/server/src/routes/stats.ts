@@ -194,14 +194,16 @@ export async function statsRoutes(app: FastifyInstance) {
       .groupBy(agents.id, agents.name)
       .orderBy(sql`round(avg(CASE WHEN ${evalResults.passed} THEN 100.0 ELSE 0.0 END)) DESC`);
 
+    // Multi-party Auto sessions have no pinned agent — they bucket as
+    // "Auto" so the per-agent totals still sum to the session KPI.
     const perAgent = await db
       .select({
         agentId: sessions.agentId,
-        agentName: agents.name,
+        agentName: sql<string>`coalesce(${agents.name}, 'Auto')`,
         count: sql<number>`count(*)::int`,
       })
       .from(sessions)
-      .innerJoin(agents, eq(sessions.agentId, agents.id))
+      .leftJoin(agents, eq(sessions.agentId, agents.id))
       .where(and(eq(sessions.orgId, orgId), gte(sessions.createdAt, since), ...agentFilter))
       .groupBy(sessions.agentId, agents.name)
       .orderBy(sql`count(*) DESC`)
@@ -252,17 +254,20 @@ export async function statsRoutes(app: FastifyInstance) {
     // model is unpriced. Group by agent id, not name: names aren't unique, so
     // grouping by name would merge two distinct agents' cost into one row.
     const spendResult = await db.execute(sql`
-      SELECT a.id AS agent_id, a.name AS agent_name,
+      SELECT a.id AS agent_id, coalesce(a.name, 'Auto') AS agent_name,
              count(DISTINCT s.id)::int AS sessions,
              sum(m.input_tokens  * coalesce(m.price_input_per_mtok,  mo.price_input_per_mtok,  0) / 1e6
                + m.output_tokens * coalesce(m.price_output_per_mtok, mo.price_output_per_mtok, 0) / 1e6
              )::numeric(12,4) AS spend
       FROM messages m
       JOIN sessions s ON s.id = m.session_id
-      JOIN agents a ON a.id = s.agent_id
+      -- Spend follows the message AUTHOR (multi-party sessions attribute
+      -- each reply to the agent that spoke); pinned sessions fall back to
+      -- the session agent for user rows.
+      LEFT JOIN agents a ON a.id = coalesce(m.agent_id, s.agent_id)
       LEFT JOIN models mo ON mo.id = coalesce(m.model_id, a.model_id)
       WHERE s.org_id = ${orgId} AND m.created_at >= ${since}
-        ${agentId ? sql`AND s.agent_id = ${agentId}` : sql``}
+        ${agentId ? sql`AND coalesce(m.agent_id, s.agent_id) = ${agentId}` : sql``}
         ${userId ? sql`AND s.user_id = ${userId}` : sql``}
       GROUP BY a.id, a.name
       ORDER BY spend DESC
@@ -288,7 +293,7 @@ export async function statsRoutes(app: FastifyInstance) {
       })
       .from(messages)
       .innerJoin(sessions, eq(messages.sessionId, sessions.id))
-      .innerJoin(agents, eq(sessions.agentId, agents.id))
+      .leftJoin(agents, sql`${agents.id} = coalesce(${messages.agentId}, ${sessions.agentId})`)
       .leftJoin(sql`models mo`, sql`mo.id = coalesce(messages.model_id, agents.model_id)`)
       .where(and(eq(sessions.orgId, orgId), gte(messages.createdAt, since), ...agentFilter))
       .groupBy(sql`coalesce(mo.display_name, '(no model)')`)

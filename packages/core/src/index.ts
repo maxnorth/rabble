@@ -276,6 +276,12 @@ export const messageSchema = z.object({
   role: messageRoleSchema,
   /** Display name of the human who wrote a user message (null = unknown/agent). */
   authorName: z.string().nullable().default(null),
+  /** The agent that authored this message (multi-party sessions render
+   * per-bubble identity from these; null on user rows). */
+  agentId: z.string().uuid().nullable().optional(),
+  agentName: z.string().nullable().optional(),
+  agentIcon: z.string().nullable().optional(),
+  agentColor: z.string().nullable().optional(),
   content: z.string(),
   toolCalls: z.array(toolCallSchema),
   /** Set when this agent turn failed; the failure is kept as part of the record. */
@@ -288,7 +294,9 @@ export const sessionSchema = z.object({
   id: z.string().uuid(),
   orgId: z.string().uuid(),
   userId: z.string().uuid(),
-  agentId: z.string().uuid(),
+  /** NULL = a multi-party "Auto" session: the invisible orchestrator picks
+   * who responds to each message (DECISIONS.md). */
+  agentId: z.string().uuid().nullable(),
   title: z.string(),
   /** Where the session originates: "Web" or e.g. "Slack #eng-oncall". */
   surface: z.string().default("Web"),
@@ -298,10 +306,11 @@ export const sessionSchema = z.object({
 export type Session = z.infer<typeof sessionSchema>;
 
 export const sessionWithAgentSchema = sessionSchema.extend({
-  agentName: z.string(),
-  agentSlug: z.string(),
-  agentIcon: z.string().default(""),
-  agentColor: z.string().default(""),
+  /** Null for Auto sessions — the UI shows "Auto". */
+  agentName: z.string().nullable(),
+  agentSlug: z.string().nullable(),
+  agentIcon: z.string().nullable().default(""),
+  agentColor: z.string().nullable().default(""),
 });
 export type SessionWithAgent = z.infer<typeof sessionWithAgentSchema>;
 
@@ -328,6 +337,15 @@ export type PostMessageRequest = z.infer<typeof postMessageSchema>;
 export const streamEventSchema = z.discriminatedUnion("type", [
   /** The persisted user message, echoed back first. */
   z.object({ type: z.literal("user-message"), message: messageSchema }),
+  /** A responder begins its turn — multi-party sessions stream several
+   * agents' replies to one message; this stamps who is speaking next. */
+  z.object({
+    type: z.literal("turn-start"),
+    agentId: z.string().uuid(),
+    agentName: z.string(),
+    agentIcon: z.string().default(""),
+    agentColor: z.string().default(""),
+  }),
   /** Incremental agent text. */
   z.object({ type: z.literal("delta"), text: z.string() }),
   /** A tool call started (input known, output pending). */

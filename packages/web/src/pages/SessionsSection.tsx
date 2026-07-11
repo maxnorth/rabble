@@ -71,7 +71,7 @@ export function SessionsSection() {
     (s) =>
       !query ||
       s.title.toLowerCase().includes(query.toLowerCase()) ||
-      s.agentName.toLowerCase().includes(query.toLowerCase()),
+      (s.agentName ?? "Auto").toLowerCase().includes(query.toLowerCase()),
   );
 
   return (
@@ -96,8 +96,8 @@ export function SessionsSection() {
           >
             <span
               className="status-dot"
-              style={{ background: AGENT_COLORS[s.agentColor] ?? "var(--green)" }}
-              title={s.agentName}
+              style={{ background: AGENT_COLORS[s.agentColor ?? ""] ?? "var(--green)" }}
+              title={s.agentName ?? "Auto"}
             />
             <span className="label">
               {s.title || "New session"}
@@ -108,7 +108,7 @@ export function SessionsSection() {
                   color: "var(--text-muted)",
                 }}
               >
-                {s.agentName} · {relativeTime(s.updatedAt)}
+                {s.agentName ?? "Auto"} · {relativeTime(s.updatedAt)}
               </span>
             </span>
           </NavLink>
@@ -823,7 +823,23 @@ function SessionThread({ sessionId }: { sessionId: string }) {
               requiresOAuth: event.requiresOAuth,
             },
           ]);
+        } else if (event.type === "turn-start") {
+          // Multi-party: the next responder begins — restyle the live bubble.
+          setStreamingAgent({
+            name: event.agentName,
+            glyph:
+              event.agentIcon ||
+              event.agentName
+                .split(/\s+/)
+                .map((p: string) => p[0])
+                .slice(0, 2)
+                .join("")
+                .toUpperCase(),
+            color: AGENT_COLORS[event.agentColor ?? ""] ?? "var(--accent-text)",
+          });
+          setStreamingText("");
         } else if (event.type === "done") {
+          // One responder finished; more may follow in the same round.
           setMessages((prev) => [...prev, event.message]);
           setStreamingText(null);
           setLiveTools([]);
@@ -866,6 +882,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
       // done/error event must not leave a permanent typing indicator or
       // spinning tool chips.
       setStreamingText(null);
+      setStreamingAgent(null);
       setLiveTools([]);
       setApprovals([]);
       if (streamAbort.current === abort) streamAbort.current = null;
@@ -906,16 +923,34 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const agentName = session.data?.session.agentName ?? "Agent";
-  const initials = agentName
-    .split(/\s+/)
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-  const agentGlyph = session.data?.session.agentIcon || initials;
+  const isAuto = session.data ? session.data.session.agentId === null : false;
+  const agentName = session.data?.session.agentName ?? (isAuto ? "Auto" : "Agent");
+  const glyphFor = (name: string, icon?: string | null) =>
+    icon ||
+    name
+      .split(/\s+/)
+      .map((p) => p[0])
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+  const agentGlyph = isAuto ? "✳" : glyphFor(agentName, session.data?.session.agentIcon);
   const agentColor =
     AGENT_COLORS[session.data?.session.agentColor ?? ""] ?? "var(--accent-text)";
+  // Multi-party sessions carry per-message identity; pinned sessions fall
+  // back to the session's agent.
+  const bubbleIdentity = (m: Message) => ({
+    name: m.agentName ?? agentName,
+    glyph: m.agentName ? glyphFor(m.agentName, m.agentIcon) : agentGlyph,
+    color: m.agentColor ? (AGENT_COLORS[m.agentColor] ?? agentColor) : agentColor,
+    agentId: m.agentId ?? session.data?.session.agentId ?? null,
+  });
+  // While streaming, turn-start stamps who is speaking (Auto sessions can
+  // stream several responders to one message).
+  const [streamingAgent, setStreamingAgent] = useState<{
+    name: string;
+    glyph: string;
+    color: string;
+  } | null>(null);
   const evalResults = session.data?.evalResults ?? [];
 
   const passedCount = evalResults.filter((r) => r.passed).length;
@@ -1083,6 +1118,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             }}
             onClick={() =>
               session.data &&
+              session.data.session.agentId &&
               setDrawer({ kind: "agent", agentId: session.data.session.agentId })
             }
           >
@@ -1115,17 +1151,17 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                 <div key={m.id} className="msg-agent">
                   <div
                     className="avatar"
-                    style={{ cursor: "pointer", color: agentColor }}
+                    style={{ cursor: "pointer", color: bubbleIdentity(m).color }}
                     title="Agent profile"
-                    onClick={() =>
-                      session.data &&
-                      setDrawer({ kind: "agent", agentId: session.data.session.agentId })
-                    }
+                    onClick={() => {
+                      const target = bubbleIdentity(m).agentId;
+                      if (target) setDrawer({ kind: "agent", agentId: target });
+                    }}
                   >
-                    {agentGlyph}
+                    {bubbleIdentity(m).glyph}
                   </div>
                   <div className="bubble">
-                    <div className="agent-name">{agentName}</div>
+                    <div className="agent-name">{bubbleIdentity(m).name}</div>
                     {!inlineToolCalls &&
                       m.toolCalls.length > 0 &&
                       !expandedTools.has(m.id) && (
@@ -1174,11 +1210,11 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             )}
             {(streamingText !== null || liveTools.length > 0 || approvals.length > 0) && (
               <div className="msg-agent">
-                <div className="avatar" style={{ color: agentColor }}>
-                  {agentGlyph}
+                <div className="avatar" style={{ color: streamingAgent?.color ?? agentColor }}>
+                  {streamingAgent?.glyph ?? agentGlyph}
                 </div>
                 <div className="bubble">
-                  <div className="agent-name">{agentName}</div>
+                  <div className="agent-name">{streamingAgent?.name ?? agentName}</div>
                   {liveTools.map((t) => (
                     <ToolCallChip
                       key={t.toolCall.id}
@@ -1192,15 +1228,12 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                       key={a.approvalId}
                       approval={a}
                       onDecide={(d) => void decide(a, d)}
-                      agentId={session.data?.session.agentId}
+                      agentId={session.data?.session.agentId ?? undefined}
                       trackRecord={{ score: agentRow?.evalScore ?? null }}
-                      onViewTrackRecord={() =>
-                        session.data &&
-                        setDrawer({
-                          kind: "track-record",
-                          agentId: session.data.session.agentId,
-                        })
-                      }
+                      onViewTrackRecord={() => {
+                        const target = session.data?.session.agentId;
+                        if (target) setDrawer({ kind: "track-record", agentId: target });
+                      }}
                     />
                   ))}
                   {connects.map((c) => (
@@ -1228,7 +1261,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
         <div className="thread-composer">
           <div className="composer">
             <textarea
-              placeholder={`Message ${agentName}…`}
+              placeholder={isAuto ? "Message your agents…" : `Message ${agentName}…`}
               value={text}
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => {
@@ -1332,7 +1365,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                 Every grade is spot-checkable. Disagree to queue it for human
                 review on the agent's evals tab.
               </p>
-              {session.data && (
+              {session.data?.session.agentId && (
                 <FreezeCard
                   sessionId={sessionId}
                   agentId={session.data.session.agentId}

@@ -84,13 +84,10 @@ async function executeRecordedCall(
   );
 }
 
-/** Flip the persisted transcript chip for this ask from pending → outcome. */
-async function updatePersistedToolCall(
+/** Find the persisted message carrying this ask's tool call, if any. */
+async function findMessageWithAsk(
   row: typeof approvals.$inferSelect,
-  status: string,
-  deciderName: string | null,
-  output: string | null,
-): Promise<void> {
+): Promise<{ id: string; calls: ToolCall[]; idx: number } | null> {
   const sessionMessages = await db
     .select()
     .from(messages)
@@ -98,19 +95,50 @@ async function updatePersistedToolCall(
   for (const m of sessionMessages) {
     const calls = (m.toolCalls ?? []) as ToolCall[];
     const idx = calls.findIndex((c) => c.approval?.approvalId === row.id);
-    if (idx === -1) continue;
-    calls[idx] = {
-      ...calls[idx]!,
-      output: output ?? calls[idx]!.output,
-      approval: {
-        status: status as NonNullable<ToolCall["approval"]>["status"],
-        decidedByName: deciderName,
-        approvalId: row.id,
-      },
-    };
-    await db.update(messages).set({ toolCalls: calls }).where(eq(messages.id, m.id));
-    return;
+    if (idx !== -1) return { id: m.id, calls, idx };
   }
+  return null;
+}
+
+/**
+ * A decision can land while the turn that raised the ask is still
+ * streaming (the card shows up mid-turn over SSE, and the turn no longer
+ * blocks). Wait — bounded — for that turn to persist its message, so the
+ * chip update finds its target and the follow-up turn's messages sort
+ * AFTER the reply that asked. If the turn crashed before persisting, give
+ * up and proceed; the follow-up still informs the agent.
+ */
+async function waitForPersistedAsk(
+  row: typeof approvals.$inferSelect,
+  timeoutMs = 20_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await findMessageWithAsk(row)) return;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
+/** Flip the persisted transcript chip for this ask from pending → outcome. */
+async function updatePersistedToolCall(
+  row: typeof approvals.$inferSelect,
+  status: string,
+  deciderName: string | null,
+  output: string | null,
+): Promise<void> {
+  const found = await findMessageWithAsk(row);
+  if (!found) return;
+  const { id, calls, idx } = found;
+  calls[idx] = {
+    ...calls[idx]!,
+    output: output ?? calls[idx]!.output,
+    approval: {
+      status: status as NonNullable<ToolCall["approval"]>["status"],
+      decidedByName: deciderName,
+      approvalId: row.id,
+    },
+  };
+  await db.update(messages).set({ toolCalls: calls }).where(eq(messages.id, id));
 }
 
 /** Post a reply into the Slack thread a session lives in (best-effort). */
@@ -210,7 +238,9 @@ export async function decideDurableApproval(opts: {
           }${opts.decision === "run-as-service" ? " as the org service account" : ""}`,
   });
 
-  // 2. Transcript chip: pending → outcome.
+  // 2. Transcript chip: pending → outcome. First wait out the turn that
+  // raised the ask — a decision can arrive while it is still streaming.
+  await waitForPersistedAsk(row);
   await updatePersistedToolCall(
     row,
     status,

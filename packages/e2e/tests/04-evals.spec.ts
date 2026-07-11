@@ -436,12 +436,16 @@ test("multi-party: the orchestrator pulls two agents into one round", async () =
     "SELECT id, agent_id FROM sessions WHERE title LIKE 'Check deploys and update%'",
   );
   expect(mp!.agent_id).toBeNull();
-  const authors = await dbQuery<{ slug: string }>(
-    `SELECT a.slug FROM messages m JOIN agents a ON a.id = m.agent_id
-     WHERE m.session_id = $1 AND m.role = 'agent' ORDER BY m.created_at`,
-    [mp!.id],
-  );
-  expect(authors).toEqual([{ slug: "eng-on-call" }, { slug: "claude-agent" }]);
+  // The second responder's authored row can trail its streamed bubble.
+  await expect
+    .poll(async () =>
+      dbQuery<{ slug: string }>(
+        `SELECT a.slug FROM messages m JOIN agents a ON a.id = m.agent_id
+         WHERE m.session_id = $1 AND m.role = 'agent' ORDER BY m.created_at`,
+        [mp!.id],
+      ),
+    )
+    .toEqual([{ slug: "eng-on-call" }, { slug: "claude-agent" }]);
 
   // The second responder SAW the first one's reply, author-attributed —
   // the shared-transcript guarantee (DECISIONS.md).

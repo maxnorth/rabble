@@ -14,6 +14,10 @@ interface JsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
+// Sessions issued by initialize; like real streamable-HTTP servers (e.g.
+// mcp.render.com), every other method 400s without a valid session header.
+const mcpSessions = new Set<string>();
+
 export function mountMcp(app: FastifyInstance): void {
   app.post("/mock/mcp/:serverKey", async (req, reply) => {
     const { serverKey } = req.params as { serverKey: string };
@@ -32,13 +36,24 @@ export function mountMcp(app: FastifyInstance): void {
     const respond = (result: unknown) =>
       reply.send({ jsonrpc: "2.0", id: rpc.id ?? null, result });
 
+    if (rpc.method !== "initialize") {
+      const sessionId = String(req.headers["mcp-session-id"] ?? "");
+      if (!mcpSessions.has(sessionId)) {
+        return reply.code(400).send("Invalid session ID");
+      }
+    }
+
     switch (rpc.method) {
-      case "initialize":
+      case "initialize": {
+        const sessionId = `mcp-session-${Math.random().toString(36).slice(2, 10)}`;
+        mcpSessions.add(sessionId);
+        reply.header("mcp-session-id", sessionId);
         return respond({
           protocolVersion: "2025-03-26",
           capabilities: { tools: {} },
           serverInfo: { name: `emulated-${serverKey}`, version: "1.0.0" },
         });
+      }
       case "notifications/initialized":
         return reply.code(202).send();
       case "tools/list":

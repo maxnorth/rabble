@@ -330,6 +330,27 @@ test("auto routes by intent across usable agents", async () => {
 });
 
 test("auto reaches the Builder for build-an-agent asks", async () => {
+  // The previous Auto turn's async judging consumes emulator replies after
+  // its test already passed — wait for it to settle, or the scripted router
+  // verdict below gets stolen by a judge call.
+  const [ciSession] = await dbQuery<{ id: string }>(
+    "SELECT id FROM sessions WHERE title LIKE 'The CI pipeline is failing%'",
+  );
+  const [criteria] = await dbQuery<{ n: number }>(
+    `SELECT count(*)::int AS n FROM eval_criteria ec
+     JOIN agents a ON a.id = ec.agent_id
+     WHERE a.slug = 'eng-on-call' AND ec.enabled`,
+  );
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ n: number }>(
+        "SELECT count(*)::int AS n FROM eval_results WHERE session_id = $1",
+        [ciSession!.id],
+      );
+      return rows[0]?.n;
+    })
+    .toBe(criteria!.n);
+
   // The Builder rides the Auto roster last — "help me build…" must land on
   // it instead of the least-wrong regular agent.
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {

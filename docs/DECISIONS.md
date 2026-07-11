@@ -37,6 +37,54 @@ injection), so the SDK can be swapped for something custom later without
 touching routes, schema, or UI. Keep SDK types out of `@rabblehq/core` and out
 of API contracts.
 
+## Sessions are multi-party; "Auto" is an invisible orchestrator
+
+An "Auto" session is not pinned to an agent (`sessions.agent_id` is NULL).
+"Auto" is an outer-layer orchestrator, not a persona:
+
+- **It never speaks.** It has no voice in the transcript and no identity a
+  user can address. Its only capabilities are pulling relevant agents into
+  the conversation and deciding who reacts to which message.
+- **Sessions are multi-party.** Any number of agents can participate in one
+  conversation. Every participant sees the full shared transcript — every
+  message, from the user and from other agents, author-attributed — when it
+  is next invoked.
+- **A reaction layer sits between messages and agents.** On each message the
+  orchestrator decides which agent(s) should respond (a direct user ask gets
+  at least one responder; an agent's message may warrant a reaction from
+  another agent, or none). Agents never self-select.
+- **Authorship is recorded per message** (`messages.agent_id`), so judging,
+  track records, spend, and audit accrue to the agent that actually spoke —
+  and every responding agent runs under its own governance (model, tools,
+  gates, approvals). The orchestrator grants no powers of its own.
+
+Pinned sessions (an explicitly chosen agent, Slack identity links, threads)
+keep their single-voice behavior; a thread's session always answers as its
+agent.
+
+## Approvals are asynchronous
+
+An agent turn never blocks waiting for a human decision.
+
+- When a user-auth tool call needs approval, the ask is recorded durably,
+  surfaced on every surface (web approval card, Slack DM buttons), and the
+  tool returns "pending approval" to the model immediately — the agent
+  acknowledges and the turn completes. No held connections, no timeout
+  racing a human.
+- **On approval, the platform executes the approved action** — exactly the
+  call that was asked (same tool, same arguments, same acting identity),
+  never a re-plan — records the outcome, and notifies the agent by starting
+  a follow-up turn in the session ("approved and executed: …"), so the agent
+  can continue the work with the result in hand.
+- Deny and expiry notify the agent the same way, without executing.
+- The decision outlives the process: pending approvals survive restarts and
+  can be decided hours later from any surface.
+
+Rationale: synchronous approval gates couple agent compute to human latency
+and lose work on timeout. The approved-action-executes-verbatim rule is what
+makes the async gate safe — approval authorizes one concrete action, not
+"whatever the agent does next".
+
 ## Scheduling & background work
 
 **Hatchet** (hatchet.dev) is the designated engine for all scheduling and

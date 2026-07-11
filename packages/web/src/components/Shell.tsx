@@ -84,6 +84,29 @@ export function Shell({ user }: { user: User }) {
   useEffect(() => {
     setDrawer(false);
   }, [location.pathname]);
+
+  // Swipe left anywhere while the drawer is open closes it — the gesture
+  // phone users reach for before they look for the scrim.
+  useEffect(() => {
+    let startX = 0;
+    let startY = 0;
+    const onStart = (e: TouchEvent) => {
+      startX = e.touches[0]?.clientX ?? 0;
+      startY = e.touches[0]?.clientY ?? 0;
+    };
+    const onEnd = (e: TouchEvent) => {
+      if (document.documentElement.dataset.drawer !== "open") return;
+      const dx = (e.changedTouches[0]?.clientX ?? 0) - startX;
+      const dy = (e.changedTouches[0]?.clientY ?? 0) - startY;
+      if (dx < -48 && Math.abs(dy) < 72) setDrawer(false);
+    };
+    document.addEventListener("touchstart", onStart, { passive: true });
+    document.addEventListener("touchend", onEnd, { passive: true });
+    return () => {
+      document.removeEventListener("touchstart", onStart);
+      document.removeEventListener("touchend", onEnd);
+    };
+  }, []);
   const initials = user.name
     .split(/\s+/)
     .map((p) => p[0])

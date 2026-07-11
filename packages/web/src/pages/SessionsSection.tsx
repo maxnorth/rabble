@@ -525,6 +525,7 @@ function ApprovalCard({
       </div>
       {trackRecord && (
         <div
+          className="evidence"
           style={{
             display: "flex",
             alignItems: "center",

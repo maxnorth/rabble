@@ -1837,6 +1837,42 @@ select:focus-visible {
     box-shadow: var(--shadow-pop);
   }
 
+  /* Touch targets: toggles grow to a comfortable thumb size. */
+  .toggle {
+    width: 42px;
+    height: 24px;
+  }
+
+  .toggle::after {
+    width: 20px;
+    height: 20px;
+  }
+
+  .toggle.on::after {
+    transform: translateX(18px);
+  }
+
+  /* The approval card fits a phone: evidence chips wrap, and the three
+     decisions become full-width stacked buttons — no mis-taps on the one
+     choice that acts as you. */
+  .approval-card {
+    padding: 12px;
+  }
+
+  .approval-card .evidence {
+    flex-wrap: wrap;
+  }
+
+  .approval-card .actions {
+    flex-wrap: wrap;
+  }
+
+  .approval-card .actions .btn {
+    flex: 1 1 100%;
+    justify-content: center;
+    min-height: 40px;
+  }
+
   /* Session thread: the header clears the floating hamburger and wraps;
      the composer keeps a little air above the bottom bar. */
   .thread-head {

@@ -5,12 +5,36 @@
  * through the org's Slack connection. Best-effort — a failed notification
  * never fails the turn.
  */
-import { and, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { userPreferencesSchema } from "@rabblehq/core";
 import { db } from "../db/client.js";
 import { connections, type users } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
 import { slackClient } from "../surfaces/slackClient.js";
+
+/**
+ * The Slack connection platform functionality speaks through: the org's
+ * designated PRIMARY connection when one exists, else any connected
+ * workspace (the pre-primary behavior). Deterministic — notifications,
+ * approval DMs, and future core features all resolve the same way.
+ */
+export async function orgSlackConnection(
+  orgId: string,
+): Promise<typeof connections.$inferSelect | undefined> {
+  const [slack] = await db
+    .select()
+    .from(connections)
+    .where(
+      and(
+        eq(connections.orgId, orgId),
+        eq(connections.vendor, "slack"),
+        isNotNull(connections.encryptedToken),
+      ),
+    )
+    .orderBy(desc(connections.isPrimary), connections.createdAt)
+    .limit(1);
+  return slack;
+}
 
 /**
  * Deliver an approval ask as Slack DM buttons through the org's Slack
@@ -25,17 +49,7 @@ export async function sendSlackApprovalPrompt(input: {
   ask: { approvalId: string; toolName: string; serverName: string | null };
 }): Promise<boolean> {
   try {
-    const [slack] = await db
-      .select()
-      .from(connections)
-      .where(
-        and(
-          eq(connections.orgId, input.user.orgId),
-          eq(connections.vendor, "slack"),
-          isNotNull(connections.encryptedToken),
-        ),
-      )
-      .limit(1);
+    const slack = await orgSlackConnection(input.user.orgId);
     if (!slack) return false;
     const client = slackClient(slack.baseUrl, decryptSecret(slack.encryptedToken!));
     const lookup = await client.users
@@ -104,17 +118,7 @@ export async function notifyBackgroundReply(input: {
     });
     if (!preferences.notifyOnBackground) return;
 
-    const [slack] = await db
-      .select()
-      .from(connections)
-      .where(
-        and(
-          eq(connections.orgId, input.user.orgId),
-          eq(connections.vendor, "slack"),
-          isNotNull(connections.encryptedToken),
-        ),
-      )
-      .limit(1);
+    const slack = await orgSlackConnection(input.user.orgId);
     if (!slack) return;
     const client = slackClient(slack.baseUrl, decryptSecret(slack.encryptedToken!));
     const lookup = await client.users

@@ -163,7 +163,18 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   several connections. Everything answers as the linked agent; unlinked
   connections reply to DMs/mentions with a link-me hint (no session) and
   ignore ambient channel messages. No intent routing on Slack (web "Auto"
-  sessions still route by intent).
+  sessions still route by intent) — EXCEPT the org's PRIMARY connection
+  (`connections.is_primary`, one per org via partial unique index, 0032):
+  Rabble's own front door. Unlinked, it still answers DMs/mentions —
+  each new thread routes by intent (`routePrimaryInterface`) across the
+  agents the sender can use, with the Builder LAST on the roster so
+  "build me an agent…" works from Slack; threads continue under their
+  session's agent as usual. Platform notifications (approval DMs,
+  background-reply pings, eval alerts, access requests) resolve through
+  `orgSlackConnection` (runtime/notify.ts): primary first, else any
+  connected workspace. Set at registration (checkbox) or any time
+  (row "Make primary" / edit modal); promoting one steps the old one
+  down.
 - Approvals: the in-memory broker (runtime/approvals.ts) arbitrates all
   surfaces — web card, Slack DM buttons (interactivity endpoint), and
   pending asks returned on session GET. e2e runs with

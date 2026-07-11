@@ -661,3 +661,121 @@ test("a Slack-raised approval can be decided from the web session", async () => 
     approval: { status: "approved", decidedByName: "Alex Lin" },
   });
 });
+
+test("primary connection: Rabble's front door routes DMs by intent, Builder included", async () => {
+  // Register a third workspace app and designate it the org's PRIMARY
+  // connection at creation time — no agent link on purpose.
+  const created = await page.request.post(`${SERVER}/api/connections`, {
+    data: {
+      vendor: "slack",
+      name: "Rabble HQ",
+      roles: ["Interface"],
+      baseUrl: `${EMULATOR}/mock/slack.com`,
+      token: "xoxb-emulated",
+      signingSecret: "hq-signing-secret",
+      isPrimary: true,
+    },
+  });
+  expect(created.ok()).toBe(true);
+  const hq = ((await created.json()) as { connection: { id: string; isPrimary: boolean } })
+    .connection;
+  expect(hq.isPrimary).toBe(true);
+
+  // The designation is visible (and editable) in Admin › Connections.
+  await page.goto("/admin/connections");
+  const hqRow = page.locator(".row", { hasText: "Rabble HQ" });
+  await expect(hqRow.locator(".chip", { hasText: "primary" })).toBeVisible();
+
+  // One primary per org: promoting another workspace steps this one down.
+  const list = (await (await page.request.get(`${SERVER}/api/connections`)).json()) as {
+    connections: Array<{ id: string; name: string; isPrimary?: boolean }>;
+  };
+  const acme = list.connections.find((c) => c.name === "Acme Slack")!;
+  await page.request.patch(`${SERVER}/api/connections/${acme.id}`, {
+    data: { isPrimary: true },
+  });
+  const primaries = await dbQuery<{ name: string }>(
+    "SELECT name FROM connections WHERE is_primary",
+  );
+  expect(primaries).toEqual([{ name: "Acme Slack" }]);
+  // …and back, so the rest of this test exercises Rabble HQ as primary.
+  await page.request.patch(`${SERVER}/api/connections/${hq.id}`, {
+    data: { isPrimary: true },
+  });
+
+  // A DM to the primary app needs no agent link: it routes the new thread
+  // by intent, with the Builder on the roster — script the router's pick.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "text", text: "builder" }),
+  });
+  const delivery = await signedSlackPost(
+    {
+      type: "event_callback",
+      event: {
+        type: "message",
+        channel: "D900",
+        channel_type: "im",
+        user: "U777",
+        text: "I need an agent that summarizes our standups",
+        ts: "1712.100",
+      },
+    },
+    "hq-signing-secret",
+  );
+  expect(delivery.status).toBe(200);
+
+  // The session belongs to Alex, runs as the Builder, and replied in the DM.
+  const [session] = await dbQuery<{ id: string; builtin: string | null }>(
+    `SELECT s.id, a.builtin FROM sessions s
+     JOIN agents a ON a.id = s.agent_id
+     WHERE s.surface_key = 'slack:D900:1712.100'`,
+  );
+  expect(session).toBeDefined();
+  expect(session!.builtin).toBe("builder");
+  await expect
+    .poll(async () => {
+      const log = (await (
+        await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+      ).json()) as {
+        requests: Array<{ path: string; body: { channel?: string; text?: string } }>;
+      };
+      return log.requests.some(
+        (r) =>
+          r.path === "/api/chat.postMessage" &&
+          r.body.channel === "D900" &&
+          r.body.text?.includes("Mock reply to:"),
+      );
+    })
+    .toBe(true);
+
+  // A follow-up in the same DM thread continues under the routed agent —
+  // no second routing call, so the reply comes straight off the default.
+  const followUp = await signedSlackPost(
+    {
+      type: "event_callback",
+      event: {
+        type: "message",
+        channel: "D900",
+        channel_type: "im",
+        user: "U777",
+        text: "Call it Standup Digest",
+        ts: "1712.101",
+        thread_ts: "1712.100",
+      },
+    },
+    "hq-signing-secret",
+  );
+  expect(followUp.status).toBe(200);
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ n: number }>(
+        `SELECT count(*)::int AS n FROM messages
+         WHERE session_id = $1 AND role = 'user'`,
+        [session!.id],
+      );
+      return rows[0]?.n;
+    })
+    .toBe(2);
+});

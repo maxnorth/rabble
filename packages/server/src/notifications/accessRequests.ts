@@ -17,17 +17,8 @@ export async function notifyAdminsOfAccessRequest(input: {
   via?: "builder" | "web";
 }): Promise<void> {
   try {
-    const [slack] = await db
-      .select()
-      .from(connections)
-      .where(
-        and(
-          eq(connections.orgId, input.orgId),
-          eq(connections.vendor, "slack"),
-          isNotNull(connections.encryptedToken),
-        ),
-      )
-      .limit(1);
+    const { orgSlackConnection } = await import("../runtime/notify.js");
+    const slack = await orgSlackConnection(input.orgId);
     if (!slack) return;
     const baseUrl = slack.baseUrl ?? "https://slack.com";
     const token = decryptSecret(slack.encryptedToken!);

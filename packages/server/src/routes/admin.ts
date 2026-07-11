@@ -79,6 +79,7 @@ export async function adminRoutes(app: FastifyInstance) {
         hasConfigToken: c.encryptedConfigToken !== null,
         status: c.status,
         tunnel: c.tunnel,
+        isPrimary: c.isPrimary,
         createdAt: c.createdAt.toISOString(),
       })),
     };
@@ -120,6 +121,16 @@ export async function adminRoutes(app: FastifyInstance) {
         tunnel?: boolean;
         signingSecret?: string;
       };
+      // Only one primary per org (partial unique index) — designating a new
+      // one steps the previous one down rather than erroring.
+      if (body.isPrimary) {
+        await db
+          .update(connections)
+          .set({ isPrimary: false })
+          .where(
+            and(eq(connections.orgId, req.user!.orgId), eq(connections.isPrimary, true)),
+          );
+      }
       const [row] = await db
         .insert(connections)
         .values({
@@ -141,6 +152,7 @@ export async function adminRoutes(app: FastifyInstance) {
             : null,
           status,
           tunnel: tunnel ?? false,
+          isPrimary: body.isPrimary ?? false,
         })
         .returning();
       await recordAudit({
@@ -149,7 +161,7 @@ export async function adminRoutes(app: FastifyInstance) {
         action: "connection.add",
         targetType: "connection",
         targetId: row!.id,
-        summary: `Added ${body.vendor} connection "${body.name}"`,
+        summary: `Added ${body.vendor} connection "${body.name}"${body.isPrimary ? " (primary)" : ""}`,
       });
       if (body.vendor === "slack" && body.appToken) {
         // Socket Mode: dial out for this connection right away.
@@ -169,6 +181,7 @@ export async function adminRoutes(app: FastifyInstance) {
           hasSigningSecret: row!.encryptedSigningSecret !== null,
           status: row!.status,
           tunnel: row!.tunnel,
+          isPrimary: row!.isPrimary,
           createdAt: row!.createdAt.toISOString(),
         },
       };
@@ -204,6 +217,21 @@ export async function adminRoutes(app: FastifyInstance) {
       if (body.roles !== undefined) updates.roles = body.roles;
       if (body.baseUrl !== undefined) updates.baseUrl = body.baseUrl;
       if (body.tunnel !== undefined) updates.tunnel = body.tunnel;
+      if (body.isPrimary !== undefined) {
+        // One primary per org: promoting this one steps the previous down.
+        if (body.isPrimary) {
+          await db
+            .update(connections)
+            .set({ isPrimary: false })
+            .where(
+              and(
+                eq(connections.orgId, req.user!.orgId),
+                eq(connections.isPrimary, true),
+              ),
+            );
+        }
+        updates.isPrimary = body.isPrimary;
+      }
       const encToken = secretUpdate(body.token);
       if (encToken !== undefined) updates.encryptedToken = encToken;
       const encSigning = secretUpdate(body.signingSecret);
@@ -225,7 +253,10 @@ export async function adminRoutes(app: FastifyInstance) {
         action: "connection.edit",
         targetType: "connection",
         targetId: id,
-        summary: `Edited ${row!.vendor} connection "${row!.name}"`,
+        summary:
+          body.isPrimary === true
+            ? `Made "${row!.name}" the org's primary connection`
+            : `Edited ${row!.vendor} connection "${row!.name}"`,
       });
       // App token may have been added, rotated, or cleared — reconcile the
       // Socket Mode manager either way.
@@ -246,6 +277,7 @@ export async function adminRoutes(app: FastifyInstance) {
           hasSigningSecret: row!.encryptedSigningSecret !== null,
           status: row!.status,
           tunnel: row!.tunnel,
+          isPrimary: row!.isPrimary,
           createdAt: row!.createdAt.toISOString(),
         },
       };

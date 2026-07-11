@@ -367,6 +367,10 @@ function ConnectionsPage() {
     mutationFn: (id: string) => api.deleteConnection(id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["connections"] }),
   });
+  const makePrimary = useMutation({
+    mutationFn: (id: string) => api.updateConnection(id, { isPrimary: true }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["connections"] }),
+  });
 
   return (
     <div className="content-col">
@@ -427,6 +431,14 @@ function ConnectionsPage() {
                       {c.baseUrl || `${vendor} default endpoint`}
                     </div>
                   </div>
+                  {c.isPrimary && (
+                    <span
+                      className="chip blue"
+                      title="Rabble's own presence: platform notifications go through this connection, and on Slack it answers as a general-purpose interface — messages route to the right agent by intent, Builder included."
+                    >
+                      ★ primary
+                    </span>
+                  )}
                   {c.roles.map((r) => (
                     <span
                       key={r}
@@ -440,7 +452,7 @@ function ConnectionsPage() {
                       {c.linkedAgentName}
                     </span>
                   )}
-                  {!c.linkedAgentName && c.roles.includes("Interface") && (
+                  {!c.linkedAgentName && c.roles.includes("Interface") && !c.isPrimary && (
                     <span
                       className="chip amber"
                       title="Link an agent from its Surfaces tab; until then this app answers as no one"
@@ -480,6 +492,16 @@ function ConnectionsPage() {
                   <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
                     {c.status}
                   </span>
+                  {c.vendor === "slack" && !c.isPrimary && (
+                    <button
+                      className="btn"
+                      title="Route platform notifications through this workspace and let it answer as Rabble's general-purpose interface"
+                      disabled={makePrimary.isPending}
+                      onClick={() => makePrimary.mutate(c.id)}
+                    >
+                      Make primary
+                    </button>
+                  )}
                   <button className="btn" onClick={() => setEditing(c)}>
                     Edit
                   </button>
@@ -527,6 +549,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
   const [signingSecret, setSigningSecret] = useState("");
   const [appToken, setAppToken] = useState("");
   const [tunnel, setTunnel] = useState(false);
+  const [isPrimary, setIsPrimary] = useState(false);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["connections"] });
   const toggleRole = (r: ConnectionRole) =>
@@ -541,6 +564,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
         name: name.trim(),
         roles,
         configToken: configToken.trim(),
+        isPrimary,
       });
       const res = await api.provisionSlackApp(connection.id, botName.trim());
       return res.installUrl;
@@ -563,6 +587,7 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
         signingSecret: signingSecret || undefined,
         appToken: appToken || undefined,
         tunnel,
+        isPrimary,
       }),
     onSuccess: async () => {
       await invalidate();
@@ -611,6 +636,24 @@ function AddConnectionModal({ onClose }: { onClose: () => void }) {
           ))}
         </div>
       </div>
+      {isSlack && (
+        <div className="field">
+          <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+            <input
+              type="checkbox"
+              checked={isPrimary}
+              onChange={(e) => setIsPrimary(e.target.checked)}
+            />
+            Use as Rabble's primary connection
+          </label>
+          <span className="hint">
+            The org's front door: platform notifications go through it, and
+            DMs to it route to the right agent automatically — including the
+            Builder, so people can create and tune agents from Slack. One per
+            org; you can change it any time.
+          </span>
+        </div>
+      )}
     </>
   );
 
@@ -811,6 +854,7 @@ function EditConnectionModal({
     clearSigningSecret: false,
     appToken: "",
     clearAppToken: false,
+    isPrimary: connection.isPrimary ?? false,
   });
   const save = useMutation({
     mutationFn: () =>
@@ -824,6 +868,7 @@ function EditConnectionModal({
           ? null
           : form.signingSecret || undefined,
         appToken: form.clearAppToken ? null : form.appToken || undefined,
+        isPrimary: form.isPrimary,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["connections"] });
@@ -971,6 +1016,23 @@ function EditConnectionModal({
               Reached through a private tunnel
             </label>
           </div>
+          {connection.vendor === "slack" && (
+            <div className="field">
+              <label style={{ display: "flex", gap: 8, alignItems: "center", cursor: "pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={form.isPrimary}
+                  onChange={(e) => setForm({ ...form, isPrimary: e.target.checked })}
+                />
+                Rabble's primary connection
+              </label>
+              <span className="hint">
+                Platform notifications go through the primary connection, and
+                DMs to it route to the right agent by intent — Builder
+                included. Promoting this one steps the current primary down.
+              </span>
+            </div>
+          )}
           {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button type="button" className="btn" onClick={onClose}>

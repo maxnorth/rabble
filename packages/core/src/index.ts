@@ -830,6 +830,10 @@ export const connectionSchema = z.object({
   /** The identity link — the one agent this connection answers as. */
   linkedAgentId: z.string().uuid().nullable().optional(),
   linkedAgentName: z.string().nullable().optional(),
+  /** The org's primary connection: Rabble's own presence on this surface —
+   * notifications route through it, and on Slack it answers as a
+   * general-purpose intent-routed interface (Builder included). */
+  isPrimary: z.boolean().optional(),
   createdAt: z.string(),
 });
 export type Connection = z.infer<typeof connectionSchema>;
@@ -853,6 +857,8 @@ export const createConnectionSchema = z.object({
    * lets Rabble sync the app manifest. */
   configToken: tokenString.optional(),
   configRefreshToken: tokenString.optional(),
+  /** Register as the org's primary connection (clears any previous one). */
+  isPrimary: z.boolean().optional(),
 });
 export type CreateConnectionRequest = z.infer<typeof createConnectionSchema>;
 
@@ -870,6 +876,9 @@ export const updateConnectionSchema = z.object({
   token: z.string().max(500).nullable().optional(),
   signingSecret: z.string().max(500).nullable().optional(),
   appToken: z.string().max(500).nullable().optional(),
+  /** true → becomes the org's primary connection (clears any previous one);
+   * false → steps down. Editable any time, like everything else. */
+  isPrimary: z.boolean().optional(),
 });
 export type UpdateConnectionRequest = z.infer<typeof updateConnectionSchema>;
 

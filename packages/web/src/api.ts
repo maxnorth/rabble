@@ -427,6 +427,7 @@ export const api = {
     appToken?: string;
     configToken?: string;
     configRefreshToken?: string;
+    isPrimary?: boolean;
   }) => post<{ connection: Connection }>("/api/connections", body),
   updateConnection: (
     id: string,
@@ -438,6 +439,7 @@ export const api = {
       token?: string | null;
       signingSecret?: string | null;
       appToken?: string | null;
+      isPrimary?: boolean;
     },
   ) => patch<{ connection: Connection }>(`/api/connections/${id}`, body),
   deleteConnection: (id: string) => del<{ ok: true }>(`/api/connections/${id}`),

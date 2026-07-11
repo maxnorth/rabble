@@ -305,13 +305,15 @@ export async function processSlackEvent(
   // A connection is an agent's Slack identity. Until an agent is linked (an
   // agent_surfaces row exists) there's no one to answer as — anyone who
   // addresses the app directly gets pointed at the fix; ambient channel
-  // messages stay ignored.
+  // messages stay ignored. The org's PRIMARY connection is the exception:
+  // it is Rabble's own front door, so with no link it answers anyway,
+  // routing each new thread by intent (Builder included) further below.
   const surfaceRows = await db
     .select({ surface: agentSurfaces, agent: agents })
     .from(agentSurfaces)
     .innerJoin(agents, eq(agentSurfaces.agentId, agents.id))
     .where(eq(agentSurfaces.connectionId, connection.id));
-  if (surfaceRows.length === 0) {
+  if (surfaceRows.length === 0 && !connection.isPrimary) {
     diag("not linked to an agent", { isDm, isMention });
     if (isDm || isMention) {
       await post(
@@ -320,7 +322,7 @@ export async function processSlackEvent(
     }
     return { ok: true, ignored: "connection not linked to an agent" };
   }
-  const linkedAgent = surfaceRows[0]!.agent;
+  const linkedAgent = surfaceRows[0]?.agent ?? null;
   const rows = surfaceRows.map((r) => r.surface);
 
   // DMs are a surface setting (workspace-level row). Off means a 1:1 message
@@ -328,7 +330,7 @@ export async function processSlackEvent(
   if (isDm && !dmAllowed(rows)) {
     diag("refused: DMs disabled on this surface");
     await post(
-      `${linkedAgent.name} doesn't take direct messages. Reach it in a channel instead.`,
+      `${linkedAgent!.name} doesn't take direct messages. Reach it in a channel instead.`,
     );
     return { ok: true, ignored: "DMs disabled on this surface" };
   }
@@ -418,9 +420,13 @@ export async function processSlackEvent(
   }
   if (!platformUser) return notARabbleUser();
 
-  // Who answers? Always the connection's linked agent — the Slack identity IS
-  // that agent. An active thread continues with its owning agent for safety
-  // (sessions predating a re-link keep their original voice).
+  // Who answers? The connection's linked agent — the Slack identity IS that
+  // agent. An active thread continues with its owning agent for safety
+  // (sessions predating a re-link keep their original voice). On the org's
+  // primary connection there is no fixed identity: a NEW thread routes by
+  // intent across the agents this user can use, with the Builder on the
+  // roster — the general-purpose Rabble interface ("build me an agent
+  // that…" works from Slack).
   let agent: typeof agents.$inferSelect;
   if (existingSession) {
     const [owner] = await db
@@ -430,8 +436,19 @@ export async function processSlackEvent(
       .limit(1);
     if (!owner) return { ok: true, ignored: "session agent missing" };
     agent = owner;
-  } else {
+  } else if (linkedAgent) {
     agent = linkedAgent;
+  } else {
+    const { routePrimaryInterface } = await import("../runtime/router.js");
+    const routed = await routePrimaryInterface(platformUser, text);
+    if (!routed) {
+      diag("primary interface: no usable agents");
+      await post(
+        "No agents are available to you yet. Ask an org admin for access.",
+      );
+      return { ok: true, ignored: "no usable agents for primary interface" };
+    }
+    agent = routed;
   }
   const surfaceName =
     existingSession?.surface ??

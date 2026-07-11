@@ -6,10 +6,10 @@ import { createHmac } from "node:crypto";
 
 export const SERVER = "http://localhost:3178";
 
-export function signedSlackPost(body: unknown) {
+export function signedSlackPost(body: unknown, secret = "emu-signing-secret") {
   const raw = JSON.stringify(body);
   const ts = String(Math.floor(Date.now() / 1000));
-  const sig = `v0=${createHmac("sha256", "emu-signing-secret")
+  const sig = `v0=${createHmac("sha256", secret)
     .update(`v0:${ts}:${raw}`)
     .digest("hex")}`;
   return fetch(`${SERVER}/api/inbound/slack`, {

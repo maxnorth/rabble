@@ -8,7 +8,7 @@
 import { and, eq } from "drizzle-orm";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { db } from "../db/client.js";
-import { domains, models, type agents } from "../db/schema.js";
+import { agents, domains, models } from "../db/schema.js";
 import { chatModelFor } from "../models/chat.js";
 
 export interface RouteCandidate {
@@ -103,4 +103,36 @@ export async function routeByIntent(
   } catch {
     return fallback.id;
   }
+}
+
+/**
+ * Route a message arriving on the org's PRIMARY connection — Rabble's own
+ * front door, not any single agent's identity. Candidates are the active
+ * agents this user can use, in stable name order, plus the Builder LAST:
+ * a Slack DM has no agent picker, so "build me an agent that…" must be
+ * intent-routable too (on web the Builder is picked deliberately instead).
+ * Builder-last keeps the no-intent/error fallback on a working agent while
+ * making the Builder the answer of last resort when nothing else exists.
+ */
+export async function routePrimaryInterface(
+  platformUser: { id: string; orgId: string; role: string },
+  intent: string,
+): Promise<typeof agents.$inferSelect | null> {
+  const { rightsForAllAgents, hasRight } = await import("../rights.js");
+  const rights = await rightsForAllAgents(platformUser as never);
+  const rows = await db
+    .select()
+    .from(agents)
+    .where(
+      and(eq(agents.orgId, platformUser.orgId), eq(agents.status, "active")),
+    )
+    .orderBy(agents.name);
+  const usable = rows.filter((r) => hasRight(rights.get(r.id) ?? null, "use"));
+  const candidates = [
+    ...usable.filter((r) => !r.builtin),
+    ...usable.filter((r) => r.builtin === "builder"),
+  ];
+  if (candidates.length === 0) return null;
+  const chosenId = await routeByIntent(platformUser.orgId, intent, candidates);
+  return candidates.find((c) => c.id === chosenId) ?? candidates[0]!;
 }

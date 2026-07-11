@@ -72,20 +72,9 @@ export async function checkPassRateAlert(agentId: string): Promise<void> {
           );
     if (recipients.length === 0) return;
 
-    const { connections } = await import("../db/schema.js");
-    const { isNotNull } = await import("drizzle-orm");
     const { decryptSecret } = await import("../crypto.js");
-    const [slack] = await db
-      .select()
-      .from(connections)
-      .where(
-        and(
-          eq(connections.orgId, agent.orgId),
-          eq(connections.vendor, "slack"),
-          isNotNull(connections.encryptedToken),
-        ),
-      )
-      .limit(1);
+    const { orgSlackConnection } = await import("../runtime/notify.js");
+    const slack = await orgSlackConnection(agent.orgId);
     if (!slack) return;
     const baseUrl = slack.baseUrl ?? "https://slack.com";
     const token = decryptSecret(slack.encryptedToken!);

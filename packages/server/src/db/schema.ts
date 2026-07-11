@@ -515,6 +515,10 @@ export const connections = pgTable("connections", {
     .notNull()
     .default("connected"),
   tunnel: boolean("tunnel").notNull().default(false),
+  /** The org's primary connection (one per org, partial unique index):
+   * platform notifications route through it, and on Slack it answers as a
+   * general-purpose intent-routed interface instead of needing an agent link. */
+  isPrimary: boolean("is_primary").notNull().default(false),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

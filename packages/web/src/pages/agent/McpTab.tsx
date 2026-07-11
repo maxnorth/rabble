@@ -9,6 +9,7 @@ import { count } from "../../lib/time";
 
 export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean }) {
   const queryClient = useQueryClient();
+  const [expandedTool, setExpandedTool] = useState<string | null>(null);
   const tools = useQuery({
     queryKey: ["agent-tools", agentId],
     queryFn: () => api.agentTools(agentId),
@@ -99,31 +100,42 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
             )}
           </div>
           <div className="row-group">
-            {serverTools.map((t) => (
-              <div className="row" key={t.toolName}>
-                <span
-                  className={`toggle${t.enabled ? " on" : ""}`}
-                  style={{ cursor: canEdit ? "pointer" : "default" }}
-                  onClick={() =>
-                    canEdit &&
-                    updateTool.mutate({
-                      serverId: t.serverId,
-                      toolName: t.toolName,
-                      enabled: !t.enabled,
-                    })
-                  }
-                />
-                <div className="grow">
-                  <div className="title mono" style={{ fontSize: 12 }}>
-                    {t.toolName}
+            {serverTools.map((t) => {
+              const key = `${t.serverId}:${t.toolName}`;
+              const open = expandedTool === key;
+              return (
+                <div
+                  className={`row tool-line${open ? " expanded" : ""}`}
+                  key={t.toolName}
+                  onClick={() => setExpandedTool(open ? null : key)}
+                >
+                  <span
+                    className={`toggle${t.enabled ? " on" : ""}`}
+                    style={{ cursor: canEdit ? "pointer" : "default" }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (canEdit) {
+                        updateTool.mutate({
+                          serverId: t.serverId,
+                          toolName: t.toolName,
+                          enabled: !t.enabled,
+                        });
+                      }
+                    }}
+                  />
+                  <div className="grow">
+                    <div className="title mono" style={{ fontSize: 12 }}>
+                      {t.toolName}
+                      <span className="tool-chevron">▶</span>
+                    </div>
+                    <div className="sub">{t.description}</div>
                   </div>
-                  <div className="sub">{t.description}</div>
+                  <span className={`chip ${t.authType === "user" ? "amber" : "green"}`}>
+                    {t.authType === "user" ? "personal" : "service"}
+                  </span>
                 </div>
-                <span className={`chip ${t.authType === "user" ? "amber" : "green"}`}>
-                  {t.authType === "user" ? "personal" : "service"}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
         );

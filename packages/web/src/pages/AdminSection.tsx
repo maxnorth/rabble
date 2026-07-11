@@ -1001,6 +1001,7 @@ function McpServersPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
   const [editingServer, setEditingServer] = useState(false);
+  const [expandedTool, setExpandedTool] = useState<string | null>(null);
 
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteMcpServer(id),
@@ -1159,26 +1160,34 @@ function McpServersPage() {
               )
               .map((t) => {
               const off = selected.disabledTools.includes(t.name);
+              const open = expandedTool === t.name;
               return (
-                <div className="row" key={t.name} style={off ? { opacity: 0.6 } : undefined}>
+                <div
+                  className={`row tool-line${open ? " expanded" : ""}`}
+                  key={t.name}
+                  style={off ? { opacity: 0.6 } : undefined}
+                  onClick={() => setExpandedTool(open ? null : t.name)}
+                >
                   <span
                     className={`toggle${off ? "" : " on"}`}
                     role="switch"
                     aria-checked={!off}
                     aria-label={`${t.name} enabled`}
                     style={{ cursor: "pointer" }}
-                    onClick={() =>
+                    onClick={(e) => {
+                      e.stopPropagation();
                       setDisabledTools.mutate({
                         id: selected.id,
                         disabledTools: off
                           ? selected.disabledTools.filter((n) => n !== t.name)
                           : [...selected.disabledTools, t.name],
-                      })
-                    }
+                      });
+                    }}
                   />
                   <div className="grow">
                     <div className="title mono" style={{ fontSize: 12 }}>
                       {t.name}
+                      <span className="tool-chevron">▶</span>
                     </div>
                     <div className="sub">{t.description}</div>
                   </div>

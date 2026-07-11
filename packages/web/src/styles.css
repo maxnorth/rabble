@@ -486,6 +486,36 @@ select:focus-visible {
   color: var(--text-muted);
 }
 
+/* Compact tool lines: one scannable row per tool, description clamped to
+   a single line; clicking the row expands the full text in place. */
+.tool-line {
+  cursor: pointer;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.tool-line .sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-line.expanded .sub {
+  white-space: normal;
+}
+
+.tool-chevron {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--text-muted);
+  transition: transform 0.13s ease;
+  margin-left: 6px;
+}
+
+.tool-line.expanded .tool-chevron {
+  transform: rotate(90deg);
+}
+
 /* Inline rename: the pencil appears on hover so titles read as editable. */
 .editable-title {
   display: inline-flex;

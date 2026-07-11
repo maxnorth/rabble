@@ -188,12 +188,10 @@ export function ShareModal({
                 <div className="row" key={g.id} style={{ padding: "8px 12px" }}>
                   <div className="grow">
                     <span style={{ fontSize: 12.5 }}>{g.subjectName}</span>{" "}
-                    <span className="chip">{g.accessRight}</span>
-                    {g.viaDomain && (
-                      <span className="chip purple" title="Inherited from the domain">
-                        via {g.viaDomain}
-                      </span>
-                    )}
+                    <span className="meta-note">
+                      {g.accessRight}
+                      {g.viaDomain ? ` · via ${g.viaDomain}` : ""}
+                    </span>
                   </div>
                   {!g.viaDomain && (
                     <button className="btn danger" onClick={() => unshare.mutate(g.id)}>

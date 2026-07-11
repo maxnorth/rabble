@@ -222,9 +222,11 @@ export function SurfacesTab({ agentId, canEdit }: { agentId: string; canEdit: bo
                 <div className="title" style={{ fontSize: 14 }}>{meta.connectionName}</div>
                 <div className="sub">{vendorBlurb(meta.vendor)}</div>
               </div>
-              <span className={`chip ${meta.status === "connected" ? "green" : "amber"}`}>
-                {meta.status}
-              </span>
+              {meta.status === "connected" ? (
+                <span className="meta-note">connected</span>
+              ) : (
+                <span className="chip amber">{meta.status}</span>
+              )}
               {canEdit && (
                 <button
                   className="btn danger"

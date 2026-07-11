@@ -98,10 +98,10 @@ test("a session gets judged and shows eval chips", async () => {
   // results back the score) in its tooltip — 100% from one result reads
   // very differently from 100% from fifty.
   await page.locator("nav a[title='Agents']").click();
-  const scoreChip = page
+  const score = page
     .locator(".dir-table tbody tr", { hasText: "Eng On-Call" })
-    .locator(".chip", { hasText: "%" });
-  await expect(scoreChip).toHaveAttribute("title", /across \d+ eval result/);
+    .locator("span[title*='eval result']");
+  await expect(score).toHaveAttribute("title", /across \d+ eval result/);
 });
 
 test("suites: create, add a case, run it", async () => {
@@ -181,7 +181,7 @@ test("freeze: a judged session becomes a suite case from the eval drawer", async
   const freeze = page.locator("div", { hasText: "Freeze as test case" }).last();
   await freeze.locator("select").selectOption({ label: "Smoke" });
   await freeze.getByRole("button", { name: "+ Add to suite" }).click();
-  await expect(page.locator(".chip", { hasText: "Added to suite ✓" })).toBeVisible();
+  await expect(page.getByText("Added to suite ✓")).toBeVisible();
 
   const cases = await dbQuery<{ input: string; source_session_id: string | null }>(
     "SELECT input, source_session_id FROM eval_cases ORDER BY created_at",
@@ -318,7 +318,9 @@ test("auto routes by intent across usable agents", async () => {
     { timeout: 15_000 },
   );
   // The thread is pinned to the routed agent
-  await expect(page.locator(".thread-composer .chip")).toHaveText("Eng On-Call");
+  await expect(page.locator(".thread-composer .composer-agent")).toHaveText(
+    "Eng On-Call",
+  );
 
   const routed = await dbQuery<{ slug: string }>(
     `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
@@ -380,9 +382,7 @@ test("criteria trends: pass rate vs the prior 30-day window", async () => {
   await page.getByRole("button", { name: "evals" }).click();
   // Prior window: 0% (the seed). Recent: 50% (one pass, one overturned fail).
   await expect(
-    page.locator(".row", { hasText: "Stays on topic" }).locator(".chip", {
-      hasText: "vs prior",
-    }),
+    page.locator(".row", { hasText: "Stays on topic" }).getByText("vs prior"),
   ).toContainText("+50% vs prior");
 });
 
@@ -394,10 +394,9 @@ test("sub-agents: link an agent and annotate the edge", async () => {
   const linkable = page.locator(".row", { hasText: "Claude Agent" });
   await linkable.getByRole("button", { name: "Attach" }).click();
   const linked = page.locator(".row", { hasText: "claude-agent" });
-  await expect(linked.locator(".chip", { hasText: "agent" })).toBeVisible();
   // The callee's track record shows on the wiring — evidence for the edge.
   // Claude Agent hasn't been judged yet, so it reads "no track record".
-  await expect(linked.locator(".chip", { hasText: "no track record" })).toBeVisible();
+  await expect(linked.getByText("no track record")).toBeVisible();
 
   await linked
     .getByPlaceholder("When is it called? e.g. Before any deploy action")

@@ -120,7 +120,9 @@ test("automations: Run now executes a governed session on the Automation surface
 
   // The run's session opens like any other, on its surface
   await row.getByRole("link", { name: "view session →" }).click();
-  await expect(page.locator(".chip", { hasText: "Automation · Morning digest" })).toBeVisible();
+  await expect(
+    page.locator(".thread-surface", { hasText: "Automation · Morning digest" }),
+  ).toBeVisible();
   await expect(page.locator(".msg-agent .bubble")).toContainText(
     "Mock reply to: Summarize overnight incidents",
   );
@@ -307,7 +309,7 @@ test("profile: connected account and approval posture persist", async () => {
   await linearRow.getByRole("button", { name: "Connect" }).click();
   await linearRow.getByPlaceholder("Token").fill("lin_personal");
   await linearRow.getByRole("button", { name: "Save" }).click();
-  await expect(linearRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+  await expect(linearRow.getByText("Connected ✓")).toBeVisible();
 
   const accounts = await dbQuery<{ vendor: string; encrypted_token: string }>(
     "SELECT vendor, encrypted_token FROM user_connected_accounts WHERE vendor = 'linear'",

@@ -386,7 +386,7 @@ function AgentDirectory() {
                       {a.status === "draft" && <span className="chip amber">draft</span>}
                       {a.builtin && (
                         <span
-                          className="chip purple"
+                          className="meta-note"
                           title="Ships with the platform. Creates and configures agents conversationally"
                         >
                           built-in
@@ -411,7 +411,7 @@ function AgentDirectory() {
               <td>
                 {a.evalScore !== null ? (
                   <span
-                    className={`chip ${a.evalScore >= 90 ? "green" : a.evalScore >= 70 ? "blue" : "amber"}`}
+                    style={a.evalScore < 70 ? { color: "var(--amber)" } : undefined}
                     title={`All-time pass rate across ${a.evalCount ?? 0} eval ${
                       (a.evalCount ?? 0) === 1 ? "result" : "results"
                     }. Stats › Eval performance shows windowed rates.`}
@@ -435,11 +435,7 @@ function AgentDirectory() {
               </td>
               <td>{a.toolCount}</td>
               <td>
-                <span
-                  className={`chip ${a.scope === "personal" ? "blue" : a.scope === "org-wide" ? "amber" : ""}`}
-                >
-                  {a.scope}
-                </span>
+                <span style={{ color: "var(--text-muted)" }}>{a.scope}</span>
               </td>
             </tr>
           ))}
@@ -525,7 +521,7 @@ function DomainDetail({ domainId }: { domainId: string }) {
             </div>
             {a.evalScore !== null && (
               <span
-                className="chip blue"
+                className="meta-note"
                 title={`All-time pass rate across ${a.evalCount ?? 0} eval ${
                   (a.evalCount ?? 0) === 1 ? "result" : "results"
                 }.`}
@@ -634,7 +630,7 @@ export function GrantEditor({
       <div className="row-group">
         {grants.map((g) => (
           <div className="row" key={g.id}>
-            <span className={`chip ${g.subjectType === "team" ? "purple" : "blue"}`}>
+            <span className="meta-note" style={{ width: 40, flexShrink: 0 }}>
               {g.subjectType}
             </span>
             <div className="grow">

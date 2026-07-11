@@ -45,21 +45,17 @@ export function SubAgentsTab({ agentId, canEdit }: { agentId: string; canEdit: b
       <div className="row-group" style={{ marginBottom: 20 }}>
         {subAgents.data?.subAgents.map((a) => (
           <div className="row" key={a.id}>
-            <span className="chip purple">agent</span>
             <div className="grow">
               <div className="title">{a.name}</div>
               <div className="sub mono">{a.slug}</div>
             </div>
             <span
-              className={`chip ${
-                a.evalScore === null
-                  ? ""
-                  : a.evalScore >= 90
-                    ? "green"
-                    : a.evalScore >= 70
-                      ? "blue"
-                      : "amber"
-              }`}
+              className="meta-note"
+              style={
+                a.evalScore !== null && a.evalScore < 70
+                  ? { color: "var(--amber)" }
+                  : undefined
+              }
               title="The callee's measured track record, evidence for wiring it in as a tool"
             >
               {a.evalScore === null

@@ -105,7 +105,7 @@ test("teams overview: hierarchy cards and the people grid", async () => {
 
   const subTeamRow = page.locator(".row", { hasText: "Platform" });
   await expect(
-    subTeamRow.locator(".chip", { hasText: "sub-team of Engineering" }),
+    subTeamRow.getByText("sub-team of Engineering"),
   ).toBeVisible();
 
   // People grid lists both org members

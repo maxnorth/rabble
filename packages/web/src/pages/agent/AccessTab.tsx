@@ -44,7 +44,7 @@ export function AccessTab({ agentId }: { agentId: string }) {
             color: "var(--text-dim)",
           }}
         >
-          <span className="chip purple">domain</span>
+          <span className="meta-note">domain</span>
           <span className="grow">
             This agent is in <strong>{domain.name}</strong>. Grants on the
             domain reach it too.
@@ -66,7 +66,7 @@ export function AccessTab({ agentId }: { agentId: string }) {
             color: "var(--text-dim)",
           }}
         >
-          <span className="chip">no domain</span>
+          <span className="meta-note">no domain</span>
           <span className="grow">
             Not in a domain. Access here is direct grants only. Adding it to a
             domain lets team access flow in automatically.

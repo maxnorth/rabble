@@ -520,13 +520,15 @@ function CriterionRow({
       {criterion.passRate !== null ? (
         <>
           <span
-            className={`chip ${criterion.passRate >= 90 ? "green" : criterion.passRate >= 70 ? "blue" : "amber"}`}
+            className="meta-note"
+            style={criterion.passRate < 70 ? { color: "var(--amber)" } : undefined}
           >
             {criterion.passRate}% · {count(criterion.sessionCount, "session")}
           </span>
           {criterion.trendDelta !== null && criterion.trendDelta !== 0 && (
             <span
-              className={`chip ${criterion.trendDelta > 0 ? "green" : "amber"}`}
+              className="meta-note"
+              style={criterion.trendDelta < 0 ? { color: "var(--amber)" } : undefined}
               title="Pass rate: last 30 days vs the 30 before"
             >
               {criterion.trendDelta > 0 ? "+" : ""}
@@ -535,7 +537,7 @@ function CriterionRow({
           )}
         </>
       ) : (
-        <span className="chip">no data yet</span>
+        <span className="meta-note">no data yet</span>
       )}
       {canEdit && (
         <>
@@ -624,7 +626,7 @@ function SuiteCases({ suiteId, canEdit }: { suiteId: string; canEdit: boolean })
               <div className="title" style={{ fontSize: 12.5 }}>
                 {c.name}
                 {c.sourceSessionId && (
-                  <span className="chip" style={{ marginLeft: 6 }} title="Frozen from a real session">
+                  <span className="meta-note" style={{ marginLeft: 6 }} title="Frozen from a real session">
                     frozen
                   </span>
                 )}

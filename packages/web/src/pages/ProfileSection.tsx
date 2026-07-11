@@ -100,11 +100,7 @@ export function ProfileSection() {
                 {me.data?.user.email}
               </span>
             </div>
-            <span
-              className={`chip ${me.data?.user.role === "member" ? "" : "blue"}`}
-            >
-              {me.data?.user.role}
-            </span>
+            <span className="meta-note">{me.data?.user.role}</span>
             <span style={{ flex: 1 }} />
             <SignOutButton />
           </div>
@@ -169,12 +165,11 @@ function ConnectedAccounts() {
         {VENDORS.map(({ vendor, scope }) => {
           const account = connected.get(vendor);
           return (
-            <div className="row" key={vendor}>
-              <span className="chip blue mono">{vendor}</span>
+            <div className="row" key={vendor} data-vendor={vendor}>
               <div className="grow">
                 <div className="title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   {vendor.charAt(0).toUpperCase() + vendor.slice(1)}
-                  {account && <span className="chip green">connected</span>}
+                  {account && <span className="meta-note">Connected ✓</span>}
                 </div>
                 <div className="sub">
                   {account?.label ? `${account.label} · ` : ""}
@@ -266,11 +261,11 @@ function McpCredentials() {
           const cred = connected.get(s.id);
           return (
             <div className="row" key={s.id}>
-              <span className="chip amber mono">{s.slug}</span>
               <div className="grow">
                 <div className="title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   {s.name}
-                  {cred && <span className="chip green">connected</span>}
+                  <span className="meta-note mono">{s.slug}</span>
+                  {cred && <span className="meta-note">Connected ✓</span>}
                 </div>
                 <div className="sub">
                   Personal credential. Agents using {s.name} call it as you.

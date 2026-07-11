@@ -74,27 +74,26 @@ export function AgentConfig({ agentId }: { agentId: string }) {
         <div style={{ flex: 1 }}>
           <h1 className="page-title" style={{ marginBottom: 2, display: "flex", gap: 8, alignItems: "center" }}>
             {agent.data.agent.name}
-            <span
-              className={`chip ${agent.data.agent.status === "active" ? "green" : ""}`}
-            >
-              {agent.data.agent.status}
-            </span>
-            {row && (
-              <span
-                className={`chip ${row.scope === "personal" ? "blue" : row.scope === "org-wide" ? "amber" : ""}`}
-              >
-                {row.scope}
-              </span>
+            {agent.data.agent.status !== "active" && (
+              <span className="chip amber">draft</span>
             )}
             {/* Trust at a glance, where share/config decisions get made. */}
-            {row && row.evalScore !== null && (
-              <span
-                className={`chip ${row.evalScore >= 90 ? "green" : row.evalScore >= 70 ? "blue" : "amber"}`}
-                title={`${row.evalScore}% pass rate across ${row.evalCount} eval result${row.evalCount === 1 ? "" : "s"} — details on the Evals tab`}
-              >
-                {row.evalScore}% eval
-              </span>
-            )}
+            <span
+              className="meta-note"
+              title={
+                row && row.evalScore !== null
+                  ? `${row.evalScore}% pass rate across ${row.evalCount} eval result${row.evalCount === 1 ? "" : "s"} — details on the Evals tab`
+                  : undefined
+              }
+            >
+              {[
+                agent.data.agent.status === "active" ? "active" : null,
+                row?.scope ?? null,
+                row && row.evalScore !== null ? `${row.evalScore}% eval` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </span>
             {row?.needsAttention && (
               <span
                 className="chip amber"

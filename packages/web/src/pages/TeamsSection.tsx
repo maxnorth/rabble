@@ -127,7 +127,7 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
                 {t.parentTeamId ? "› " : ""}
                 {t.name}
                 {t.parentTeamId && (
-                  <span className="chip">
+                  <span className="meta-note">
                     sub-team of {byId.get(t.parentTeamId)?.name ?? "?"}
                   </span>
                 )}
@@ -205,7 +205,7 @@ function TeamsOverview({ onNewTeam }: { onNewTeam: () => void }) {
                 {u.email}
               </div>
             </div>
-            <span className={`chip${u.role === "member" ? "" : " blue"}`} style={{ marginLeft: "auto" }}>
+            <span className="meta-note" style={{ marginLeft: "auto" }}>
               {u.role}
             </span>
           </div>
@@ -314,7 +314,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
                   {m.teamRole}
                 </button>
               )}
-              <span className="chip">{m.role}</span>
+              <span className="meta-note">{m.role}</span>
               {!team.isEveryone && (
                 <button className="btn danger" onClick={() => removeMember.mutate(m.userId)}>
                   Remove
@@ -377,7 +377,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
               .filter((a) => a.targetType === "domain")
               .map((a) => (
                 <div className="row" key={a.id}>
-                  <span className="chip purple">domain</span>
+                  <span className="meta-note">domain</span>
                   <div className="grow">
                     <div className="title">{a.targetName}</div>
                     <div className="sub">{a.accessRight}</div>
@@ -403,7 +403,7 @@ function TeamDetail({ teamId }: { teamId: string }) {
               .filter((a) => a.targetType === "agent")
               .map((a) => (
                 <div className="row" key={a.id}>
-                  <span className="chip blue">agent</span>
+                  <span className="meta-note">agent</span>
                   <div className="grow">
                     <div className="title">{a.targetName}</div>
                     <div className="sub">{a.accessRight}</div>

@@ -359,11 +359,7 @@ function SessionLanding() {
                   <span className="agent-quick-name">{a.name}</span>
                   <span className="agent-quick-desc">{a.description || " "}</span>
                   {a.evalScore !== null && (
-                    <span
-                      className={`chip ${a.evalScore >= 90 ? "green" : a.evalScore >= 70 ? "blue" : "amber"}`}
-                    >
-                      {a.evalScore}% eval
-                    </span>
+                    <span className="meta-note">{a.evalScore}% eval</span>
                   )}
                 </button>
               ))}
@@ -447,10 +443,15 @@ function ToolCallChip({
             </span>
           )}
           {isDelegation ? (
-            <span className="chip purple">agent</span>
-          ) : (
-            <span className={`chip ${auth === "service" ? "green" : "amber"}`}>{auth}</span>
-          )}
+            <span className="tool-server">agent</span>
+          ) : auth === "user" ? (
+            <span
+              className="chip amber"
+              title="Ran as the person in the session, behind the approval gate"
+            >
+              user
+            </span>
+          ) : null}
         </span>
         {typeof toolCall.output === "string" && toolCall.output && (
           <span
@@ -538,15 +539,19 @@ function ApprovalCard({
           }}
         >
           Track record
-          <span className={`chip ${trackRecord.score !== null && trackRecord.score >= 90 ? "green" : "blue"}`}>
+          <span style={{ color: "var(--text-2)" }}>
             {trackRecord.score !== null
               ? `${trackRecord.score}% pass · ${trust.data?.gradedCount ?? 0} graded`
               : "unmeasured"}
           </span>
           <span
-            className={`chip ${(trust.data?.scopeViolations30d ?? 0) > 0 ? "amber" : "green"}`}
+            style={
+              (trust.data?.scopeViolations30d ?? 0) > 0
+                ? { color: "var(--amber)" }
+                : undefined
+            }
           >
-            {trust.data?.scopeViolations30d ?? 0} scope violations · 30d
+            · {trust.data?.scopeViolations30d ?? 0} scope violations (30d)
           </span>
           {onViewTrackRecord && (
             <button
@@ -968,7 +973,9 @@ function SessionThread({ sessionId }: { sessionId: string }) {
               {session.data?.session.title || "New session"}
             </span>
           )}
-          <span className="chip">{session.data?.session.surface ?? "Web"}</span>
+          <span className="thread-surface meta-note">
+            {session.data?.session.surface ?? "Web"}
+          </span>
           {(() => {
             const others = [
               ...new Set(
@@ -980,7 +987,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
             ];
             return others.length > 0 ? (
               <span
-                className="chip purple"
+                className="thread-surface meta-note"
                 title={`Shared thread · also here: ${others.join(", ")}`}
               >
                 +{others.length} teammate{others.length === 1 ? "" : "s"}
@@ -1232,7 +1239,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
               }}
             />
             <div className="composer-row">
-              <span className="chip green">{agentName}</span>
+              <span className="composer-agent meta-note">{agentName}</span>
               <button
                 className="btn primary"
                 disabled={busy || !text.trim()}
@@ -1271,17 +1278,23 @@ function SessionThread({ sessionId }: { sessionId: string }) {
           ) : drawer.kind === "tool" ? (
             <>
               <h3 className="mono">{drawer.toolCall.name}</h3>
-              <div style={{ display: "flex", gap: 6, margin: "8px 0" }}>
-                <span
-                  className={`chip ${drawer.toolCall.authType === "user" ? "amber" : "green"}`}
-                >
-                  {drawer.toolCall.authType ?? "service"} auth
-                </span>
-                {drawer.toolCall.serverName && (
-                  <span className="chip">{drawer.toolCall.serverName}</span>
-                )}
+              <div className="server-meta" style={{ margin: "8px 0", display: "block" }}>
+                {drawer.toolCall.authType ?? "service"} auth
+                {drawer.toolCall.serverName ? ` · ${drawer.toolCall.serverName}` : ""}
                 {drawer.toolCall.approval && (
-                  <span className="chip amber">{drawer.toolCall.approval.status}</span>
+                  <>
+                    {" · "}
+                    <span
+                      style={
+                        drawer.toolCall.approval.status === "approved" ||
+                        drawer.toolCall.approval.status === "auto-approved"
+                          ? undefined
+                          : { color: "var(--amber)" }
+                      }
+                    >
+                      {drawer.toolCall.approval.status}
+                    </span>
+                  </>
                 )}
               </div>
               <div className="section-label">Input</div>
@@ -1363,17 +1376,21 @@ function AgentProfileDrawer({
       <p className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
         {agent.slug}
       </p>
-      <div style={{ display: "flex", gap: 6, margin: "10px 0", flexWrap: "wrap" }}>
-        <span className={`chip ${agent.status === "active" ? "green" : "amber"}`}>
-          {agent.status}
+      <div
+        className="server-meta"
+        style={{ display: "flex", gap: 8, alignItems: "center", margin: "10px 0" }}
+      >
+        {agent.status !== "active" && <span className="chip amber">draft</span>}
+        <span>
+          {[
+            agent.status === "active" ? "active" : null,
+            agent.domainName ?? null,
+            agent.evalScore !== null ? `eval ${agent.evalScore}%` : null,
+            count(agent.toolCount, "tool"),
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </span>
-        {agent.domainName && <span className="chip purple">{agent.domainName}</span>}
-        {agent.evalScore !== null && (
-          <span className={`chip ${agent.evalScore >= 90 ? "green" : "blue"}`}>
-            eval {agent.evalScore}%
-          </span>
-        )}
-        <span className="chip">{count(agent.toolCount, "tool")}</span>
       </div>
       {agent.description && (
         <>
@@ -1392,10 +1409,7 @@ function AgentProfileDrawer({
           <div className="section-label">Connected tools</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "8px 0 14px" }}>
             {[...byServer.entries()].map(([server, counts]) => (
-              <span
-                key={server}
-                className={`chip ${counts.user > 0 ? (counts.service > 0 ? "" : "amber") : "green"}`}
-              >
+              <span key={server} className="server-meta mono">
                 {server}::* ·{" "}
                 {counts.user > 0 && counts.service > 0
                   ? "mixed"
@@ -1412,7 +1426,7 @@ function AgentProfileDrawer({
           <div className="section-label">Also reachable on</div>
           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "8px 0 14px" }}>
             {surfaces.data!.surfaces.map((s) => (
-              <span key={s.id} className="chip">
+              <span key={s.id} className="server-meta">
                 {s.vendor}
                 {s.label ? ` ${s.label}` : ""}
               </span>
@@ -1510,7 +1524,7 @@ function FreezeCard({ sessionId, agentId }: { sessionId: string; agentId: string
         suite. It re-runs on demand so this behavior can't silently regress.
       </p>
       {done ? (
-        <span className="chip green">Added to suite ✓</span>
+        <span className="sub">Added to suite ✓</span>
       ) : (
         <div style={{ display: "flex", gap: 8 }}>
           <select value={suiteId} onChange={(e) => setSuiteId(e.target.value)} style={{ flex: 1 }}>

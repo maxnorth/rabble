@@ -42,14 +42,12 @@ test("github surface delivery: issue comments become governed sessions", async (
 
   // Alex bridges his GitHub identity via Profile › Connected accounts
   await page.locator("nav a[title*='profile']").click();
-  const githubRow = page
-    .locator(".row", { hasText: "Github" })
-    .filter({ has: page.locator(".chip.blue") });
+  const githubRow = page.locator('.row[data-vendor="github"]');
   await githubRow.getByRole("button", { name: "Connect" }).click();
   await page.getByPlaceholder("Username (for surface identity)").fill("alexcodes");
   await page.getByPlaceholder("Token").fill("gho-alex");
   await githubRow.getByRole("button", { name: "Save" }).click();
-  await expect(githubRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+  await expect(githubRow.getByText("Connected ✓")).toBeVisible();
 
   // Map the repo onto the agent as a surface
   await page.locator("nav a[title='Agents']").click();
@@ -157,7 +155,9 @@ test("github surface delivery: issue comments become governed sessions", async (
   await page
     .locator(".sidebar-item", { hasText: "Deploys are flaky on Fridays" })
     .click();
-  await expect(page.locator(".chip", { hasText: "GitHub acme/api#7" })).toBeVisible();
+  await expect(
+    page.locator(".thread-surface", { hasText: "GitHub acme/api#7" }),
+  ).toBeVisible();
 });
 
 test("PR conversation comments ride the same surface (PRs are issues)", async () => {

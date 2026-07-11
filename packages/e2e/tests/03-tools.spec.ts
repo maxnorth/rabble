@@ -176,7 +176,7 @@ test("profile: connect a personal GitHub credential", async () => {
   await ghRow.getByRole("button", { name: "Connect" }).click();
   await ghRow.getByPlaceholder("Your token").fill("alex-github-token");
   await ghRow.getByRole("button", { name: "Save" }).click();
-  await expect(ghRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+  await expect(ghRow.getByText("Connected ✓")).toBeVisible();
 
   const creds = await dbQuery<{ email: string }>(
     `SELECT u.email FROM user_mcp_credentials c
@@ -406,7 +406,7 @@ test("sub-agent delegation: a linked agent runs as a governed tool", async () =>
       .click();
     const linkedRow = page
       .locator(".row", { hasText: "Docs Helper" })
-      .filter({ has: page.locator(".chip.purple") });
+      .filter({ has: page.locator("input[placeholder*='When is it called']") });
     await expect(linkedRow).toBeVisible();
     const note = page.locator("input[placeholder*='When is it called']");
     await note.fill("For anything about the docs");
@@ -852,7 +852,7 @@ test("connect the OAuth account from Profile discovers the tools", async () => {
   // The UI now shows the account as connected (remount to refetch).
   await page.locator("nav a[title='Sessions']").click();
   await page.locator("nav a[title*='profile']").click();
-  await expect(incRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+  await expect(incRow.getByText("Connected ✓")).toBeVisible();
 
   // The credential row carries access + refresh tokens and an expiry.
   const [cred] = await dbQuery<{

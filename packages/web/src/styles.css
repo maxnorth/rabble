@@ -1722,6 +1722,14 @@ select:focus-visible {
 
 /* De-chip idiom: a row is identity + one quiet sub-line + at most one
  * signal. Facts read as muted prose; color is reserved for warnings. */
+.meta-note {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  white-space: nowrap;
+}
 .primary-mark {
   color: var(--blue);
   margin-left: 6px;

@@ -137,6 +137,37 @@ export function Shell({ user }: { user: User }) {
         </svg>
       </button>
       <div className="drawer-scrim" onClick={() => setDrawer(false)} />
+      <div className="drawer-utils">
+        <NavLink to="/profile" className="drawer-utils-profile">
+          <span className="drawer-utils-avatar">{initials}</span>
+          <span className="drawer-utils-name">{user.name}</span>
+        </NavLink>
+        <ThemeToggle className="drawer-utils-btn" />
+        <button
+          className="drawer-utils-btn"
+          title="Sign out"
+          aria-label="Sign out"
+          onClick={async () => {
+            setDrawer(false);
+            await api.logout();
+            navigate("/");
+            await queryClient.resetQueries();
+          }}
+        >
+          <svg
+            width="17"
+            height="17"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4m7 14 5-5-5-5m5 5H9" />
+          </svg>
+        </button>
+      </div>
       <nav className="icon-rail">
         <div
           className="rail-logo"
@@ -169,7 +200,7 @@ export function Shell({ user }: { user: User }) {
         <ThemeToggle className="rail-btn rail-theme" />
         <NavLink
           to="/profile"
-          className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
+          className={({ isActive }) => `rail-btn rail-profile${isActive ? " active" : ""}`}
           title={`${user.name} · profile`}
         >
           <span style={{ fontSize: 11, fontWeight: 600 }}>{initials}</span>

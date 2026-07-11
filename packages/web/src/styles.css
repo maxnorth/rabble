@@ -1685,7 +1685,8 @@ select:focus-visible {
 
 /* Desktop never sees the drawer chrome. */
 .drawer-toggle,
-.drawer-scrim {
+.drawer-scrim,
+.drawer-utils {
   display: none;
 }
 
@@ -1714,12 +1715,13 @@ select:focus-visible {
     border-top: 1px solid var(--border-rail);
   }
 
-  /* The bottom bar is navigation only: theme and sign-out live on the
-     Profile page at phone width (Appearance is already there). */
+  /* The bottom bar is the five sections, nothing else: profile, theme,
+     and sign-out live at the bottom of the drawer. */
   .icon-rail .rail-logo,
   .icon-rail .spacer,
   .icon-rail .rail-theme,
-  .icon-rail .rail-signout {
+  .icon-rail .rail-signout,
+  .icon-rail .rail-profile {
     display: none;
   }
 
@@ -1751,6 +1753,73 @@ select:focus-visible {
 
   :root[data-drawer="open"] .sidebar {
     transform: none;
+    /* keep the last list items clear of the utility footer */
+    padding-bottom: 66px;
+  }
+
+  /* Profile · theme · sign-out, pinned inside the open drawer's bottom.
+     Fixed to the drawer's own geometry, so no section needs wiring. */
+  :root[data-drawer="open"] .drawer-utils {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    position: fixed;
+    left: 0;
+    bottom: 58px;
+    z-index: 46;
+    width: min(300px, 84vw);
+    padding: 10px 12px;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border-1);
+    border-right: 1px solid var(--border-1);
+  }
+
+  .drawer-utils-profile {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    flex: 1;
+    min-width: 0;
+    color: var(--text-1);
+    border-radius: 8px;
+    padding: 4px;
+  }
+
+  .drawer-utils-avatar {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
+  .drawer-utils-name {
+    font-size: 13px;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .drawer-utils-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 9px;
+    color: var(--text-dim);
+  }
+
+  .drawer-utils-btn:hover {
+    background: var(--hover-2);
+    color: var(--text-1);
   }
 
   .drawer-toggle {

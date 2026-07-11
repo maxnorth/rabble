@@ -1714,8 +1714,12 @@ select:focus-visible {
     border-top: 1px solid var(--border-rail);
   }
 
+  /* The bottom bar is navigation only: theme and sign-out live on the
+     Profile page at phone width (Appearance is already there). */
   .icon-rail .rail-logo,
-  .icon-rail .spacer {
+  .icon-rail .spacer,
+  .icon-rail .rail-theme,
+  .icon-rail .rail-signout {
     display: none;
   }
 

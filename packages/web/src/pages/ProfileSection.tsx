@@ -1,8 +1,28 @@
 import type { UserPreferences } from "@rabblehq/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { setThemePref, useThemePref } from "../lib/theme";
+
+/** On phones the bottom bar is navigation-only, so signing out lives here
+ * (the rail keeps its own button on desktop). */
+function SignOutButton() {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  return (
+    <button
+      className="btn"
+      onClick={async () => {
+        await api.logout();
+        navigate("/");
+        await queryClient.resetQueries();
+      }}
+    >
+      Sign out
+    </button>
+  );
+}
 
 /** System / Light / Dark. Device-local (not synced to the server), applied
  * instantly — the rail's sun/moon button flips the same preference. */
@@ -85,6 +105,8 @@ export function ProfileSection() {
             >
               {me.data?.user.role}
             </span>
+            <span style={{ flex: 1 }} />
+            <SignOutButton />
           </div>
           {page === "Connected accounts" ? (
             <>

@@ -166,7 +166,7 @@ export function Shell({ user }: { user: User }) {
           </NavLink>
         ))}
         <div className="spacer" />
-        <ThemeToggle />
+        <ThemeToggle className="rail-btn rail-theme" />
         <NavLink
           to="/profile"
           className={({ isActive }) => `rail-btn${isActive ? " active" : ""}`}
@@ -175,7 +175,7 @@ export function Shell({ user }: { user: User }) {
           <span style={{ fontSize: 11, fontWeight: 600 }}>{initials}</span>
         </NavLink>
         <button
-          className="rail-btn"
+          className="rail-btn rail-signout"
           title={`${user.name} · sign out`}
           onClick={async () => {
             await api.logout();

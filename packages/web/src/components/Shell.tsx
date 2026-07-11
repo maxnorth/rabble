@@ -1,6 +1,7 @@
 import type { User } from "@rabblehq/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect } from "react";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../api";
 import { toggleTheme, useTheme } from "../lib/theme";
 
@@ -67,9 +68,22 @@ const icons = {
     "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6m7.4-3a7.4 7.4 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 3h-5l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.5 7.5 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h5l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.07-.4.1-.8.1-1.2",
 };
 
+/** Mobile sidebar drawer: state lives on <html data-drawer> so the shared
+ * .sidebar CSS can react without threading props into every section. */
+function setDrawer(open: boolean) {
+  if (open) document.documentElement.dataset.drawer = "open";
+  else delete document.documentElement.dataset.drawer;
+}
+
 export function Shell({ user }: { user: User }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Navigating (or picking anything in the drawer that navigates) closes it.
+  useEffect(() => {
+    setDrawer(false);
+  }, [location.pathname]);
   const initials = user.name
     .split(/\s+/)
     .map((p) => p[0])
@@ -79,6 +93,27 @@ export function Shell({ user }: { user: User }) {
 
   return (
     <div className="app-shell">
+      <button
+        type="button"
+        className="drawer-toggle"
+        aria-label="Open the section menu"
+        onClick={() =>
+          setDrawer(document.documentElement.dataset.drawer !== "open")
+        }
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        >
+          <path d="M3 6h18M3 12h18M3 18h18" />
+        </svg>
+      </button>
+      <div className="drawer-scrim" onClick={() => setDrawer(false)} />
       <nav className="icon-rail">
         <div
           className="rail-logo"

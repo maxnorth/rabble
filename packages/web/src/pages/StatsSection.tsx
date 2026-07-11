@@ -171,7 +171,15 @@ export function StatsSection() {
       </aside>
       <main className="main-pane">
         <div className="content-col" style={{ maxWidth: 880 }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              flexWrap: "wrap",
+              gap: 10,
+            }}
+          >
             <div>
               <h1 className="page-title">{page}</h1>
               <p className="page-subtitle">
@@ -181,7 +189,7 @@ export function StatsSection() {
                 {page === "Skill use" && "Which tools agents actually call, and where."}
               </p>
             </div>
-            <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <select
                 value={agentId}
                 onChange={(e) => setAgentId(e.target.value)}

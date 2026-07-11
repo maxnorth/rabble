@@ -21,7 +21,11 @@ full auditability. Product spine and locked naming decisions:
   tokens — components must only reference tokens (or `color-mix` on them),
   never raw hex/rgba, or they'll break in one theme. Theme applied
   pre-paint by an inline script in index.html; switched via `lib/theme.ts`
-  (System/Light/Dark on Profile, sun/moon on the rail).
+  (System/Light/Dark on Profile, sun/moon on the rail). Responsive: ≤820px
+  the icon rail becomes a bottom bar, each section's `.sidebar` becomes an
+  overlay drawer (hamburger sets `<html data-drawer>`; Shell closes it on
+  navigation), rows/headers wrap, and the directory drops to star ·
+  agent · eval score. All in one media block at the end of styles.css.
 - `packages/emulator` — scriptable fakes of external services (Anthropic,
   OpenAI, MCP, Slack) mounted under `/mock/<host>/...` with `/admin/*`
   endpoints. The app never knows it's fake; only base URLs differ. No

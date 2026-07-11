@@ -1680,3 +1680,185 @@ select:focus-visible {
 .session-with-drawer .thread {
   min-width: 0;
 }
+
+/* ---- Responsive: small screens ---- */
+
+/* Desktop never sees the drawer chrome. */
+.drawer-toggle,
+.drawer-scrim {
+  display: none;
+}
+
+@media (max-width: 820px) {
+  /* The shell reflows: nav becomes a bottom bar, the per-section sidebar
+     becomes an overlay drawer, and the main pane takes the full width. */
+  .app-shell {
+    flex-direction: column;
+  }
+
+  .icon-rail {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    z-index: 40;
+    width: 100%;
+    height: 58px;
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: center;
+    padding: 0 4px;
+    gap: 0;
+    border-right: none;
+    border-top: 1px solid var(--border-rail);
+  }
+
+  .icon-rail .rail-logo,
+  .icon-rail .spacer {
+    display: none;
+  }
+
+  .rail-btn {
+    width: auto;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 4px 6px;
+  }
+
+  .main-pane {
+    order: -1;
+    height: calc(100% - 58px);
+    padding-bottom: 0;
+  }
+
+  /* Per-section sidebar: hidden until the hamburger opens it as a drawer. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 58px;
+    z-index: 45;
+    width: min(300px, 84vw);
+    transform: translateX(-105%);
+    transition: transform 0.18s ease;
+    box-shadow: var(--shadow-pop);
+  }
+
+  :root[data-drawer="open"] .sidebar {
+    transform: none;
+  }
+
+  .drawer-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: 44;
+    width: 38px;
+    height: 38px;
+    border-radius: 10px;
+    background: var(--surface-1);
+    border: 1px solid var(--border-1);
+    color: var(--text-2);
+    box-shadow: var(--shadow-pop);
+  }
+
+  :root[data-drawer="open"] .drawer-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 42;
+    background: var(--overlay);
+  }
+
+  /* Content breathes at phone width; clear the floating hamburger. */
+  .content-col {
+    padding: 56px 14px 24px;
+  }
+
+  .page-title {
+    flex-wrap: wrap;
+  }
+
+  /* Dense rows wrap instead of overlapping: the title block holds a line,
+     chips and actions flow beneath it when the width runs out. */
+  .row {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .row .grow {
+    min-width: 58%;
+  }
+
+  /* The directory keeps its trust signal and drops secondary columns:
+     star · agent · eval score. Domain/updated/tools/scope stay desktop. */
+  .dir-table th:nth-child(3),
+  .dir-table td:nth-child(3),
+  .dir-table th:nth-child(5),
+  .dir-table td:nth-child(5),
+  .dir-table th:nth-child(6),
+  .dir-table td:nth-child(6),
+  .dir-table th:nth-child(7),
+  .dir-table td:nth-child(7) {
+    display: none;
+  }
+
+  .tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: none;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .mcp-library-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Modals and the detail drawer go (near) full width. */
+  .modal {
+    width: min(calc(100vw - 24px), 480px) !important;
+    max-height: 88vh;
+  }
+
+  .drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 58px;
+    z-index: 46;
+    width: min(420px, 92vw);
+    box-shadow: var(--shadow-pop);
+  }
+
+  /* Session thread: the header clears the floating hamburger and wraps;
+     the composer keeps a little air above the bottom bar. */
+  .thread-head {
+    padding-left: 56px !important;
+    flex-wrap: wrap;
+  }
+
+  .thread-composer {
+    padding: 10px 12px 12px;
+  }
+
+  .composer {
+    max-width: 100%;
+  }
+
+  .msg-agent {
+    max-width: 100%;
+  }
+
+  .agent-quick {
+    max-width: 100%;
+  }
+
+  /* The sign-in split already collapses at 860px (auth-split media rule). */
+}

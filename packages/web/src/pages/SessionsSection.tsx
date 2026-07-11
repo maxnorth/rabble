@@ -914,6 +914,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     <div className="session-with-drawer">
       <div className="thread">
         <div
+          className="thread-head"
           style={{
             display: "flex",
             alignItems: "center",

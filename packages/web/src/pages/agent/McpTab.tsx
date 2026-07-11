@@ -60,11 +60,10 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
     <>
       <p className="page-subtitle">
         Tools from the org's MCP server library. Each server's credential mode
-        decides whose identity its calls carry: a{" "}
-        <span className="chip green">service</span> server runs on the org
-        credential; a <span className="chip amber">personal</span> server runs
-        as the person in the session, with an in-thread approval. Set the mode
-        where you register the server, in Admin › MCP servers.
+        decides whose identity its calls carry: a <strong>service</strong>{" "}
+        server runs on the org credential; a <strong>personal</strong> server
+        runs as the person in the session, with an in-thread approval. Set the
+        mode where you register the server, in Admin › MCP servers.
       </p>
       {[...byServer.entries()].map(([serverId, serverTools]) => {
         const enabledTools = serverTools.filter((t) => t.enabled);
@@ -84,11 +83,9 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
             {serverTools[0]?.serverName}
             <span style={{ textTransform: "none", letterSpacing: 0 }}>
               {enabledTools.length} of {serverTools.length} enabled
+              {serviceCount > 0 ? ` · ${serviceCount} service` : ""}
+              {userCount > 0 ? ` · ${userCount} personal` : ""}
             </span>
-            {serviceCount > 0 && (
-              <span className="chip green">{serviceCount} service</span>
-            )}
-            {userCount > 0 && <span className="chip amber">{userCount} personal</span>}
             <span style={{ flex: 1 }} />
             {canEdit && (
               <button
@@ -130,9 +127,14 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
                     </div>
                     <div className="sub">{t.description}</div>
                   </div>
-                  <span className={`chip ${t.authType === "user" ? "amber" : "green"}`}>
-                    {t.authType === "user" ? "personal" : "service"}
-                  </span>
+                  {t.authType === "user" && (
+                    <span
+                      className="chip amber"
+                      title="Runs as the person in the session, gated by an in-thread approval"
+                    >
+                      personal
+                    </span>
+                  )}
                 </div>
               );
             })}
@@ -166,7 +168,7 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
                       Attach
                     </button>
                   ) : requested.has(s.id) ? (
-                    <span className="chip green" title="An org admin has been notified.">
+                    <span className="sub" title="An org admin has been notified.">
                       access requested ✓
                     </span>
                   ) : (

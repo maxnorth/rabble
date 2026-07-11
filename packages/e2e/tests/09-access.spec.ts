@@ -145,8 +145,8 @@ test("request access from the agent page (web-native loop)", async ({
   await page.goto("/admin/access-requests");
   const row = page.locator(".row", { hasText: "Release Notes Bot" }).first();
   await expect(row).toContainText("Bea Ortiz");
-  await expect(row.locator(".chip", { hasText: "no track record yet" })).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "via Builder" })).toHaveCount(0);
+  await expect(row).toContainText("no track record yet");
+  await expect(row.getByText("via Builder")).toHaveCount(0);
   await row.getByRole("button", { name: "Approve", exact: true }).click();
 
   await expect
@@ -231,13 +231,10 @@ test("hitting an access limit becomes a request an admin approves", async ({
   await expect(requestRow).toContainText("edit");
   await expect(requestRow).toContainText("Eng On-Call");
   await expect(requestRow).toContainText("Tune the CI triage instructions");
-  await expect(requestRow.locator(".chip", { hasText: "via Builder" })).toBeVisible();
-  // Track record shown as evidence for the decision — the thesis in one chip
+  await expect(requestRow).toContainText("via Builder");
+  // Track record shown as evidence for the decision, right in the sub-line
   // (Eng On-Call was judged in the evals journey, so a 30d pass rate exists).
-  await expect(requestRow.locator(".chip", { hasText: "% pass" })).toBeVisible();
-  await expect(requestRow.locator(".chip", { hasText: "graded" })).toContainText(
-    /\d+% pass · \d+ graded/,
-  );
+  await expect(requestRow).toContainText(/\d+% pass, \d+ graded/);
   await requestRow.getByRole("button", { name: "Approve", exact: true }).click();
   // Scope to THIS request's decided row — an earlier test already produced an
   // "Approved by Alex Lin" row, which must not satisfy this wait.

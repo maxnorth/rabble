@@ -43,7 +43,7 @@ test("slack socket mode: events stream over the WebSocket instead of webhooks", 
 
   const row = page.locator(".row", { hasText: "Acme Slack (socket)" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "Socket Mode" })).toBeVisible();
+  await expect(row).toContainText("Socket Mode");
 
   // The socket actually connects (apps.connections.open -> ws upgrade).
   await expect
@@ -496,8 +496,8 @@ test("editing a connection adds Socket Mode in place — surfaces survive", asyn
     has: page.getByText("Acme Slack", { exact: true }),
   });
   await expect(webhookRow).toBeVisible();
-  await expect(webhookRow.locator(".chip", { hasText: "Eng On-Call" })).toBeVisible();
-  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toHaveCount(0);
+  await expect(webhookRow).toContainText("answers as Eng On-Call");
+  await expect(webhookRow.getByText("Socket Mode")).toHaveCount(0);
 
   const surfacesBefore = await dbQuery<{ n: string }>(
     `SELECT count(*)::text AS n FROM agent_surfaces
@@ -517,8 +517,8 @@ test("editing a connection adds Socket Mode in place — surfaces survive", asyn
   await page.getByRole("button", { name: "Save changes" }).click();
 
   // Socket Mode chip now shows, and the agent identity is intact.
-  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toBeVisible();
-  await expect(webhookRow.locator(".chip", { hasText: "Eng On-Call" })).toBeVisible();
+  await expect(webhookRow).toContainText("Socket Mode");
+  await expect(webhookRow).toContainText("answers as Eng On-Call");
 
   const surfacesAfter = await dbQuery<{ n: string }>(
     `SELECT count(*)::text AS n FROM agent_surfaces
@@ -553,8 +553,8 @@ test("editing a connection adds Socket Mode in place — surfaces survive", asyn
   await page.getByText("Turn off Socket Mode (remove app token)").click();
   await page.getByRole("button", { name: "Save changes" }).click();
 
-  await expect(webhookRow.locator(".chip", { hasText: "Socket Mode" })).toHaveCount(0);
-  await expect(webhookRow.locator(".chip", { hasText: "Eng On-Call" })).toBeVisible();
+  await expect(webhookRow.getByText("Socket Mode")).toHaveCount(0);
+  await expect(webhookRow).toContainText("answers as Eng On-Call");
   const [conn2] = await dbQuery<{ has_app: boolean }>(
     `SELECT (encrypted_app_token IS NOT NULL) AS has_app
      FROM connections WHERE name = 'Acme Slack'`,

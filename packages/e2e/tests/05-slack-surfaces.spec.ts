@@ -46,7 +46,9 @@ test("connections: add Slack, verified against the emulator", async () => {
 
   const row = page.locator(".row", { hasText: "Acme Slack" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "connected" })).toBeVisible();
+  // Healthy state is quiet: the dot is green and no warning chip shows.
+  await expect(row.locator(".status-dot")).toBeVisible();
+  await expect(row.locator(".chip.amber")).toHaveCount(0);
 
   // The emulator's auth.test endpoint was actually called
   const log = (await (
@@ -204,9 +206,9 @@ test("surfaces: linking a connection makes the agent its identity", async () => 
   // The connections list shows whose identity this connection now is
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "Connections" }).click();
-  await expect(
-    page.locator(".row", { hasText: "Acme Slack" }).locator(".chip", { hasText: "Eng On-Call" }),
-  ).toBeVisible();
+  await expect(page.locator(".row", { hasText: "Acme Slack" })).toContainText(
+    "answers as Eng On-Call",
+  );
 
   const audit = await dbQuery<{ action: string }>(
     "SELECT action FROM audit_events WHERE action = 'agent.surface.add'",
@@ -684,7 +686,7 @@ test("primary connection: Rabble's front door routes DMs by intent, Builder incl
   // The designation is visible (and editable) in Admin › Connections.
   await page.goto("/admin/connections");
   const hqRow = page.locator(".row", { hasText: "Rabble HQ" });
-  await expect(hqRow.locator(".chip", { hasText: "primary" })).toBeVisible();
+  await expect(hqRow).toContainText("Primary connection");
 
   // One primary per org: promoting another workspace steps this one down.
   const list = (await (await page.request.get(`${SERVER}/api/connections`)).json()) as {

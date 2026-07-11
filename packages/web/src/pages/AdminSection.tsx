@@ -227,24 +227,16 @@ function AccessRequestsPage() {
               </div>
               <div className="sub">
                 {r.reason || "No reason given"} · {relativeTime(r.createdAt)}
+                {r.evidence && r.targetType === "agent"
+                  ? ` · ${
+                      r.evidence.passRate30d === null
+                        ? "no track record yet"
+                        : `${r.evidence.passRate30d}% pass, ${r.evidence.graded30d} graded (30d)`
+                    }`
+                  : ""}
+                {r.via === "builder" ? " · via Builder" : ""}
               </div>
             </div>
-            {r.evidence && (
-              <span
-                className={`chip ${
-                  r.evidence.passRate30d === null
-                    ? ""
-                    : r.evidence.passRate30d >= 90
-                      ? "green"
-                      : "amber"
-                }`}
-                title="The agent's measured track record, evidence for this access decision (last 30 days)"
-              >
-                {r.evidence.passRate30d === null
-                  ? "no track record yet"
-                  : `${r.evidence.passRate30d}% pass · ${r.evidence.graded30d} graded`}
-              </span>
-            )}
             {r.evidence && r.evidence.scopeViolations30d > 0 && (
               <span
                 className="chip amber"
@@ -254,7 +246,6 @@ function AccessRequestsPage() {
                 {r.evidence.scopeViolations30d === 1 ? "" : "s"}
               </span>
             )}
-            {r.via === "builder" && <span className="chip purple">via Builder</span>}
             <button
               className="btn primary"
               disabled={approve.isPending}
@@ -297,9 +288,7 @@ function AccessRequestsPage() {
                     {r.decidedAt ? ` · ${relativeTime(r.decidedAt)}` : ""}
                   </div>
                 </div>
-                <span className={`chip ${r.status === "approved" ? "green" : "amber"}`}>
-                  {r.status}
-                </span>
+
               </div>
             ))}
           </div>
@@ -367,10 +356,6 @@ function ConnectionsPage() {
     mutationFn: (id: string) => api.deleteConnection(id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["connections"] }),
   });
-  const makePrimary = useMutation({
-    mutationFn: (id: string) => api.updateConnection(id, { isPrimary: true }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["connections"] }),
-  });
 
   return (
     <div className="content-col">
@@ -426,30 +411,32 @@ function ConnectionsPage() {
                     }}
                   />
                   <div className="grow">
-                    <div className="title">{c.name}</div>
-                    <div className="sub mono">
-                      {c.baseUrl || `${vendor} default endpoint`}
+                    <div className="title">
+                      {c.name}
+                      {c.isPrimary && (
+                        <span
+                          className="primary-mark"
+                          title="Rabble's primary connection: platform notifications go through it, and DMs to it route to the right agent by intent — Builder included."
+                        >
+                          ★
+                        </span>
+                      )}
+                    </div>
+                    <div className="sub">
+                      {[
+                        c.isPrimary ? "Primary connection" : null,
+                        c.linkedAgentName ? `answers as ${c.linkedAgentName}` : null,
+                        c.roles.join(", "),
+                        c.hasAppToken ? "Socket Mode" : null,
+                        c.tunnel ? "via tunnel" : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </div>
                   </div>
-                  {c.isPrimary && (
-                    <span
-                      className="chip blue"
-                      title="Rabble's own presence: platform notifications go through this connection, and on Slack it answers as a general-purpose interface — messages route to the right agent by intent, Builder included."
-                    >
-                      ★ primary
-                    </span>
-                  )}
-                  {c.roles.map((r) => (
-                    <span
-                      key={r}
-                      className={`chip ${r === "Interface" ? "blue" : r === "Automation" ? "purple" : "green"}`}
-                    >
-                      {r}
-                    </span>
-                  ))}
-                  {c.linkedAgentName && (
-                    <span className="chip" title="The agent this connection answers as">
-                      {c.linkedAgentName}
+                  {c.status !== "connected" && (
+                    <span className="chip amber">
+                      {c.status === "needs-auth" ? "needs auth" : "error"}
                     </span>
                   )}
                   {!c.linkedAgentName && c.roles.includes("Interface") && !c.isPrimary && (
@@ -458,19 +445,6 @@ function ConnectionsPage() {
                       title="Link an agent from its Surfaces tab; until then this app answers as no one"
                     >
                       no linked agent
-                    </span>
-                  )}
-                  {c.tunnel && (
-                    <span className="chip purple" title="Reached through a private tunnel">
-                      tunnel
-                    </span>
-                  )}
-                  {c.hasAppToken && (
-                    <span
-                      className="chip blue"
-                      title="Events stream over a Socket Mode WebSocket. No public webhook URL needed"
-                    >
-                      Socket Mode
                     </span>
                   )}
                   {c.vendor === "slack" && !c.hasAppToken && !c.hasSigningSecret && (
@@ -488,19 +462,6 @@ function ConnectionsPage() {
                     >
                       no event delivery
                     </span>
-                  )}
-                  <span className={`chip ${c.status === "connected" ? "green" : "amber"}`}>
-                    {c.status}
-                  </span>
-                  {c.vendor === "slack" && !c.isPrimary && (
-                    <button
-                      className="btn"
-                      title="Route platform notifications through this workspace and let it answer as Rabble's general-purpose interface"
-                      disabled={makePrimary.isPending}
-                      onClick={() => makePrimary.mutate(c.id)}
-                    >
-                      Make primary
-                    </button>
                   )}
                   <button className="btn" onClick={() => setEditing(c)}>
                     Edit
@@ -1155,14 +1116,16 @@ function McpServersPage() {
             className="card"
             style={{ padding: 12, marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap" }}
           >
-            <span className={`chip ${selected.status === "connected" ? "green" : "amber"}`}>
-              {selected.status}
+            <span className="server-meta">
+              {selected.status !== "connected" && (
+                <span style={{ color: "var(--amber)" }}>unreachable · </span>
+              )}
+              {selected.category} ·{" "}
+              {selected.credentialMode === "personal"
+                ? "personal credentials"
+                : "org credential"}{" "}
+              · {count(selected.tools.length, "tool")}
             </span>
-            <span className="chip">{selected.category}</span>
-            <span className={`chip ${selected.credentialMode === "personal" ? "amber" : "green"}`}>
-              {selected.credentialMode === "personal" ? "personal credential" : "shared credential"}
-            </span>
-            <span className="chip blue">{count(selected.tools.length, "tool")}</span>
             <span style={{ fontSize: 12, color: "var(--text-dim)", alignSelf: "center" }}>
               Test connection re-discovers the tool catalog. Enablement and
               service/user auth are set per agent on its MCP tab.
@@ -1329,27 +1292,29 @@ function McpServersPage() {
                 />
                 <div className="grow">
                   <div className="title">{s.name}</div>
-                  <div className="sub mono">{s.url}</div>
+                  <div className="sub">
+                    {[
+                      s.category,
+                      s.credentialMode === "personal"
+                        ? "personal credentials"
+                        : "org credential",
+                      `${count(s.tools.length - s.disabledTools.length, "tool")}${
+                        s.disabledTools.length > 0
+                          ? ` (${s.disabledTools.length} off)`
+                          : ""
+                      }`,
+                      s.usedByCount > 0 ? `used by ${s.usedByCount}` : null,
+                      s.grantCount > 0 ? "restricted" : null,
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </div>
                 </div>
-                <span className="chip">{s.category}</span>
-                <span className={`chip ${s.credentialMode === "personal" ? "amber" : "green"}`}>
-                  {s.credentialMode === "personal" ? "personal" : "shared"}
-                </span>
                 {s.requiresOAuth && s.credentialMode === "shared" && !s.hasToken && (
                   <span className="chip amber" title="Authorize an org account on this server">
                     needs org account
                   </span>
                 )}
-                <span className="chip blue">
-                  {count(s.tools.length - s.disabledTools.length, "tool")}
-                  {s.disabledTools.length > 0 ? ` · ${s.disabledTools.length} off` : ""}
-                </span>
-                {s.grantCount > 0 && (
-                  <span className="chip amber" title="Restricted — only grantees can attach it">
-                    restricted
-                  </span>
-                )}
-                <span className="chip purple">used by {s.usedByCount}</span>
                 <button
                   className="btn danger"
                   onClick={(e) => {
@@ -1764,9 +1729,8 @@ function ModelsPage() {
                 <div className="title">{c.displayName}</div>
                 <div className="sub">{c.description}</div>
               </div>
-              <span className="chip blue">built-in</span>
               {isRegistered ? (
-                <span className="chip green">enabled</span>
+                <span className="sub" style={{ flexShrink: 0 }}>enabled ✓</span>
               ) : (
                 <button
                   className="btn"
@@ -1806,18 +1770,18 @@ function ModelsPage() {
             >
               <div className="grow">
                 <div className="title">{m.displayName}</div>
-                <div className="sub mono">
-                  {m.modelId}
-                  {m.baseUrl ? ` · ${m.baseUrl}` : ""}
+                <div className="sub">
+                  <span className="mono">
+                    {m.modelId}
+                    {m.baseUrl ? ` · ${m.baseUrl}` : ""}
+                  </span>
+                  {` · ${m.kind}`}
+                  {m.usedBy.length > 0
+                    ? ` · ${m.usedBy.length} agent${m.usedBy.length === 1 ? "" : "s"}`
+                    : ""}
+                  {!m.canUse ? " · restricted" : ""}
                 </div>
               </div>
-              {m.usedBy.length > 0 && (
-                <span className="chip">
-                  {m.usedBy.length} agent{m.usedBy.length === 1 ? "" : "s"}
-                </span>
-              )}
-              {!m.canUse && <span className="chip amber">restricted</span>}
-              <span className={`chip ${m.kind === "built-in" ? "blue" : "purple"}`}>{m.kind}</span>
               {m.kind === "custom" && (
                 <button
                   className="btn"
@@ -2121,23 +2085,13 @@ function ApiKeysPage() {
             <div className="grow">
               <div className="title">{k.name}</div>
               <div className="sub mono">
-                {k.prefix}_•••••••• · created {relativeTime(k.createdAt)} by{" "}
+                {k.prefix}_•••••••• · {k.scope} · created {relativeTime(k.createdAt)} by{" "}
                 {k.createdByName ?? "?"} ·{" "}
                 {k.lastUsedAt
                   ? `last used ${relativeTime(k.lastUsedAt)}`
                   : "never used"}
               </div>
             </div>
-            <span
-              className={`chip ${k.scope === "admin" ? "purple" : k.scope === "write" ? "blue" : "green"}`}
-            >
-              {k.scope}
-            </span>
-            {!k.lastUsedAt && !k.revokedAt && (
-              <span className="chip" title="This key has never authenticated a request">
-                unused
-              </span>
-            )}
             {k.revokedAt ? (
               <span className="chip amber">revoked</span>
             ) : (
@@ -2572,7 +2526,7 @@ function SettingsPage() {
             </div>
             {!u.active && <span className="chip amber">deactivated</span>}
             {u.role === "owner" ? (
-              <span className="chip purple">owner</span>
+              <span className="sub" style={{ flexShrink: 0 }}>owner</span>
             ) : (
               <>
                 <div className="segmented">

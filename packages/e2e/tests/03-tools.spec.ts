@@ -77,8 +77,8 @@ test("admin: register the emulated GitHub MCP server (personal credential)", asy
 
   const row = page.locator(".row", { hasText: "GitHub" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "tools" })).toHaveText("2 tools");
-  await expect(row.locator(".chip", { hasText: "personal" })).toBeVisible();
+  await expect(row).toContainText("2 tools");
+  await expect(row).toContainText("personal credentials");
 
   const servers = await dbQuery<{ slug: string; credential_mode: string; tools: unknown[] }>(
     "SELECT slug, credential_mode, tools FROM mcp_servers",
@@ -95,9 +95,9 @@ test("admin: register the emulated GitHub MCP server (personal credential)", asy
   await row.click();
   await expect(page.getByRole("heading", { name: "GitHub" })).toBeVisible();
   await expect(page.getByText("Not attached to any agent yet.")).toBeVisible();
-  await expect(page.locator(".chip", { hasText: "personal credential" })).toBeVisible();
+  await expect(page.locator(".server-meta")).toContainText("personal credentials");
   await page.getByRole("button", { name: "Test connection" }).click();
-  await expect(page.locator(".chip", { hasText: "2 tools" })).toBeVisible();
+  await expect(page.locator(".server-meta")).toContainText("2 tools");
   await page.getByRole("button", { name: "‹ MCP servers" }).click();
 });
 
@@ -119,8 +119,8 @@ test("admin: register a shared-credential server (Datadog)", async () => {
 
   const row = page.locator(".row", { hasText: "Datadog" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "shared" })).toBeVisible();
-  await expect(row.locator(".chip.blue")).toHaveText("1 tool");
+  await expect(row).toContainText("org credential");
+  await expect(row).toContainText("1 tool");
 
   const [ddog] = await dbQuery<{ credential_mode: string }>(
     "SELECT credential_mode FROM mcp_servers WHERE slug = 'datadog'",
@@ -148,11 +148,12 @@ test("agent config: attach both servers; tools show derived identity", async () 
   await expect(issueRow.locator(".chip.amber", { hasText: "personal" })).toBeVisible();
   const metricRow = page.locator(".row", { hasText: "query_metrics" });
   await expect(metricRow).toBeVisible();
-  await expect(metricRow.locator(".chip.green", { hasText: "service" })).toBeVisible();
+  // Service auth is the silent default — no badge at all on the row.
+  await expect(metricRow.locator(".chip.amber")).toHaveCount(0);
 
   // Per-server header summaries reflect the split.
-  await expect(page.locator(".chip", { hasText: "2 personal" })).toBeVisible();
-  await expect(page.locator(".chip", { hasText: "1 service" })).toBeVisible();
+  await expect(page.getByText("2 personal")).toBeVisible();
+  await expect(page.getByText("1 service")).toBeVisible();
 
   // The MCP server's detail now lists this agent under "Used by"
   await page.locator("nav a[title='Admin']").click();
@@ -673,7 +674,7 @@ test("mcp servers are editable in place — category changes, tools survive", as
   await page.locator(".modal select").selectOption("Ops");
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.locator(".modal")).toHaveCount(0);
-  await expect(page.locator(".chip", { hasText: "Ops" })).toBeVisible();
+  await expect(page.locator(".server-meta")).toContainText("Ops");
 
   const [server] = await dbQuery<{ category: string; tools: unknown[] }>(
     "SELECT category, tools FROM mcp_servers WHERE slug = 'github'",
@@ -790,9 +791,9 @@ test("register an OAuth MCP server (auto-detected, no tools yet)", async () => {
 
   const row = page.locator(".row", { hasText: "Incidents" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "personal" })).toBeVisible();
+  await expect(row).toContainText("personal credentials");
   // Tools are unknown until someone authorizes — the catalog starts empty.
-  await expect(row.locator(".chip.blue")).toHaveText("0 tools");
+  await expect(row).toContainText("0 tools");
 
   const [server] = await dbQuery<{
     credential_mode: string;
@@ -1020,7 +1021,7 @@ test("mcp library: preconfigured platforms register with editable endpoints", as
 
   const row = page.locator(".row", { hasText: "Notion" }).first();
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "tool" })).toContainText("2 tools");
+  await expect(row).toContainText("2 tools");
   const [srv] = await dbQuery<{ library_key: string; slug: string }>(
     "SELECT library_key, slug FROM mcp_servers WHERE name = 'Notion'",
   );
@@ -1153,9 +1154,7 @@ test("access scopes: a granted server is attachable only by its grantees", async
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "MCP servers" }).click();
   await expect(
-    page.locator(".row", { hasText: "Notion (Support)" }).locator(".chip", {
-      hasText: "restricted",
-    }),
+    page.locator(".row", { hasText: "Notion (Support)" }).getByText("restricted"),
   ).toBeVisible();
 
   // A fresh member outside the granted team can't attach it...

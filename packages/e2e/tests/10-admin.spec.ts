@@ -163,8 +163,16 @@ test("api keys: read scope is enforced over HTTP", async () => {
 test("audit log viewer shows the accumulated control-plane history", async () => {
   await page.getByRole("link", { name: "Audit log" }).click();
   await expect(page.locator(".row", { hasText: "Created agent" }).first()).toBeVisible();
-  await expect(page.locator(".row", { hasText: 'Registered MCP server "GitHub"' })).toBeVisible();
-  await expect(page.locator(".row", { hasText: "Created API key" })).toBeVisible();
+  // The unfiltered page shows the newest 100 events, and the suite has
+  // accumulated more history than that — find the early MCP registration
+  // the way a person would, through the action filter.
+  await page.locator("select").selectOption("mcp");
+  await expect(
+    page.locator(".row", { hasText: 'Registered MCP server "GitHub"' }),
+  ).toBeVisible();
+  await page.locator("select").selectOption("api-key");
+  await expect(page.locator(".row", { hasText: "Created API key" }).first()).toBeVisible();
+  await page.locator("select").selectOption("");
 
   // Rows with metadata expand to reveal the detail behind the summary — the
   // gating block from 04 shows which case regressed and the judge's reasoning.

@@ -78,9 +78,9 @@ test("register a shared OAuth MCP server (auto-detected, awaiting donation)", as
 
   const row = page.locator(".row", { hasText: "Ops Incidents" });
   await expect(row).toBeVisible();
-  await expect(row.locator(".chip", { hasText: "shared" })).toBeVisible();
+  await expect(row).toContainText("org credential");
   // Tools stay empty until the first donation discovers the catalog.
-  await expect(row.locator(".chip.blue")).toHaveText("0 tools");
+  await expect(row).toContainText("0 tools");
 
   const [server] = await dbQuery<{
     credential_mode: string;
@@ -199,9 +199,8 @@ test("a shared OAuth tool runs on the org-donated token", async () => {
 
   const listRow = page.locator(".row", { hasText: "list_incidents" });
   await expect(listRow).toBeVisible();
-  await expect(
-    listRow.locator(".chip.green", { hasText: "service" }),
-  ).toBeVisible();
+  // Service auth is the silent default — no personal badge on the row.
+  await expect(listRow.locator(".chip.amber")).toHaveCount(0);
 
   // A shared/service call runs INLINE — no approval card — for the acting
   // user (Alex, who happens to be the donor here; because the credential is

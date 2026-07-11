@@ -14,6 +14,8 @@ import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { tool } from "@langchain/core/tools";
 import {
+  agentCapabilitiesSchema,
+  createAutomationSchema,
   orgSettingsSchema,
   slugify,
   userPreferencesSchema,
@@ -22,17 +24,26 @@ import {
 import { db } from "../db/client.js";
 import {
   accessRequests,
+  agentLinks,
   agentMcpServers,
+  agentToolConfigs,
   agents,
+  automations,
   domains,
   evalCriteria,
+  grants,
   mcpServers,
   models,
   orgs,
   users,
 } from "../db/schema.js";
 import { recordAudit } from "../audit.js";
-import { rightForAgent, hasRight, canUseMcpServer } from "../rights.js";
+import {
+  rightForAgent,
+  rightsForAllAgents,
+  hasRight,
+  canUseMcpServer,
+} from "../rights.js";
 import { gateUserAuth } from "./userAuthGate.js";
 import {
   gateContextFor,
@@ -42,7 +53,11 @@ import {
 
 const PLATFORM_SERVER_NAME = "Rabble platform";
 
-async function uniqueAgentSlug(orgId: string, name: string): Promise<string> {
+async function uniqueAgentSlug(
+  orgId: string,
+  name: string,
+  excludeId?: string,
+): Promise<string> {
   const base = slugify(name) || "agent";
   for (let i = 0; ; i++) {
     const candidate = i === 0 ? base : `${base}-${i + 1}`;
@@ -51,7 +66,7 @@ async function uniqueAgentSlug(orgId: string, name: string): Promise<string> {
       .from(agents)
       .where(and(eq(agents.orgId, orgId), eq(agents.slug, candidate)))
       .limit(1);
-    if (clash.length === 0) return candidate;
+    if (clash.length === 0 || clash[0]!.id === excludeId) return candidate;
   }
 }
 
@@ -71,6 +86,15 @@ export function buildPlatformTools(
   const preferences = userPreferencesSchema.parse({
     ...(user.preferences as Record<string, unknown>),
   });
+
+  const loadAgent = async (agentId: string) => {
+    const [row] = await db
+      .select()
+      .from(agents)
+      .where(and(eq(agents.id, agentId), eq(agents.orgId, user.orgId)))
+      .limit(1);
+    return row ?? null;
+  };
 
   const requireEdit = async (agentId: string): Promise<string | null> => {
     const right = await rightForAgent(
@@ -153,21 +177,24 @@ export function buildPlatformTools(
       },
     },
     {
-      name: "update_agent_draft",
+      name: "update_agent",
       description:
-        "Correct a draft agent's identity after the user fixes what you " +
-        "inferred: name, description, instructions, or tone. Drafts only: " +
-        "active agents are edited on their config tabs, where gating suites " +
-        "protect against regressions.",
+        "Update an agent's identity or behavior: name, description, " +
+        "instructions, tone, icon, or color. Works on drafts AND active " +
+        "agents — a behavior change to an active agent first runs its " +
+        "gating suites against the new config, and a failing case blocks " +
+        "the save (report the failure and iterate with the user).",
       authType: "user",
       schema: {
         type: "object",
         properties: {
-          agentId: { type: "string", description: "The draft agent's id" },
+          agentId: { type: "string", description: "The agent's id (see list_editable_agents)" },
           name: { type: "string" },
           description: { type: "string" },
           instructions: { type: "string" },
           tone: { type: "string" },
+          icon: { type: "string", description: "A single glyph, e.g. \"◈\"" },
+          color: { type: "string", enum: ["blue", "green", "purple", "amber"] },
         },
         required: ["agentId"],
       },
@@ -175,29 +202,49 @@ export function buildPlatformTools(
         const agentId = String(args.agentId ?? "");
         const denied = await requireEdit(agentId);
         if (denied) return denied;
-        const [existing] = await db
-          .select()
-          .from(agents)
-          .where(and(eq(agents.id, agentId), eq(agents.orgId, user.orgId)))
-          .limit(1);
+        const existing = await loadAgent(agentId);
         if (!existing) return "Error: agent not found.";
-        if (existing.status !== "draft") {
-          return (
-            "That agent is active. Changes to it run through its gating " +
-            "suites on the config tabs. Point the user at /agents/" +
-            agentId +
-            " instead."
-          );
-        }
-        const updates: Record<string, string> = {};
-        for (const key of ["name", "description", "instructions", "tone"] as const) {
+        if (existing.builtin) return "Error: built-in agents can't be reconfigured.";
+
+        const updates: Record<string, unknown> = {};
+        for (const key of ["name", "description", "instructions", "tone", "icon", "color"] as const) {
           if (typeof args[key] === "string" && args[key] !== "") {
             updates[key] = String(args[key]);
           }
         }
         if (Object.keys(updates).length === 0) {
-          return "Nothing to update. Pass at least one of name/description/instructions/tone.";
+          return "Nothing to update — pass at least one field.";
         }
+        if (updates.name) {
+          updates.slug = await uniqueAgentSlug(user.orgId, updates.name as string, agentId);
+        }
+
+        // Behavior changes face the same gate as the config tabs.
+        const candidate = {
+          name: (updates.name as string | undefined) ?? existing.name,
+          description: (updates.description as string | undefined) ?? existing.description,
+          instructions: (updates.instructions as string | undefined) ?? existing.instructions,
+          tone: (updates.tone as string | undefined) ?? existing.tone,
+          modelId: existing.modelId,
+        };
+        const { behaviorChanged, runAgentGate } = await import("../evals/gate.js");
+        if (behaviorChanged(existing, candidate)) {
+          const gate = await runAgentGate({
+            orgId: user.orgId,
+            actorUserId: user.id,
+            agent: existing,
+            candidate,
+          });
+          if (!gate.ok) {
+            return JSON.stringify({
+              blocked: true,
+              reason: gate.error,
+              failures: gate.block?.failures ?? [],
+              note: "Nothing was saved. Adjust the change (or the failing case) and try again.",
+            });
+          }
+        }
+
         await db
           .update(agents)
           .set({ ...updates, updatedBy: user.id, updatedAt: new Date() })
@@ -208,11 +255,687 @@ export function buildPlatformTools(
           action: "agent.update",
           targetType: "agent",
           targetId: agentId,
-          summary: `Updated ${Object.keys(updates).join(", ")} on "${
-            updates.name ?? existing.name
+          summary: `Updated ${Object.keys(updates).filter((k) => k !== "slug").join(", ")} on "${
+            (updates.name as string | undefined) ?? existing.name
           }" via Builder`,
         });
-        return JSON.stringify({ updated: Object.keys(updates) });
+        return JSON.stringify({
+          updated: Object.keys(updates).filter((k) => k !== "slug"),
+          gated: existing.status === "active",
+        });
+      },
+    },
+    {
+      name: "list_editable_agents",
+      description:
+        "List the agents the user can configure (edit or admin right), with " +
+        "ids for the other tools. Use this to resolve which agent the user " +
+        "means before changing anything.",
+      authType: "service",
+      schema: { type: "object", properties: {} },
+      run: async () => {
+        const rights = await rightsForAllAgents({
+          id: user.id,
+          orgId: user.orgId,
+          role: user.role,
+        } as never);
+        const rows = await db
+          .select()
+          .from(agents)
+          .where(eq(agents.orgId, user.orgId));
+        return JSON.stringify(
+          rows
+            .filter((a) => {
+              const r = rights.get(a.id) ?? null;
+              return !a.builtin && hasRight(r, "edit");
+            })
+            .map((a) => ({ id: a.id, name: a.name, slug: a.slug, status: a.status })),
+        );
+      },
+    },
+    {
+      name: "get_agent_config",
+      description:
+        "Read an agent's full current configuration: identity, model, " +
+        "domain, status, capabilities, attached MCP servers with per-tool " +
+        "enablement, eval criteria, suites, automations, and sub-agents. " +
+        "ALWAYS read this before updating an agent, so edits build on what " +
+        "is actually there.",
+      authType: "service",
+      schema: {
+        type: "object",
+        properties: { agentId: { type: "string" } },
+        required: ["agentId"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const agent = await loadAgent(agentId);
+        if (!agent) return "Error: agent not found.";
+        const [model] = agent.modelId
+          ? await db.select().from(models).where(eq(models.id, agent.modelId)).limit(1)
+          : [];
+        const [domain] = agent.domainId
+          ? await db.select().from(domains).where(eq(domains.id, agent.domainId)).limit(1)
+          : [];
+        const attached = await db
+          .select({ server: mcpServers })
+          .from(agentMcpServers)
+          .innerJoin(mcpServers, eq(agentMcpServers.serverId, mcpServers.id))
+          .where(eq(agentMcpServers.agentId, agentId));
+        const toolConfigs = await db
+          .select()
+          .from(agentToolConfigs)
+          .where(eq(agentToolConfigs.agentId, agentId));
+        const configFor = new Map(
+          toolConfigs.map((c) => [`${c.serverId}:${c.toolName}`, c.enabled]),
+        );
+        const criteria = await db
+          .select({ name: evalCriteria.name, description: evalCriteria.description })
+          .from(evalCriteria)
+          .where(eq(evalCriteria.agentId, agentId));
+        const { evalSuites, evalCases } = await import("../db/schema.js");
+        const suites = await db
+          .select()
+          .from(evalSuites)
+          .where(eq(evalSuites.agentId, agentId));
+        const suiteSummaries = [];
+        for (const suite of suites) {
+          const cases = await db
+            .select({ id: evalCases.id })
+            .from(evalCases)
+            .where(eq(evalCases.suiteId, suite.id));
+          suiteSummaries.push({ name: suite.name, gating: suite.gating, cases: cases.length });
+        }
+        const autoRows = await db
+          .select()
+          .from(automations)
+          .where(eq(automations.agentId, agentId));
+        const links = await db
+          .select({ link: agentLinks, child: agents })
+          .from(agentLinks)
+          .innerJoin(agents, eq(agentLinks.subAgentId, agents.id))
+          .where(eq(agentLinks.agentId, agentId));
+        return JSON.stringify({
+          id: agent.id,
+          name: agent.name,
+          slug: agent.slug,
+          status: agent.status,
+          description: agent.description,
+          instructions: agent.instructions,
+          tone: agent.tone,
+          icon: agent.icon,
+          color: agent.color,
+          model: model ? { name: model.displayName, enabled: model.enabled } : null,
+          domain: domain?.name ?? null,
+          capabilities: agentCapabilitiesSchema.parse(
+            (agent.capabilities ?? {}) as Record<string, unknown>,
+          ),
+          mcpServers: attached.map(({ server }) => ({
+            name: server.name,
+            credentialMode: server.credentialMode,
+            tools: ((server.tools ?? []) as Array<{ name: string }>)
+              .filter(
+                (t) => !((server.disabledTools ?? []) as string[]).includes(t.name),
+              )
+              .map((t) => ({
+                name: t.name,
+                enabled: configFor.get(`${server.id}:${t.name}`) ?? true,
+              })),
+          })),
+          criteria,
+          suites: suiteSummaries,
+          automations: autoRows.map((a) => ({
+            name: a.name,
+            schedule: a.schedule,
+            enabled: a.enabled,
+          })),
+          subAgents: links.map(({ link, child }) => ({
+            name: child.name,
+            note: link.note,
+          })),
+        });
+      },
+    },
+    {
+      name: "set_agent_model",
+      description:
+        "Point an agent at a different model by its display name. A model " +
+        "change on an active agent runs the gating suites first. Model " +
+        "grants apply — a restricted model needs access.",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          modelName: { type: "string", description: "The model's display name, e.g. \"Claude Sonnet 5\"" },
+        },
+        required: ["agentId", "modelName"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const modelName = String(args.modelName ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const existing = await loadAgent(agentId);
+        if (!existing) return "Error: agent not found.";
+        const [model] = await db
+          .select()
+          .from(models)
+          .where(
+            and(
+              eq(models.orgId, user.orgId),
+              sql`lower(${models.displayName}) = ${modelName.toLowerCase()}`,
+            ),
+          )
+          .limit(1);
+        if (!model) {
+          const all = await db
+            .select({ name: models.displayName })
+            .from(models)
+            .where(eq(models.orgId, user.orgId));
+          return `No model named "${modelName}". Registered models: ${all.map((m) => m.name).join(", ") || "(none)"}.`;
+        }
+        if (!model.enabled) return `The model "${model.displayName}" is disabled.`;
+        // Model grants: with grants present, only grantees (and admins) may
+        // put agents on it — the same rule the identity tab enforces.
+        const isAdmin = user.role === "owner" || user.role === "admin";
+        if (!isAdmin) {
+          const modelGrants = await db
+            .select()
+            .from(grants)
+            .where(
+              and(
+                eq(grants.orgId, user.orgId),
+                eq(grants.targetType, "model"),
+                eq(grants.targetId, model.id),
+              ),
+            );
+          if (modelGrants.length > 0) {
+            const { grantSubjectsFor } = await import("../rights.js");
+            const { userIds, teamIds } = await grantSubjectsFor(user.id, user.orgId);
+            const reachable = modelGrants.some(
+              (g) =>
+                (g.subjectType === "user" && userIds.includes(g.subjectId)) ||
+                (g.subjectType === "team" && teamIds.includes(g.subjectId)),
+            );
+            if (!reachable) {
+              return (
+                `The model "${model.displayName}" is restricted and the user doesn't have access. ` +
+                "Offer to request it with request_access."
+              );
+            }
+          }
+        }
+        const candidate = {
+          name: existing.name,
+          description: existing.description,
+          instructions: existing.instructions,
+          tone: existing.tone,
+          modelId: model.id,
+        };
+        const { behaviorChanged, runAgentGate } = await import("../evals/gate.js");
+        if (behaviorChanged(existing, candidate)) {
+          const gate = await runAgentGate({
+            orgId: user.orgId,
+            actorUserId: user.id,
+            agent: existing,
+            candidate,
+          });
+          if (!gate.ok) {
+            return JSON.stringify({
+              blocked: true,
+              reason: gate.error,
+              failures: gate.block?.failures ?? [],
+            });
+          }
+        }
+        await db
+          .update(agents)
+          .set({ modelId: model.id, updatedBy: user.id, updatedAt: new Date() })
+          .where(eq(agents.id, agentId));
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.update",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Set model to "${model.displayName}" on "${existing.name}" via Builder`,
+        });
+        return JSON.stringify({ model: model.displayName });
+      },
+    },
+    {
+      name: "set_agent_status",
+      description:
+        "Activate an agent (it goes live for everyone with access) or set " +
+        "it back to draft (runs only for its maker).",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          status: { type: "string", enum: ["draft", "active"] },
+        },
+        required: ["agentId", "status"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const status = String(args.status ?? "");
+        if (status !== "draft" && status !== "active") {
+          return "Error: status must be draft or active.";
+        }
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const existing = await loadAgent(agentId);
+        if (!existing) return "Error: agent not found.";
+        if (existing.builtin) return "Error: built-in agents can't change status.";
+        if (status === "active" && !existing.modelId) {
+          return "The agent has no model yet — set one with set_agent_model before activating.";
+        }
+        await db
+          .update(agents)
+          .set({ status, updatedBy: user.id, updatedAt: new Date() })
+          .where(eq(agents.id, agentId));
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.update",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Set "${existing.name}" to ${status} via Builder`,
+        });
+        return JSON.stringify({ status });
+      },
+    },
+    {
+      name: "set_agent_domain",
+      description:
+        "File an agent in a domain (grants on the domain then apply to it), " +
+        "or clear it with domainName: null.",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          domainName: { type: ["string", "null"] },
+        },
+        required: ["agentId", "domainName"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const existing = await loadAgent(agentId);
+        if (!existing) return "Error: agent not found.";
+        let domainId: string | null = null;
+        let label = "no domain";
+        if (args.domainName != null && args.domainName !== "") {
+          const name = String(args.domainName);
+          const [domain] = await db
+            .select()
+            .from(domains)
+            .where(
+              and(
+                eq(domains.orgId, user.orgId),
+                sql`lower(${domains.name}) = ${name.toLowerCase()}`,
+              ),
+            )
+            .limit(1);
+          if (!domain) {
+            const all = await db
+              .select({ name: domains.name })
+              .from(domains)
+              .where(eq(domains.orgId, user.orgId));
+            return `No domain named "${name}". Domains: ${all.map((d) => d.name).join(", ") || "(none)"}.`;
+          }
+          domainId = domain.id;
+          label = `domain "${domain.name}"`;
+        }
+        await db
+          .update(agents)
+          .set({ domainId, updatedBy: user.id, updatedAt: new Date() })
+          .where(eq(agents.id, agentId));
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.update",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Filed "${existing.name}" under ${label} via Builder`,
+        });
+        return JSON.stringify({ domain: args.domainName ?? null });
+      },
+    },
+    {
+      name: "set_agent_capabilities",
+      description:
+        "Set the agent's Advanced-tab capabilities. Outbound web access " +
+        "gives a governed fetch_url tool bound to the network allowlist " +
+        "(comma-separated hosts, *.wildcards allowed; empty = no egress).",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          outboundWebAccess: { type: "boolean" },
+          networkAllowlist: { type: "string" },
+          codeExecution: { type: "boolean" },
+          codeSandbox: { type: "boolean" },
+          pullRequestAccess: { type: "boolean" },
+        },
+        required: ["agentId"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const existing = await loadAgent(agentId);
+        if (!existing) return "Error: agent not found.";
+        const current = agentCapabilitiesSchema.parse(
+          (existing.capabilities ?? {}) as Record<string, unknown>,
+        );
+        const next = { ...current } as Record<string, unknown>;
+        for (const key of [
+          "outboundWebAccess",
+          "codeExecution",
+          "codeSandbox",
+          "pullRequestAccess",
+        ] as const) {
+          if (typeof args[key] === "boolean") next[key] = args[key];
+        }
+        if (typeof args.networkAllowlist === "string") {
+          next.networkAllowlist = args.networkAllowlist;
+        }
+        await db
+          .update(agents)
+          .set({ capabilities: next, updatedBy: user.id, updatedAt: new Date() })
+          .where(eq(agents.id, agentId));
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.update",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Updated capabilities on "${existing.name}" via Builder`,
+          metadata: { capabilities: next },
+        });
+        return JSON.stringify({ capabilities: next });
+      },
+    },
+    {
+      name: "detach_mcp_server",
+      description: "Detach an MCP server from an agent (its tools go away).",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          serverName: { type: "string" },
+        },
+        required: ["agentId", "serverName"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const serverName = String(args.serverName ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const [server] = await db
+          .select()
+          .from(mcpServers)
+          .where(
+            and(
+              eq(mcpServers.orgId, user.orgId),
+              sql`lower(${mcpServers.name}) = ${serverName.toLowerCase()}`,
+            ),
+          )
+          .limit(1);
+        if (!server) return `No MCP server named "${serverName}".`;
+        await db
+          .delete(agentMcpServers)
+          .where(
+            and(
+              eq(agentMcpServers.agentId, agentId),
+              eq(agentMcpServers.serverId, server.id),
+            ),
+          );
+        await db
+          .delete(agentToolConfigs)
+          .where(
+            and(
+              eq(agentToolConfigs.agentId, agentId),
+              eq(agentToolConfigs.serverId, server.id),
+            ),
+          );
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.mcp.detach",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Detached MCP server "${server.name}" via Builder`,
+        });
+        return JSON.stringify({ detached: server.name });
+      },
+    },
+    {
+      name: "set_tool_enabled",
+      description:
+        "Enable or disable one tool from an attached MCP server for this " +
+        "agent. Narrow the set to what the job needs.",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          serverName: { type: "string" },
+          toolName: { type: "string" },
+          enabled: { type: "boolean" },
+        },
+        required: ["agentId", "serverName", "toolName", "enabled"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const serverName = String(args.serverName ?? "");
+        const toolName = String(args.toolName ?? "");
+        const enabled = Boolean(args.enabled);
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const [server] = await db
+          .select()
+          .from(mcpServers)
+          .where(
+            and(
+              eq(mcpServers.orgId, user.orgId),
+              sql`lower(${mcpServers.name}) = ${serverName.toLowerCase()}`,
+            ),
+          )
+          .limit(1);
+        if (!server) return `No MCP server named "${serverName}".`;
+        const tools = (server.tools ?? []) as Array<{ name: string }>;
+        if (!tools.some((t) => t.name === toolName)) {
+          return `"${serverName}" has no tool named "${toolName}". Its tools: ${tools.map((t) => t.name).join(", ")}.`;
+        }
+        if (((server.disabledTools ?? []) as string[]).includes(toolName)) {
+          return `"${toolName}" is switched off at the server definition by an org admin — it can't be enabled per agent.`;
+        }
+        await db
+          .insert(agentToolConfigs)
+          .values({ agentId, serverId: server.id, toolName, enabled })
+          .onConflictDoUpdate({
+            target: [
+              agentToolConfigs.agentId,
+              agentToolConfigs.serverId,
+              agentToolConfigs.toolName,
+            ],
+            set: { enabled },
+          });
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.tool.configure",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `${enabled ? "Enabled" : "Disabled"} tool "${toolName}" via Builder`,
+        });
+        return JSON.stringify({ tool: toolName, enabled });
+      },
+    },
+    {
+      name: "link_sub_agent",
+      description:
+        "Wire another agent in as a callable sub-agent (bounded delegation). " +
+        "Needs use access on the agent being attached. Optionally note when " +
+        "to call it.",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string", description: "The parent agent's id" },
+          subAgentName: { type: "string" },
+          note: { type: "string", description: "When should the parent call it?" },
+        },
+        required: ["agentId", "subAgentName"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const subAgentName = String(args.subAgentName ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const [child] = await db
+          .select()
+          .from(agents)
+          .where(
+            and(
+              eq(agents.orgId, user.orgId),
+              sql`lower(${agents.name}) = ${subAgentName.toLowerCase()}`,
+            ),
+          )
+          .limit(1);
+        if (!child) return `No agent named "${subAgentName}".`;
+        if (child.id === agentId) return "An agent can't call itself.";
+        const right = await rightForAgent(
+          { id: user.id, orgId: user.orgId, role: user.role } as Parameters<
+            typeof rightForAgent
+          >[0],
+          child.id,
+        );
+        if (!hasRight(right, "use")) {
+          return (
+            `The user doesn't have use access on "${child.name}", which is required to wire it in. ` +
+            "Offer to request it with request_access."
+          );
+        }
+        await db
+          .insert(agentLinks)
+          .values({
+            agentId,
+            subAgentId: child.id,
+            note: String(args.note ?? "").slice(0, 300),
+          })
+          .onConflictDoNothing();
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.link",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Linked "${child.name}" as a sub-agent via Builder`,
+        });
+        return JSON.stringify({ linked: child.name });
+      },
+    },
+    {
+      name: "unlink_sub_agent",
+      description: "Remove a sub-agent link from an agent.",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          subAgentName: { type: "string" },
+        },
+        required: ["agentId", "subAgentName"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const subAgentName = String(args.subAgentName ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const [child] = await db
+          .select({ id: agents.id, name: agents.name })
+          .from(agents)
+          .where(
+            and(
+              eq(agents.orgId, user.orgId),
+              sql`lower(${agents.name}) = ${subAgentName.toLowerCase()}`,
+            ),
+          )
+          .limit(1);
+        if (!child) return `No agent named "${subAgentName}".`;
+        await db
+          .delete(agentLinks)
+          .where(
+            and(eq(agentLinks.agentId, agentId), eq(agentLinks.subAgentId, child.id)),
+          );
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "agent.unlink",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Unlinked sub-agent "${child.name}" via Builder`,
+        });
+        return JSON.stringify({ unlinked: child.name });
+      },
+    },
+    {
+      name: "create_automation",
+      description:
+        "Schedule the agent to run a prompt on a cron schedule (5 fields, " +
+        "hourly at most, e.g. \"0 9 * * 1\" = Mondays 9:00). The run lands " +
+        "as a real, judged session on the Automation surface.",
+      authType: "user",
+      schema: {
+        type: "object",
+        properties: {
+          agentId: { type: "string" },
+          name: { type: "string" },
+          schedule: { type: "string", description: "5-field cron" },
+          prompt: { type: "string", description: "What the agent should do each run" },
+        },
+        required: ["agentId", "name", "schedule", "prompt"],
+      },
+      run: async (args) => {
+        const agentId = String(args.agentId ?? "");
+        const denied = await requireEdit(agentId);
+        if (denied) return denied;
+        const parsed = createAutomationSchema.safeParse({
+          name: String(args.name ?? ""),
+          schedule: String(args.schedule ?? ""),
+          prompt: String(args.prompt ?? ""),
+        });
+        if (!parsed.success) {
+          return `Invalid automation: ${parsed.error.issues.map((i) => i.message).join("; ")}`;
+        }
+        const [row] = await db
+          .insert(automations)
+          .values({ agentId, ...parsed.data, createdBy: user.id })
+          .returning();
+        await recordAudit({
+          orgId: user.orgId,
+          actorUserId: user.id,
+          action: "automation.create",
+          targetType: "agent",
+          targetId: agentId,
+          summary: `Created automation "${parsed.data.name}" (${parsed.data.schedule}) via Builder`,
+        });
+        return JSON.stringify({
+          automationId: row!.id,
+          schedule: parsed.data.schedule,
+          note: "It runs on schedule once the scheduler is up; Run now is on the agent's Automations tab.",
+        });
       },
     },
     {

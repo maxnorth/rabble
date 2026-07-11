@@ -138,16 +138,22 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   Admin › MCP detail shows "Connect org account" / "the org's X access is
   <donor>'s account".
 - The Builder: agents with `builtin = 'builder'` (seeded per org at setup)
-  get platform tools (runtime/platformTools.ts) — create_agent_draft,
-  add_eval_criterion, attach_mcp_server, request_access — user-auth,
+  get platform tools (runtime/platformTools.ts) covering every agent-level
+  building block — create/update agent (drafts AND active), model, status,
+  domain, capabilities, MCP attach/detach + per-tool enable, eval criteria/
+  test cases, automations, sub-agent links, request_access — user-auth,
   rights-checked per tool, audited "via Builder". Builder has no pinned
   model; resolveAgentModel falls back to the org's first enabled model.
   request_access rows land in access_requests; approve (Admin › Access
-  requests) materializes/upgrades a user grant.
-- Gating: PATCH /api/agents/:id runs the agent's gating suites against the
-  CANDIDATE config for behavior changes (name/description/instructions/
-  tone/model) and 409s on a failing case — remember this when e2e edits a
-  gated agent (each gate run consumes emulator LLM calls).
+  requests) materializes/upgrades a user grant. BUILDER_INSTRUCTIONS live
+  in db/builder.ts; a boot sweep (syncBuilderInstructions) keeps existing
+  orgs' Builder rows on the shipped text.
+- Gating: behavior changes (name/description/instructions/tone/model) run
+  the agent's gating suites against the CANDIDATE config via the shared
+  gate (evals/gate.ts) — PATCH /api/agents/:id 409s on a failing case, and
+  the Builder's update tools return `{blocked:true, failures}` instead of
+  saving. Remember this when e2e edits a gated agent (each gate run
+  consumes emulator LLM calls).
 - Sessions carry `surface`/`surface_key`; inbound Slack events land at
   POST /api/inbound/slack (Slack v0 HMAC signing over the RAW body — the
   route scope has its own string content-type parser; don't move it under

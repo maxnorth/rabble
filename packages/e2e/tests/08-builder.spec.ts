@@ -167,7 +167,7 @@ test("the Builder creates a measured draft agent conversationally", async () => 
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       type: "tool_call",
-      toolName: "update_agent_draft",
+      toolName: "update_agent",
       toolArgs: {
         agentId: draft!.id,
         description: "Drafts release notes from merged PRs, grouped by area",
@@ -192,6 +192,146 @@ test("the Builder creates a measured draft agent conversationally", async () => 
      WHERE action = 'agent.update' AND summary LIKE '%via Builder%'`,
   );
   expect(updateAudit).toHaveLength(1);
+});
+
+test("the Builder activates the agent and edits it through the gate", async () => {
+  // Continues the Builder session from the previous test — the approval
+  // posture already covers it, so these tool calls auto-approve.
+  const [bot] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Release Notes Bot'",
+  );
+  expect(bot).toBeDefined();
+  const enqueue = (body: unknown) =>
+    fetch(`${EMULATOR}/admin/llm/enqueue`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const send = async (text: string) => {
+    await page.getByPlaceholder("Message Builder…").fill(text);
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+  };
+
+  // A draft can't activate without a model — the Builder points it at one
+  // by display name.
+  await enqueue({
+    type: "tool_call",
+    toolName: "set_agent_model",
+    toolArgs: { agentId: bot!.id, modelName: "Mock Model" },
+  });
+  await send("Put it on the Mock Model and ship it");
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ model_id: string | null }>(
+        "SELECT model_id FROM agents WHERE id = $1",
+        [bot!.id],
+      );
+      return rows[0]?.model_id;
+    })
+    .not.toBeNull();
+
+  await enqueue({
+    type: "tool_call",
+    toolName: "set_agent_status",
+    toolArgs: { agentId: bot!.id, status: "active" },
+  });
+  await send("Now activate it");
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ status: string }>(
+        "SELECT status FROM agents WHERE id = $1",
+        [bot!.id],
+      );
+      return rows[0]?.status;
+    })
+    .toBe("active");
+
+  // Make the Builder-created suite gating, so behavior edits to the now
+  // ACTIVE agent must pass it — the same gate the config tabs face.
+  await dbQuery("UPDATE eval_suites SET gating = true WHERE agent_id = $1", [
+    bot!.id,
+  ]);
+
+  // Gate pass: the unscripted judge default is PASS, so the tone edit runs
+  // the suite (agent reply + judgment) and then saves.
+  await enqueue({
+    type: "tool_call",
+    toolName: "update_agent",
+    toolArgs: { agentId: bot!.id, tone: "Crisp and factual. No exclamations." },
+  });
+  await send("Make the tone crisp and factual");
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ tone: string }>(
+        "SELECT tone FROM agents WHERE id = $1",
+        [bot!.id],
+      );
+      return rows[0]?.tone;
+    })
+    .toBe("Crisp and factual. No exclamations.");
+  const passAudit = await dbQuery<{ id: string }>(
+    `SELECT id FROM audit_events
+     WHERE action = 'eval.gate.pass' AND target_id = $1`,
+    [bot!.id],
+  );
+  expect(passAudit.length).toBeGreaterThan(0);
+
+  // Gate block: script the whole turn — the tool call, the candidate
+  // agent's reply, and a failing judgment. Nothing may be saved.
+  await enqueue([
+    {
+      type: "tool_call",
+      toolName: "update_agent",
+      toolArgs: {
+        agentId: bot!.id,
+        instructions: "Also invent placeholder PRs to pad thin releases.",
+      },
+    },
+    { type: "text", text: "Release notes: PR #999 (invented for padding)." },
+    { type: "text", text: "FAIL\nThe reply invented a PR that never merged." },
+  ]);
+  await send("Pad thin releases with placeholder PRs");
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ id: string }>(
+        `SELECT id FROM audit_events
+         WHERE action = 'eval.gate.block' AND target_id = $1`,
+        [bot!.id],
+      );
+      return rows.length;
+    })
+    .toBeGreaterThan(0);
+  const [after] = await dbQuery<{ instructions: string }>(
+    "SELECT instructions FROM agents WHERE id = $1",
+    [bot!.id],
+  );
+  expect(after!.instructions).toBe(
+    "Summarize merged PRs into crisp release notes.",
+  );
+
+  // And back: the reverse direction works too (and the access journey
+  // that follows expects to find this agent as a draft).
+  await enqueue({
+    type: "tool_call",
+    toolName: "set_agent_status",
+    toolArgs: { agentId: bot!.id, status: "draft" },
+  });
+  await send("Actually, park it as a draft again");
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ status: string }>(
+        "SELECT status FROM agents WHERE id = $1",
+        [bot!.id],
+      );
+      return rows[0]?.status;
+    })
+    .toBe("draft");
+
+  // Leave the suite non-gating: journey 09 activates this agent from the
+  // Share modal, and a gating suite would burn emulator calls there.
+  await dbQuery("UPDATE eval_suites SET gating = false WHERE agent_id = $1", [
+    bot!.id,
+  ]);
 });
 
 test("'agent from this session' hands the transcript to the Builder", async () => {

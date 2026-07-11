@@ -114,6 +114,11 @@ if (isMain) {
   app
     .listen({ port: env.port, host: "0.0.0.0" })
     .then(async () => {
+      // Keep every org's Builder on the current shipped instructions.
+      const { syncBuilderInstructions } = await import("./db/builder.js");
+      syncBuilderInstructions().catch((err) =>
+        app.log.warn({ err }, "builder instructions sync failed"),
+      );
       // Boot-time retention sweep (recurring sweeps land with Hatchet).
       const { applyRetentionForAllOrgs } = await import("./retention.js");
       applyRetentionForAllOrgs().catch((err) =>

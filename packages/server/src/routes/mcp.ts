@@ -130,8 +130,8 @@ export async function mcpRoutes(app: FastifyInstance) {
         url: body.url,
         category: body.category,
         credentialMode: body.credentialMode,
-        // Personal mode holds no org credential; a token supplied at
-        // registration is the REGISTRANT'S own and is stored as such below.
+        // Personal-mode servers hold no org credential; each user connects
+        // their own under Profile.
         encryptedToken:
           body.credentialMode === "shared" && body.token
             ? encryptSecret(body.token)
@@ -139,17 +139,6 @@ export async function mcpRoutes(app: FastifyInstance) {
         tools,
       })
       .returning();
-    if (body.credentialMode === "personal" && body.token) {
-      const { userMcpCredentials } = await import("../db/schema.js");
-      await db
-        .insert(userMcpCredentials)
-        .values({
-          userId: req.user!.id,
-          serverId: row!.id,
-          encryptedToken: encryptSecret(body.token),
-        })
-        .onConflictDoNothing();
-    }
     await recordAudit({
       orgId: req.user!.orgId,
       actorUserId: req.user!.id,

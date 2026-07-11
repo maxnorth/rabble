@@ -1235,8 +1235,8 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
                 setForm({ ...form, credentialMode: e.target.value as "shared" | "personal" })
               }
             >
-              <option value="shared">Shared, one org credential for everyone</option>
-              <option value="personal">Personal, each user connects their own</option>
+              <option value="shared">Shared</option>
+              <option value="personal">Personal</option>
             </select>
             <span className="hint">
               {form.credentialMode === "shared"
@@ -1244,18 +1244,16 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
                 : "No org credential. Each person connects their own account under Profile; calls act as them, with an in-thread approval."}
             </span>
           </div>
-          <div className="field">
-            <label>
-              {form.credentialMode === "shared"
-                ? "Bearer token (optional)"
-                : "Your bearer token (optional, connects your own account now)"}
-            </label>
-            <input
-              type="password"
-              value={form.token}
-              onChange={(e) => setForm({ ...form, token: e.target.value })}
-            />
-          </div>
+          {form.credentialMode === "shared" && (
+            <div className="field">
+              <label>Bearer token (optional)</label>
+              <input
+                type="password"
+                value={form.token}
+                onChange={(e) => setForm({ ...form, token: e.target.value })}
+              />
+            </div>
+          )}
           {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button type="button" className="btn" onClick={onClose}>

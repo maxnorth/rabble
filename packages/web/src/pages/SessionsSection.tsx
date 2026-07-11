@@ -912,10 +912,10 @@ function SessionThread({ sessionId }: { sessionId: string }) {
       // the approved call and the agent has already replied in a follow-up
       // turn — refetch the session so both land in the transcript.
       await api.decideApproval(sessionId, approval.approvalId, { decision });
+      // The decided ask leaves the thread — the flipped tool-call chip and
+      // the agent's follow-up turn are the durable record.
       setApprovals((prev) =>
-        prev.map((a) =>
-          a.approvalId === approval.approvalId ? { ...a, resolved: decision } : a,
-        ),
+        prev.filter((a) => a.approvalId !== approval.approvalId),
       );
       await queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
     } catch (err) {
@@ -1365,12 +1365,17 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                 Every grade is spot-checkable. Disagree to queue it for human
                 review on the agent's evals tab.
               </p>
-              {session.data?.session.agentId && (
-                <FreezeCard
-                  sessionId={sessionId}
-                  agentId={session.data.session.agentId}
-                />
-              )}
+              {(() => {
+                // Freeze targets one agent's suites: the pinned agent, or —
+                // in a multi-party Auto session — whoever answered last.
+                const lastAuthor = [...messages]
+                  .reverse()
+                  .find((m) => m.role === "agent" && m.agentId)?.agentId;
+                const freezeAgent = session.data?.session.agentId ?? lastAuthor;
+                return freezeAgent ? (
+                  <FreezeCard sessionId={sessionId} agentId={freezeAgent} />
+                ) : null;
+              })()}
             </>
           )}
         </aside>

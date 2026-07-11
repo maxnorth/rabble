@@ -589,6 +589,14 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
   expect(((await interaction.json()) as { resolved: boolean }).resolved).toBe(true);
 
   // Deciding executed the call as Alex and the agent followed up in-thread.
+  // The chip persists as "pending" first and flips when the decision lands,
+  // so poll for the FINAL status rather than first existence.
+  await expect
+    .poll(async () => {
+      const tc = await pollFirstToolCall("%File the issue we discussed%", 20000);
+      return (tc.approval as { status?: string } | null)?.status;
+    })
+    .toBe("approved");
   expect(await pollFirstToolCall("%File the issue we discussed%")).toMatchObject({
     name: "create_issue",
     authType: "user",
@@ -661,6 +669,13 @@ test("a Slack-raised approval can be decided from the web session", async () => 
 
   const delivery = await deliveryPromise;
   expect(delivery.status).toBe(200);
+  // Poll to the FINAL status — the chip exists as "pending" first.
+  await expect
+    .poll(async () => {
+      const tc = await pollFirstToolCall("%File one more issue please%", 20000);
+      return (tc.approval as { status?: string } | null)?.status;
+    })
+    .toBe("approved");
   expect(await pollFirstToolCall("%File one more issue please%")).toMatchObject({
     name: "create_issue",
     authType: "user",

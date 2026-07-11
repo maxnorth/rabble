@@ -650,6 +650,15 @@ test("socket mode interactivity: DM buttons resolve approvals over the WebSocket
 
   // The turn resumes, the tool runs approved, and the DM's buttons get
   // swapped for the outcome via response_url.
+  await expect
+    .poll(async () => {
+      const tc = await pollFirstToolCall(
+        "%File an issue about socket approvals%",
+        20000,
+      );
+      return (tc.approval as { status?: string } | null)?.status;
+    })
+    .toBe("approved");
   expect(
     await pollFirstToolCall("%File an issue about socket approvals%", 20000),
   ).toMatchObject({

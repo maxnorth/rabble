@@ -239,7 +239,7 @@ test("sessions: targeted chat streams a reply and persists the transcript", asyn
   expect(modeled.filter((m) => m.role === "agent").every((m) => m.model_id)).toBe(true);
 });
 
-test("sessions: Auto target resolves to an active agent", async () => {
+test("sessions: Auto stays unpinned; the orchestrator picks the responder", async () => {
   await page.getByRole("link", { name: "+ New session" }).click();
   await expect(page.locator(".session-greeting")).toBeVisible();
 
@@ -251,11 +251,16 @@ test("sessions: Auto target resolves to an active agent", async () => {
     { timeout: 15_000 },
   );
 
-  const rows = await dbQuery<{ slug: string }>(
-    `SELECT a.slug FROM sessions s JOIN agents a ON a.id = s.agent_id
+  // Multi-party Auto: the session has no pinned agent — authorship lives
+  // on the message (the only active agent responds here).
+  const rows = await dbQuery<{ session_agent: string | null; slug: string }>(
+    `SELECT s.agent_id AS session_agent, a.slug
+     FROM sessions s
+     JOIN messages m ON m.session_id = s.id AND m.role = 'agent'
+     JOIN agents a ON a.id = m.agent_id
      WHERE s.title = 'Auto-routed question'`,
   );
-  expect(rows).toEqual([{ slug: "eng-on-call" }]);
+  expect(rows).toEqual([{ session_agent: null, slug: "eng-on-call" }]);
 });
 
 test("transcripts survive a full page reload", async () => {

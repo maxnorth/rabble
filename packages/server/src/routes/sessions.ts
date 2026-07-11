@@ -324,7 +324,6 @@ export async function sessionRoutes(app: FastifyInstance) {
       const { sessionApprovedForUser } = await import(
         "../runtime/sessionApproval.js"
       );
-      const sessionApproved = sessionApprovedForUser(history, req.user!.id);
 
       const [userMessage] = await db
         .insert(messages)
@@ -384,6 +383,13 @@ export async function sessionRoutes(app: FastifyInstance) {
         });
         const model = await resolveAgentModel(responder);
         currentModel = model;
+        // Consent is per user AND per agent: in a multi-party session,
+        // approving one responder's tool never unlocks another responder.
+        const sessionApproved = sessionApprovedForUser(
+          history,
+          req.user!.id,
+          responder.id,
+        );
         fullText = "";
         inputTokens = 0;
         outputTokens = 0;

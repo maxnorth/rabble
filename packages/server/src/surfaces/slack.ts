@@ -491,16 +491,20 @@ export async function processSlackEvent(
     .where(eq(orgs.id, connection.orgId))
     .limit(1);
   const orgSettings = orgSettingsSchema.parse({ ...(org?.settings as object) });
+  // Shared threads are group spaces: the latch must be scoped to the
+  // person driving THIS turn (and to this agent) — one participant's
+  // approval never covers another's as-them calls.
   const priorMessages = await db
     .select()
     .from(messages)
     .where(eq(messages.sessionId, session!.id));
-  const sessionApproved = priorMessages.some((m) =>
-    ((m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>).some(
-      (tc) =>
-        tc.approval?.status === "approved" ||
-        tc.approval?.status === "auto-approved",
-    ),
+  const { sessionApprovedForUser } = await import(
+    "../runtime/sessionApproval.js"
+  );
+  const sessionApproved = sessionApprovedForUser(
+    priorMessages,
+    platformUser.id,
+    agent.id,
   );
 
   // Slack shows TWO agent working-indicators, both driven by setStatus:

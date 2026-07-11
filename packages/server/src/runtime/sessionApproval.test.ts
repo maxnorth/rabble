@@ -66,3 +66,54 @@ describe("sessionApprovedForUser", () => {
     expect(sessionApprovedForUser(history, "bea")).toBe(false);
   });
 });
+
+describe("agent scoping (multi-party sessions)", () => {
+  const at = (n: number) => new Date(2026, 0, 1, 0, 0, n);
+  const approvedCall = {
+    approval: { status: "approved", decidedByName: "Alex Lin" },
+  };
+
+  it("consent given to agent A never unlocks agent B", () => {
+    const history = [
+      { role: "user" as const, authorUserId: "alex", toolCalls: [], createdAt: at(1) },
+      {
+        role: "agent" as const,
+        authorUserId: null,
+        agentId: "agent-a",
+        toolCalls: [approvedCall],
+        createdAt: at(2),
+      },
+    ];
+    expect(sessionApprovedForUser(history, "alex", "agent-a")).toBe(true);
+    expect(sessionApprovedForUser(history, "alex", "agent-b")).toBe(false);
+  });
+
+  it("unscoped calls keep the old single-agent behavior", () => {
+    const history = [
+      { role: "user" as const, authorUserId: "alex", toolCalls: [], createdAt: at(1) },
+      {
+        role: "agent" as const,
+        authorUserId: null,
+        agentId: "agent-a",
+        toolCalls: [approvedCall],
+        createdAt: at(2),
+      },
+    ];
+    expect(sessionApprovedForUser(history, "alex")).toBe(true);
+  });
+
+  it("stays user-scoped inside the agent scope", () => {
+    const history = [
+      { role: "user" as const, authorUserId: "bea", toolCalls: [], createdAt: at(1) },
+      {
+        role: "agent" as const,
+        authorUserId: null,
+        agentId: "agent-a",
+        toolCalls: [approvedCall],
+        createdAt: at(2),
+      },
+    ];
+    expect(sessionApprovedForUser(history, "alex", "agent-a")).toBe(false);
+    expect(sessionApprovedForUser(history, "bea", "agent-a")).toBe(true);
+  });
+});

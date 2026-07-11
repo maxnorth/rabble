@@ -11,6 +11,8 @@
 export interface ApprovalHistoryMessage {
   role: "user" | "agent";
   authorUserId: string | null;
+  /** The agent that authored an agent row (multi-party sessions). */
+  agentId?: string | null;
   toolCalls: unknown;
   createdAt: Date;
 }
@@ -18,6 +20,13 @@ export interface ApprovalHistoryMessage {
 export function sessionApprovedForUser(
   history: ApprovalHistoryMessage[],
   userId: string,
+  /**
+   * Scope the latch to ONE agent: consent given to agent A never authorizes
+   * agent B in the same multi-party session — the same rule that keeps a
+   * parent's consent from covering a delegated sub-agent. Omit for
+   * pinned single-agent sessions.
+   */
+  agentId?: string,
 ): boolean {
   const ordered = [...history].sort(
     (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
@@ -30,6 +39,8 @@ export function sessionApprovedForUser(
     }
     // An agent turn's approvals are attributed to whoever drove it.
     if (driver !== userId) continue;
+    // …and to the agent that ran it.
+    if (agentId !== undefined && m.agentId !== agentId) continue;
     const approved = (
       (m.toolCalls ?? []) as Array<{ approval?: { status?: string } | null }>
     ).some(

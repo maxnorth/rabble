@@ -455,6 +455,24 @@ test("multi-party: the orchestrator pulls two agents into one round", async () =
   expect(
     JSON.stringify(anthropicLog.requests.at(-1)?.body ?? {}),
   ).toContain("[Eng On-Call (agent) replied]");
+
+  // Settle this round's judging (both responders judge against their own
+  // criteria) before the next test scripts the emulator — an in-flight
+  // judge call would steal its queued reply.
+  const [expectedJudgments] = await dbQuery<{ n: number }>(
+    `SELECT count(*)::int AS n FROM eval_criteria ec
+     JOIN agents a ON a.id = ec.agent_id
+     WHERE ec.enabled AND a.slug IN ('eng-on-call', 'claude-agent')`,
+  );
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ n: number }>(
+        "SELECT count(*)::int AS n FROM eval_results WHERE session_id = $1",
+        [mp!.id],
+      );
+      return rows[0]?.n;
+    })
+    .toBe(expectedJudgments!.n);
 });
 
 test("spot-check: a disputed verdict queues for review; overturn flips it", async () => {

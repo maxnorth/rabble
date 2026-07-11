@@ -944,11 +944,18 @@ test("an agent calls an OAuth tool as the user, carrying the user's token", asyn
   await expect(card).toContainText("acting as you");
   await card.getByRole("button", { name: "Approve as me" }).click();
 
+  // Async approvals: the follow-up turn carries the executed incident.
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to: Open an incident: prod is down",
+    "Approval update",
     { timeout: 15_000 },
   );
 
+  await expect
+    .poll(async () => {
+      const tc = await pollFirstToolCall("%Open an incident: prod is down%", 20000);
+      return (tc.approval as { status?: string } | null)?.status;
+    })
+    .toBe("approved");
   const call = await pollFirstToolCall("%Open an incident: prod is down%");
   expect(call).toMatchObject({
     name: "create_incident",

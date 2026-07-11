@@ -328,12 +328,17 @@ test("auto routes by intent across usable agents", async () => {
     "SELECT id, agent_id FROM sessions WHERE title LIKE 'The CI pipeline is failing%'",
   );
   expect(autoSession!.agent_id).toBeNull();
-  const routed = await dbQuery<{ slug: string }>(
-    `SELECT a.slug FROM messages m JOIN agents a ON a.id = m.agent_id
-     WHERE m.session_id = $1 AND m.role = 'agent'`,
-    [autoSession!.id],
-  );
-  expect(routed).toEqual([{ slug: "eng-on-call" }]);
+  // The authored agent row lands just after the last delta renders — poll.
+  await expect
+    .poll(async () => {
+      const routed = await dbQuery<{ slug: string }>(
+        `SELECT a.slug FROM messages m JOIN agents a ON a.id = m.agent_id
+         WHERE m.session_id = $1 AND m.role = 'agent'`,
+        [autoSession!.id],
+      );
+      return routed;
+    })
+    .toEqual([{ slug: "eng-on-call" }]);
 });
 
 test("auto reaches the Builder for build-an-agent asks", async () => {

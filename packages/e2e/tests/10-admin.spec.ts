@@ -465,8 +465,9 @@ test("org policies: designated creators and the approval floor are enforced", as
   const card = page.locator(".approval-card");
   await expect(card).toBeVisible({ timeout: 15_000 });
   await card.getByRole("button", { name: "Approve as me" }).click();
+  // Async approvals: the follow-up turn carries the executed result.
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to: File the floor-gated issue",
+    "Approval update",
     { timeout: 15_000 },
   );
   expect(await pollFirstToolCall("%File the floor-gated issue%")).toMatchObject({

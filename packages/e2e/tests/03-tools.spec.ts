@@ -760,10 +760,21 @@ test("personal server with no credential prompts a connect card, then resumes", 
     await expect(approveBtn).toBeVisible({ timeout: 15_000 });
     await approveBtn.click();
 
+    // Async approvals: deciding executed the call with the freshly
+    // connected credential and the agent followed up with the result.
     await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-      "Mock reply to: File an issue via the unconnected server",
+      "Approval update",
       { timeout: 15_000 },
     );
+    await expect
+      .poll(async () => {
+        const tc = await pollFirstToolCall(
+          "%File an issue via the unconnected server%",
+          20000,
+        );
+        return (tc.approval as { status?: string } | null)?.status;
+      })
+      .toBe("approved");
     const call = await pollFirstToolCall("%File an issue via the unconnected server%");
     expect(call).toMatchObject({
       name: "create_issue",

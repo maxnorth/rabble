@@ -87,6 +87,17 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   in place (`PATCH /api/connections/:id`, tri-state secrets: omit=keep,
   string=set, null=clear) so enabling Socket Mode never deletes surface
   mappings.
+- MCP credential mode is a server-registration attribute, not a per-tool
+  choice: `mcp_servers.credential_mode` is `shared` (one org credential, calls
+  run as the org service account, green chips) or `personal` (no org
+  credential; each user connects their own under Profile ›
+  `user_mcp_credentials`, calls run as that user with the approval gate, amber
+  chips). The runtime derives a tool's authType from the server's mode
+  (`agentTurn.buildGovernedTools`); there is no `agent_tool_configs.auth_type`.
+  A personal-mode call with no connected credential PAUSES on a `connect-request`
+  stream event (in-session connect card) on an interactive surface, and fails
+  closed everywhere else. Register the same upstream twice to split some tools
+  shared and others personal.
 - The Builder: agents with `builtin = 'builder'` (seeded per org at setup)
   get platform tools (runtime/platformTools.ts) — create_agent_draft,
   add_eval_criterion, attach_mcp_server, request_access — user-auth,

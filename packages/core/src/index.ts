@@ -335,6 +335,13 @@ export const streamEventSchema = z.discriminatedUnion("type", [
     serverName: z.string().nullable(),
     input: z.unknown(),
   }),
+  /** A personal-credential MCP server needs the user to connect an account. */
+  z.object({
+    type: z.literal("connect-request"),
+    connectId: z.string(),
+    serverId: z.string(),
+    serverName: z.string(),
+  }),
   /** The completed, persisted agent message. */
   z.object({ type: z.literal("done"), message: messageSchema }),
   z.object({ type: z.literal("error"), error: z.string() }),
@@ -455,6 +462,7 @@ export const mcpServerSchema = z.object({
   name: z.string(),
   url: z.string(),
   category: z.string(),
+  credentialMode: z.enum(["shared", "personal"]),
   hasToken: z.boolean(),
   tools: z.array(mcpToolInfoSchema),
   status: z.enum(["connected", "error"]),
@@ -467,6 +475,7 @@ export const createMcpServerSchema = z.object({
   name: z.string().min(1).max(120),
   url: z.string().url(),
   category: z.string().min(1).max(40).default("Tools"),
+  credentialMode: z.enum(["shared", "personal"]).default("shared"),
   token: z.string().max(500).optional(),
 });
 export type CreateMcpServerRequest = z.infer<typeof createMcpServerSchema>;
@@ -477,6 +486,7 @@ export const agentToolConfigSchema = z.object({
   toolName: z.string(),
   description: z.string(),
   enabled: z.boolean(),
+  /** Derived from the server's credential mode; kept on the wire for chips. */
   authType: z.enum(["service", "user"]),
 });
 export type AgentToolConfig = z.infer<typeof agentToolConfigSchema>;
@@ -485,7 +495,6 @@ export const updateToolConfigSchema = z.object({
   serverId: z.string().uuid(),
   toolName: z.string(),
   enabled: z.boolean().optional(),
-  authType: z.enum(["service", "user"]).optional(),
 });
 export type UpdateToolConfigRequest = z.infer<typeof updateToolConfigSchema>;
 

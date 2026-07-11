@@ -780,10 +780,11 @@ export async function seedDemo(): Promise<void> {
       name: "GitHub",
       url: "https://mcp.acme.dev/github",
       category: "Tools",
+      credentialMode: "personal" as const,
       tools: [
         { name: "search_repos", description: "Search repositories in the org" },
         { name: "search_ci_runs", description: "Look up recent CI runs for a repo" },
-        { name: "create_issue", description: "Open an issue (acts as the calling user)" },
+        { name: "create_issue", description: "Open an issue" },
       ],
       status: "connected" as const,
       createdAt: daysAgo(55),
@@ -797,13 +798,14 @@ export async function seedDemo(): Promise<void> {
       name: "Datadog",
       url: "https://mcp.acme.dev/datadog",
       category: "Tools",
+      credentialMode: "shared" as const,
       tools: [{ name: "query_metrics", description: "Query a metric timeseries" }],
       status: "connected" as const,
       createdAt: daysAgo(48),
     })
     .returning();
-  // Server-level attachment (what "used by" counts) mirrors the per-tool
-  // grants below — an agent attaches a server, then enables tools on it.
+  // Server-level attachment (what "used by" counts): an agent attaches a
+  // server, then enables tools on it. Identity follows the server's mode.
   await db.insert(agentMcpServers).values([
     { agentId: byName.get("Eng On-Call")!.id, serverId: githubMcp!.id },
     { agentId: byName.get("Eng On-Call")!.id, serverId: datadogMcp!.id },
@@ -811,37 +813,32 @@ export async function seedDemo(): Promise<void> {
     { agentId: byName.get("PR Summarizer")!.id, serverId: githubMcp!.id },
   ]);
   await db.insert(agentToolConfigs).values([
-    // Eng On-Call reads CI as the service account, but opening an issue
-    // acts as the user — so it needs an approval each time.
+    // Tool enablement per agent; identity comes from each server's
+    // credential mode (these demo servers are shared/org-credential).
     {
       agentId: byName.get("Eng On-Call")!.id,
       serverId: githubMcp!.id,
       toolName: "search_ci_runs",
-      authType: "service" as const,
     },
     {
       agentId: byName.get("Eng On-Call")!.id,
       serverId: githubMcp!.id,
       toolName: "create_issue",
-      authType: "user" as const,
     },
     {
       agentId: byName.get("Eng On-Call")!.id,
       serverId: datadogMcp!.id,
       toolName: "query_metrics",
-      authType: "service" as const,
     },
     {
       agentId: byName.get("Deploy Gate")!.id,
       serverId: githubMcp!.id,
       toolName: "search_ci_runs",
-      authType: "service" as const,
     },
     {
       agentId: byName.get("PR Summarizer")!.id,
       serverId: githubMcp!.id,
       toolName: "search_repos",
-      authType: "service" as const,
     },
   ]);
   await db.insert(auditEvents).values([

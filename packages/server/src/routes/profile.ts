@@ -6,7 +6,10 @@ import type { FastifyInstance } from "fastify";
 import { userPreferencesSchema } from "@rabblehq/core";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { userConnectedAccounts, users } from "../db/schema.js";
+import { userConnectedAccounts, users,
+  userMcpCredentials,
+  mcpServers,
+} from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { encryptSecret } from "../crypto.js";
 import { recordAudit } from "../audit.js";
@@ -123,5 +126,98 @@ export async function profileRoutes(app: FastifyInstance) {
       });
     }
     return { preferences };
+  });
+
+  // --- Personal MCP credentials (personal-credential servers) ---
+
+  app.get("/api/profile/mcp-credentials", async (req) => {
+    const { eq: eq2 } = await import("drizzle-orm");
+    const rows = await db
+      .select({ cred: userMcpCredentials, server: mcpServers })
+      .from(userMcpCredentials)
+      .innerJoin(mcpServers, eq2(userMcpCredentials.serverId, mcpServers.id))
+      .where(eq2(userMcpCredentials.userId, req.user!.id));
+    return {
+      credentials: rows
+        .filter((r) => r.server.orgId === req.user!.orgId)
+        .map((r) => ({
+          serverId: r.server.id,
+          serverName: r.server.name,
+          connectedAt: r.cred.createdAt.toISOString(),
+        })),
+    };
+  });
+
+  app.put("/api/profile/mcp-credentials/:serverId", async (req, reply) => {
+    const { serverId } = req.params as { serverId: string };
+    const { token } = (req.body ?? {}) as { token?: string };
+    if (!token?.trim()) return reply.code(400).send({ error: "A token is required" });
+    const { and: and2, eq: eq2 } = await import("drizzle-orm");
+    const [server] = await db
+      .select()
+      .from(mcpServers)
+      .where(and2(eq2(mcpServers.id, serverId), eq2(mcpServers.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!server) return reply.code(404).send({ error: "Server not found" });
+    if (server.credentialMode !== "personal") {
+      return reply.code(400).send({ error: "This server uses a shared org credential" });
+    }
+    // Verify the credential actually works before storing it.
+    const { mcpListTools } = await import("../mcp/client.js");
+    try {
+      await mcpListTools(server.url, token.trim());
+    } catch (err) {
+      return reply.code(422).send({
+        error: `The token didn't work against ${server.name}: ${err instanceof Error ? err.message : "unknown error"}`,
+      });
+    }
+    const { encryptSecret } = await import("../crypto.js");
+    await db
+      .insert(userMcpCredentials)
+      .values({
+        userId: req.user!.id,
+        serverId,
+        encryptedToken: encryptSecret(token.trim()),
+      })
+      .onConflictDoUpdate({
+        target: [userMcpCredentials.userId, userMcpCredentials.serverId],
+        set: { encryptedToken: encryptSecret(token.trim()) },
+      });
+    // Release any agent turn paused on a connect card for this server.
+    const { resolveConnects } = await import("../runtime/approvals.js");
+    resolveConnects(req.user!.id, serverId);
+    const { recordAudit } = await import("../audit.js");
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "mcp.credential.connect",
+      targetType: "mcp-server",
+      targetId: serverId,
+      summary: `Connected a personal credential for "${server.name}"`,
+    });
+    return { ok: true };
+  });
+
+  app.delete("/api/profile/mcp-credentials/:serverId", async (req) => {
+    const { serverId } = req.params as { serverId: string };
+    const { and: and2, eq: eq2 } = await import("drizzle-orm");
+    await db
+      .delete(userMcpCredentials)
+      .where(
+        and2(
+          eq2(userMcpCredentials.userId, req.user!.id),
+          eq2(userMcpCredentials.serverId, serverId),
+        ),
+      );
+    const { recordAudit } = await import("../audit.js");
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "mcp.credential.disconnect",
+      targetType: "mcp-server",
+      targetId: serverId,
+      summary: "Disconnected a personal MCP credential",
+    });
+    return { ok: true };
   });
 }

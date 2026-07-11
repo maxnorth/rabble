@@ -103,7 +103,7 @@ export function seedDefaults(): void {
     },
     {
       name: "create_issue",
-      description: "Create an issue (acts as the calling user)",
+      description: "Create an issue",
       inputSchema: {
         type: "object",
         properties: { title: { type: "string" }, body: { type: "string" } },

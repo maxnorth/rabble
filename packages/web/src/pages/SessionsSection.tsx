@@ -19,6 +19,13 @@ interface PendingApproval {
   resolved?: string;
 }
 
+interface PendingConnect {
+  connectId: string;
+  serverId: string;
+  serverName: string;
+  connected?: boolean;
+}
+
 type DrawerContent =
   | { kind: "tool"; toolCall: ToolCall }
   | { kind: "evals"; results: SessionEvalResult[] }
@@ -568,6 +575,68 @@ function ApprovalCard({
   );
 }
 
+function ConnectCard({
+  connect,
+  onConnected,
+}: {
+  connect: PendingConnect;
+  onConnected: () => void;
+}) {
+  const [token, setToken] = useState("");
+  const save = useMutation({
+    mutationFn: () => api.connectMcpCredential(connect.serverId, token),
+    onSuccess: onConnected,
+  });
+  const done = connect.connected;
+  return (
+    <div className={`approval-card${done ? " resolved" : ""}`}>
+      <div className="title">
+        <span
+          className="status-dot"
+          style={{ background: done ? "var(--green)" : "var(--amber)" }}
+        />
+        {done ? "Account connected" : "Connect your account"}
+      </div>
+      <div className="detail">
+        {done ? (
+          <>
+            Your <span className="mono">{connect.serverName}</span> account is connected. The
+            agent is continuing.
+          </>
+        ) : (
+          <>
+            <span className="mono">{connect.serverName}</span> runs as you. Paste your token to
+            connect your account, or add it under Profile, Connected accounts.
+          </>
+        )}
+      </div>
+      {!done && (
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <input
+            type="password"
+            placeholder="Your token"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            style={{ flex: 1 }}
+          />
+          <button
+            className="btn primary"
+            disabled={!token.trim() || save.isPending}
+            onClick={() => save.mutate()}
+          >
+            Connect
+          </button>
+        </div>
+      )}
+      {save.isError && (
+        <p className="error-text" style={{ marginTop: 8 }}>
+          {(save.error as Error).message}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** A thread item: message, live tool call, or approval card, in order. */
 type ThreadItem =
   | { kind: "message"; message: Message }
@@ -611,6 +680,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [liveTools, setLiveTools] = useState<Array<{ toolCall: ToolCall; running: boolean }>>([]);
   const [approvals, setApprovals] = useState<PendingApproval[]>([]);
+  const [connects, setConnects] = useState<PendingConnect[]>([]);
 
   // Approvals raised by surface turns (Slack/GitHub) while nobody had the
   // web session open: surface them as cards on load — either place decides.
@@ -620,6 +690,16 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     setApprovals((prev) => {
       const known = new Set(prev.map((a) => a.approvalId));
       const fresh = pending.filter((a) => !known.has(a.approvalId));
+      return fresh.length > 0 ? [...prev, ...fresh] : prev;
+    });
+  }, [session.data]);
+
+  useEffect(() => {
+    const pending = session.data?.pendingConnects ?? [];
+    if (pending.length === 0) return;
+    setConnects((prev) => {
+      const known = new Set(prev.map((c) => c.connectId));
+      const fresh = pending.filter((c) => !known.has(c.connectId));
       return fresh.length > 0 ? [...prev, ...fresh] : prev;
     });
   }, [session.data]);
@@ -658,7 +738,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [messages, streamingText, liveTools, approvals]);
+  }, [messages, streamingText, liveTools, approvals, connects]);
 
   const send = async (content: string) => {
     if (busy) return;
@@ -667,6 +747,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     setStreamingText("");
     setLiveTools([]);
     setApprovals([]);
+    setConnects([]);
     const abort = new AbortController();
     streamAbort.current = abort;
     try {
@@ -702,12 +783,22 @@ function SessionThread({ sessionId }: { sessionId: string }) {
               input: event.input,
             },
           ]);
+        } else if (event.type === "connect-request") {
+          setConnects((prev) => [
+            ...prev,
+            {
+              connectId: event.connectId,
+              serverId: event.serverId,
+              serverName: event.serverName,
+            },
+          ]);
         } else if (event.type === "done") {
           setMessages((prev) => [...prev, event.message]);
           setStreamingText(null);
           setLiveTools([]);
           // Approval outcomes live on in the persisted tool-call chips
           setApprovals([]);
+          setConnects([]);
           void queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
           // Live judging lands a few seconds AFTER the turn — refetch so the
           // criteria chip reflects the fresh verdict, not the previous one.
@@ -1071,6 +1162,19 @@ function SessionThread({ sessionId }: { sessionId: string }) {
                           kind: "track-record",
                           agentId: session.data.session.agentId,
                         })
+                      }
+                    />
+                  ))}
+                  {connects.map((c) => (
+                    <ConnectCard
+                      key={c.connectId}
+                      connect={c}
+                      onConnected={() =>
+                        setConnects((prev) =>
+                          prev.map((x) =>
+                            x.connectId === c.connectId ? { ...x, connected: true } : x,
+                          ),
+                        )
                       }
                     />
                   ))}

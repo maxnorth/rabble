@@ -22,7 +22,10 @@ export function mountMcp(app: FastifyInstance): void {
   app.post("/mock/mcp/:serverKey", async (req, reply) => {
     const { serverKey } = req.params as { serverKey: string };
     const rpc = req.body as JsonRpcRequest;
-    logRequest(`mcp/${serverKey}`, "POST", rpc.method, rpc.params ?? null);
+    logRequest(`mcp/${serverKey}`, "POST", rpc.method, {
+      ...(rpc.params ?? {}),
+      auth: String(req.headers.authorization ?? "").replace(/^Bearer /, "") || null,
+    });
 
     const tools = state.mcpServers.get(serverKey);
     if (!tools) {

@@ -29,12 +29,38 @@ function serializeServer(
     name: row.name,
     url: row.url,
     category: row.category,
+    credentialMode: row.credentialMode,
     hasToken: row.encryptedToken !== null,
     tools: (row.tools ?? []) as McpToolInfo[],
     status: row.status,
     usedByCount,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+
+/** The credential to verify a server's URL with: the org token for shared
+ * servers; for personal servers, the calling admin's own connected
+ * credential when they have one (personal servers hold no org token). */
+async function verificationToken(
+  server: typeof mcpServers.$inferSelect,
+  userId: string,
+): Promise<string | null> {
+  if (server.credentialMode !== "personal") {
+    return server.encryptedToken ? decryptSecret(server.encryptedToken) : null;
+  }
+  const { userMcpCredentials } = await import("../db/schema.js");
+  const [cred] = await db
+    .select()
+    .from(userMcpCredentials)
+    .where(
+      and(
+        eq(userMcpCredentials.userId, userId),
+        eq(userMcpCredentials.serverId, server.id),
+      ),
+    )
+    .limit(1);
+  return cred ? decryptSecret(cred.encryptedToken) : null;
 }
 
 export async function mcpRoutes(app: FastifyInstance) {
@@ -103,17 +129,34 @@ export async function mcpRoutes(app: FastifyInstance) {
         name: body.name,
         url: body.url,
         category: body.category,
-        encryptedToken: body.token ? encryptSecret(body.token) : null,
+        credentialMode: body.credentialMode,
+        // Personal mode holds no org credential; a token supplied at
+        // registration is the REGISTRANT'S own and is stored as such below.
+        encryptedToken:
+          body.credentialMode === "shared" && body.token
+            ? encryptSecret(body.token)
+            : null,
         tools,
       })
       .returning();
+    if (body.credentialMode === "personal" && body.token) {
+      const { userMcpCredentials } = await import("../db/schema.js");
+      await db
+        .insert(userMcpCredentials)
+        .values({
+          userId: req.user!.id,
+          serverId: row!.id,
+          encryptedToken: encryptSecret(body.token),
+        })
+        .onConflictDoNothing();
+    }
     await recordAudit({
       orgId: req.user!.orgId,
       actorUserId: req.user!.id,
       action: "mcp.register",
       targetType: "mcp-server",
       targetId: row!.id,
-      summary: `Registered MCP server "${body.name}" (${tools.length} tools)`,
+      summary: `Registered MCP server "${body.name}" (${body.credentialMode} credentials, ${tools.length} tools)`,
     });
     return { server: serializeServer(row!, 0) };
   });
@@ -146,6 +189,12 @@ export async function mcpRoutes(app: FastifyInstance) {
     }
     if (body.category !== undefined) updates.category = body.category;
     if (body.token !== undefined) {
+      if (server.credentialMode === "personal" && body.token !== null) {
+        return reply.code(400).send({
+          error:
+            "This server uses personal credentials. Connect your own under Profile, Connected accounts.",
+        });
+      }
       updates.encryptedToken = body.token === null ? null : encryptSecret(body.token);
     }
 
@@ -153,9 +202,7 @@ export async function mcpRoutes(app: FastifyInstance) {
     const tokenForCheck =
       body.token !== undefined
         ? body.token
-        : server.encryptedToken
-          ? decryptSecret(server.encryptedToken)
-          : null;
+        : await verificationToken(server, req.user!.id);
     if (body.url !== undefined || body.token !== undefined) {
       try {
         updates.tools = await mcpListTools(url, tokenForCheck);
@@ -204,7 +251,7 @@ export async function mcpRoutes(app: FastifyInstance) {
     try {
       const tools = await mcpListTools(
         server.url,
-        server.encryptedToken ? decryptSecret(server.encryptedToken) : null,
+        await verificationToken(server, req.user!.id),
       );
       const [row] = await db
         .update(mcpServers)
@@ -304,7 +351,6 @@ export async function mcpRoutes(app: FastifyInstance) {
       serverId: body.serverId,
       toolName: body.toolName,
       ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
-      ...(body.authType !== undefined ? { authType: body.authType } : {}),
     };
     await db
       .insert(agentToolConfigs)
@@ -317,7 +363,6 @@ export async function mcpRoutes(app: FastifyInstance) {
         ],
         set: {
           ...(body.enabled !== undefined ? { enabled: body.enabled } : {}),
-          ...(body.authType !== undefined ? { authType: body.authType } : {}),
         },
       });
     await recordAudit({

@@ -196,6 +196,94 @@ function ConnectedAccounts() {
           );
         })}
       </div>
+      <McpCredentials />
+    </>
+  );
+}
+
+function McpCredentials() {
+  const queryClient = useQueryClient();
+  const servers = useQuery({ queryKey: ["mcp-servers"], queryFn: api.listMcpServers, retry: false });
+  const creds = useQuery({ queryKey: ["mcp-credentials"], queryFn: api.listMcpCredentials });
+  const [connecting, setConnecting] = useState<string | null>(null);
+  const [token, setToken] = useState("");
+
+  const invalidate = () =>
+    void queryClient.invalidateQueries({ queryKey: ["mcp-credentials"] });
+  const connect = useMutation({
+    mutationFn: (serverId: string) => api.connectMcpCredential(serverId, token),
+    onSuccess: () => {
+      setConnecting(null);
+      setToken("");
+      invalidate();
+    },
+  });
+  const disconnect = useMutation({
+    mutationFn: (serverId: string) => api.disconnectMcpCredential(serverId),
+    onSuccess: invalidate,
+  });
+
+  // Only personal-credential servers need a per-user connection.
+  const personal = (servers.data?.servers ?? []).filter(
+    (s) => s.credentialMode === "personal",
+  );
+  if (personal.length === 0) return null;
+  const connected = new Map((creds.data?.credentials ?? []).map((c) => [c.serverId, c]));
+
+  return (
+    <>
+      <div className="sidebar-title" style={{ padding: "16px 0 8px" }}>
+        MCP tool accounts
+      </div>
+      <div className="row-group">
+        {personal.map((s) => {
+          const cred = connected.get(s.id);
+          return (
+            <div className="row" key={s.id}>
+              <span className="chip amber mono">{s.slug}</span>
+              <div className="grow">
+                <div className="title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {s.name}
+                  {cred && <span className="chip green">connected</span>}
+                </div>
+                <div className="sub">
+                  Personal credential. Agents using {s.name} call it as you.
+                </div>
+              </div>
+              {cred ? (
+                <button className="btn danger" onClick={() => disconnect.mutate(s.id)}>
+                  Disconnect
+                </button>
+              ) : connecting === s.id ? (
+                <>
+                  <input
+                    autoFocus
+                    type="password"
+                    placeholder="Your token"
+                    value={token}
+                    onChange={(e) => setToken(e.target.value)}
+                    style={{ width: 180 }}
+                  />
+                  <button
+                    className="btn primary"
+                    disabled={!token.trim() || connect.isPending}
+                    onClick={() => connect.mutate(s.id)}
+                  >
+                    Save
+                  </button>
+                </>
+              ) : (
+                <button className="btn" onClick={() => setConnecting(s.id)}>
+                  Connect
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {connect.isError && (
+        <p className="error-text">{(connect.error as Error).message}</p>
+      )}
     </>
   );
 }

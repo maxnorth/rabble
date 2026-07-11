@@ -163,7 +163,7 @@ test("api keys: read scope is enforced over HTTP", async () => {
 test("audit log viewer shows the accumulated control-plane history", async () => {
   await page.getByRole("link", { name: "Audit log" }).click();
   await expect(page.locator(".row", { hasText: "Created agent" }).first()).toBeVisible();
-  await expect(page.locator(".row", { hasText: "Registered MCP server" })).toBeVisible();
+  await expect(page.locator(".row", { hasText: 'Registered MCP server "GitHub"' })).toBeVisible();
   await expect(page.locator(".row", { hasText: "Created API key" })).toBeVisible();
 
   // Rows with metadata expand to reveal the detail behind the summary — the
@@ -209,7 +209,7 @@ test("stats dashboards reflect real usage", async () => {
     page.locator(".chart-card", { hasText: "Tool calls by auth type" }),
   ).toContainText("service");
   await expect(page.locator(".chart-card", { hasText: "Calls by tool" })).toContainText(
-    "search_repos",
+    "query_metrics",
   );
 
   // Eval performance tab: the judged session from 04-evals shows up per agent
@@ -339,7 +339,7 @@ test("preferences: collapsed tool calls hide chips until expanded", async () => 
   await page.locator(".sidebar-item", { hasText: "Find our deploy repos" }).click();
   await expect(page.locator(".tool-call")).toHaveCount(0);
   await page.getByRole("button", { name: "1 tool call · show" }).first().click();
-  await expect(page.locator(".tool-call", { hasText: "search_repos" })).toBeVisible();
+  await expect(page.locator(".tool-call", { hasText: "query_metrics" })).toBeVisible();
 
   // Restore the default so later flows see inline chips
   await page.locator("nav a[title*='profile']").click();

@@ -348,6 +348,10 @@ export const mcpServers = pgTable(
     name: text("name").notNull(),
     url: text("url").notNull(),
     category: text("category").notNull().default("Tools"),
+    // Whose credential calls ride: one org credential, or each caller's own.
+    credentialMode: text("credential_mode", { enum: ["shared", "personal"] })
+      .notNull()
+      .default("shared"),
     encryptedToken: text("encrypted_token"),
     tools: jsonb("tools").notNull().default([]),
     status: text("status", { enum: ["connected", "error"] })
@@ -388,13 +392,28 @@ export const agentToolConfigs = pgTable(
       .references(() => mcpServers.id, { onDelete: "cascade" }),
     toolName: text("tool_name").notNull(),
     enabled: boolean("enabled").notNull().default(true),
-    authType: text("auth_type", { enum: ["service", "user"] })
-      .notNull()
-      .default("service"),
   },
   (t) => [
     uniqueIndex("agent_tool_configs_idx").on(t.agentId, t.serverId, t.toolName),
   ],
+);
+
+export const userMcpCredentials = pgTable(
+  "user_mcp_credentials",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    encryptedToken: text("encrypted_token").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [uniqueIndex("user_mcp_credentials_idx").on(t.userId, t.serverId)],
 );
 
 export const agentLinks = pgTable(

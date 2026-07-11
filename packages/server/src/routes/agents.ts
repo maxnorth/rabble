@@ -264,7 +264,6 @@ export async function agentRoutes(app: FastifyInstance) {
         serverId: t.serverId,
         toolName: t.toolName,
         enabled: t.enabled,
-        authType: t.authType,
       });
     }
     const links = await db.select().from(agentLinks).where(eq(agentLinks.agentId, id));
@@ -644,7 +643,7 @@ export async function agentRoutes(app: FastifyInstance) {
           toolName: t.name,
           description: t.description,
           enabled: config?.enabled ?? true,
-          authType: config?.authType ?? "service",
+          authType: a.server.credentialMode === "personal" ? "user" : "service",
         };
       });
     });

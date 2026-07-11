@@ -32,6 +32,7 @@ import {
   type messages,
   type models,
   type users,
+  userMcpCredentials,
 } from "../db/schema.js";
 import { decryptSecret } from "../crypto.js";
 import { chatModelFor } from "../models/chat.js";
@@ -39,6 +40,7 @@ import { resolveAgentModel } from "../models/resolve.js";
 import { mcpCallTool } from "../mcp/client.js";
 import { recordAudit } from "../audit.js";
 import { Channel } from "./channel.js";
+import { requestConnect } from "./approvals.js";
 import { gateUserAuth, type GateContext } from "./userAuthGate.js";
 import { buildPlatformTools } from "./platformTools.js";
 import { buildWebTools } from "./webTools.js";
@@ -95,6 +97,12 @@ export type AgentTurnEvent =
       toolName: string;
       serverName: string | null;
       input: unknown;
+    }
+  | {
+      type: "connect-request";
+      connectId: string;
+      serverId: string;
+      serverName: string;
     };
 
 export function buildSystemPrompt(
@@ -150,6 +158,62 @@ export function gateContextFor(
   };
 }
 
+/**
+ * The session user's credential for a personal-mode server. Missing and the
+ * surface can host a card: pause on a connect ask (resolved the moment the
+ * user saves a credential, any surface). Missing anywhere else: fail closed.
+ */
+async function resolvePersonalCredential(
+  input: AgentTurnInput,
+  server: { id: string; name: string; url: string },
+  emit: (event: AgentTurnEvent) => void,
+): Promise<
+  | { ok: true; token: string }
+  | { ok: false; toolOutput: string; modelText: string }
+> {
+  const lookup = async () => {
+    const [row] = await db
+      .select()
+      .from(userMcpCredentials)
+      .where(
+        and(
+          eq(userMcpCredentials.userId, input.user.id),
+          eq(userMcpCredentials.serverId, server.id),
+        ),
+      )
+      .limit(1);
+    return row ? decryptSecret(row.encryptedToken) : null;
+  };
+
+  const existing = await lookup();
+  if (existing) return { ok: true, token: existing };
+
+  const refusal = {
+    ok: false as const,
+    toolOutput: `No ${server.name} account connected. Connect one in Rabble under Profile, Connected accounts.`,
+    modelText:
+      `The user has no ${server.name} account connected, so this tool can't run. ` +
+      "Tell them to connect it in Rabble under Profile, Connected accounts, then try again.",
+  };
+  if (!input.interactive) return refusal;
+
+  const { connectId, decision } = requestConnect({
+    sessionId: input.sessionId,
+    userId: input.user.id,
+    serverId: server.id,
+    serverName: server.name,
+  });
+  emit({
+    type: "connect-request",
+    connectId,
+    serverId: server.id,
+    serverName: server.name,
+  });
+  if ((await decision) === "timed-out") return refusal;
+  const token = await lookup();
+  return token ? { ok: true, token } : refusal;
+}
+
 /** Build governed LangChain tools from the agent's attached MCP servers. */
 async function buildGovernedTools(
   input: AgentTurnInput,
@@ -190,7 +254,9 @@ async function buildGovernedTools(
     for (const toolInfo of serverTools) {
       const config = configFor.get(`${server.id}:${toolInfo.name}`);
       if (config && !config.enabled) continue;
-      const authType = config?.authType ?? "service";
+      // Identity is the server's credential mode: personal-mode calls ride
+      // the session user's own token and act as them.
+      const authType = server.credentialMode === "personal" ? "user" : "service";
 
       tools.push(
         tool(
@@ -209,7 +275,30 @@ async function buildGovernedTools(
             emit({ type: "tool-start", toolCall: call });
 
             let approval: ApprovalOutcome | null = null;
+            let credential: string | null = server.encryptedToken
+              ? decryptSecret(server.encryptedToken)
+              : null;
             if (authType === "user") {
+              // Personal mode: the caller's own credential, connected via
+              // Profile or the in-thread connect card. No credential and no
+              // way to prompt = fail closed.
+              const resolved = await resolvePersonalCredential(
+                input,
+                server,
+                emit,
+              );
+              if (!resolved.ok) {
+                const refused: ToolCall = {
+                  ...call,
+                  output: resolved.toolOutput,
+                  approval: null,
+                  durationMs: Date.now() - startedAt,
+                };
+                emit({ type: "tool-end", toolCall: refused });
+                return resolved.modelText;
+              }
+              credential = resolved.token;
+
               const gate = await gateUserAuth(gateContextFor(input, preferences, emit), call);
               if (gate.outcome === "refused") {
                 const denied: ToolCall = {
@@ -229,7 +318,7 @@ async function buildGovernedTools(
                 server.url,
                 toolInfo.name,
                 args,
-                server.encryptedToken ? decryptSecret(server.encryptedToken) : null,
+                credential,
               );
               const finished: ToolCall = {
                 ...call,

@@ -1,8 +1,16 @@
 /**
- * MCP tools and the approval flow: register an emulated MCP server, attach
- * it to the agent, flip a tool to user auth, then drive scripted tool calls
- * through the thread — service call inline, user call via the approval card,
- * and a denial. Asserts UI, database transcript, and emulator request log.
+ * MCP tools and the approval flow under per-server credential modes. A server
+ * is registered as either 'personal' (no org credential; each caller connects
+ * their own token and calls act as them, gated by an in-thread approval) or
+ * 'shared' (one org bearer token; calls run on the org service account). A
+ * tool's identity is DERIVED from its server's mode, not flipped per tool.
+ * We register a personal GitHub and a shared Datadog, attach both, connect a
+ * personal credential from Profile, then drive scripted tool calls: the
+ * shared/service call runs inline, the personal/user call pauses on the
+ * approval card (approve / deny / run-as-service / timeout / once-per-session),
+ * and a personal server with no connected credential prompts an in-thread
+ * "Connect your account" card. Asserts UI, the database transcript, and the
+ * emulator request log — including which bearer token rode the wire.
  */
 import { expect, test, type Page } from "@playwright/test";
 import { EMULATOR } from "../global-setup";
@@ -33,7 +41,7 @@ test.afterAll(async () => {
   await page.close();
 });
 
-test("admin: register the emulated GitHub MCP server (tools discovered)", async () => {
+test("admin: register the emulated GitHub MCP server (personal credential)", async () => {
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "MCP servers" }).click();
   await page.getByRole("button", { name: "+ Add server" }).click();
@@ -41,55 +49,91 @@ test("admin: register the emulated GitHub MCP server (tools discovered)", async 
   await page
     .getByPlaceholder("https://mcp.example.com/mcp")
     .fill(`${EMULATOR}/mock/mcp/github`);
-  await page.locator(".modal select").selectOption("Code");
+  await page.locator(".modal .field", { hasText: "Category" }).locator("select").selectOption("Code");
+  // Credential mode: Personal — each user connects their own token.
+  await page
+    .locator(".modal .field", { hasText: "Credential" })
+    .locator("select")
+    .selectOption("personal");
   await page.getByRole("button", { name: "+ Add", exact: true }).click();
 
   const row = page.locator(".row", { hasText: "GitHub" });
   await expect(row).toBeVisible();
   await expect(row.locator(".chip", { hasText: "tools" })).toHaveText("2 tools");
+  await expect(row.locator(".chip", { hasText: "personal" })).toBeVisible();
 
-  const servers = await dbQuery<{ slug: string; tools: unknown[] }>(
-    "SELECT slug, tools FROM mcp_servers",
+  const servers = await dbQuery<{ slug: string; credential_mode: string; tools: unknown[] }>(
+    "SELECT slug, credential_mode, tools FROM mcp_servers",
   );
   expect(servers).toHaveLength(1);
   expect(servers[0]!.slug).toBe("github");
+  expect(servers[0]!.credential_mode).toBe("personal");
   expect(servers[0]!.tools.map((t) => (t as { name: string }).name).sort()).toEqual([
     "create_issue",
     "search_repos",
   ]);
 
-  // Server detail: connection card, live re-test, and (empty) used-by list
+  // Server detail: credential chip, live re-test, and (empty) used-by list
   await row.click();
   await expect(page.getByRole("heading", { name: "GitHub" })).toBeVisible();
   await expect(page.getByText("Not attached to any agent yet.")).toBeVisible();
+  await expect(page.locator(".chip", { hasText: "personal credential" })).toBeVisible();
   await page.getByRole("button", { name: "Test connection" }).click();
   await expect(page.locator(".chip", { hasText: "2 tools" })).toBeVisible();
   await page.getByRole("button", { name: "‹ MCP servers" }).click();
 });
 
-test("agent config: attach server, set create_issue to user auth", async () => {
+test("admin: register a shared-credential server (Datadog)", async () => {
+  await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByPlaceholder("GitHub").fill("Datadog");
+  await page
+    .getByPlaceholder("https://mcp.example.com/mcp")
+    .fill(`${EMULATOR}/mock/mcp/datadog`);
+  await page.locator(".modal .field", { hasText: "Category" }).locator("select").selectOption("Ops");
+  // Shared: one org bearer token; calls run as the org service account.
+  await page
+    .locator(".modal .field", { hasText: "Credential" })
+    .locator("select")
+    .selectOption("shared");
+  await page.locator(".modal input[type=password]").fill("ddog-service-token");
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  const row = page.locator(".row", { hasText: "Datadog" });
+  await expect(row).toBeVisible();
+  await expect(row.locator(".chip", { hasText: "shared" })).toBeVisible();
+  await expect(row.locator(".chip.blue")).toHaveText("1 tool");
+
+  const [ddog] = await dbQuery<{ credential_mode: string }>(
+    "SELECT credential_mode FROM mcp_servers WHERE slug = 'datadog'",
+  );
+  expect(ddog!.credential_mode).toBe("shared");
+});
+
+test("agent config: attach both servers; tools show derived identity", async () => {
   await page.locator("nav a[title='Agents']").click();
   await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
   await page.getByRole("button", { name: "mcp" }).click();
-  await page.getByRole("button", { name: "Attach" }).click();
 
+  // Attach both servers from the library — no per-tool auth control anymore.
+  await page.locator(".row", { hasText: "GitHub" }).getByRole("button", { name: "Attach" }).click();
+  await page
+    .locator(".row", { hasText: "Datadog" })
+    .getByRole("button", { name: "Attach" })
+    .click();
+
+  // Each tool's identity is DERIVED from its server's credential mode: a
+  // personal server's tools are user-auth (amber), a shared server's are
+  // service-auth (green).
   const issueRow = page.locator(".row", { hasText: "create_issue" });
   await expect(issueRow).toBeVisible();
-  await issueRow.locator(".segmented button", { hasText: "user" }).click();
+  await expect(issueRow.locator(".chip.amber", { hasText: "personal" })).toBeVisible();
+  const metricRow = page.locator(".row", { hasText: "query_metrics" });
+  await expect(metricRow).toBeVisible();
+  await expect(metricRow.locator(".chip.green", { hasText: "service" })).toBeVisible();
 
-  await expect
-    .poll(async () => {
-      const configs = await dbQuery<{ tool_name: string; auth_type: string }>(
-        "SELECT tool_name, auth_type FROM agent_tool_configs",
-      );
-      return configs.find((c) => c.tool_name === "create_issue")?.auth_type;
-    })
-    .toBe("user");
-
-  // The server header summarizes enablement and the auth split
-  await expect(page.getByText("2 of 2 enabled")).toBeVisible();
+  // Per-server header summaries reflect the split.
+  await expect(page.locator(".chip", { hasText: "2 personal" })).toBeVisible();
   await expect(page.locator(".chip", { hasText: "1 service" })).toBeVisible();
-  await expect(page.locator(".chip", { hasText: "1 user" })).toBeVisible();
 
   // The MCP server's detail now lists this agent under "Used by"
   await page.locator("nav a[title='Admin']").click();
@@ -100,14 +144,40 @@ test("agent config: attach server, set create_issue to user auth", async () => {
   );
 });
 
+test("profile: connect a personal GitHub credential", async () => {
+  // Alex connects his own GitHub token so downstream create_issue calls act
+  // as him (rather than prompting a connect card). Runs before the approval
+  // tests below; the credential persists for the whole serial run.
+  await page.locator("nav a[title*='profile']").click();
+  const mcpAccounts = page.locator(
+    '.sidebar-title:has-text("MCP tool accounts") + .row-group',
+  );
+  const ghRow = mcpAccounts.locator(".row", { hasText: "GitHub" });
+  await ghRow.getByRole("button", { name: "Connect" }).click();
+  await ghRow.getByPlaceholder("Your token").fill("alex-github-token");
+  await ghRow.getByRole("button", { name: "Save" }).click();
+  await expect(ghRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+
+  const creds = await dbQuery<{ email: string }>(
+    `SELECT u.email FROM user_mcp_credentials c
+       JOIN users u ON u.id = c.user_id
+       JOIN mcp_servers s ON s.id = c.server_id
+      WHERE u.email = 'alex@acme.com' AND s.slug = 'github'`,
+  );
+  expect(creds).toHaveLength(1);
+});
+
 test("service-auth tool runs inline with no approval", async () => {
-  await enqueueToolCall("search_repos", { query: "deploy scripts" });
+  await enqueueToolCall("query_metrics", { metric: "deploys" });
 
   await page.locator("nav a[title='Sessions']").click();
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
   await page.getByPlaceholder("Describe what you need help with…").fill("Find our deploy repos");
   await page.getByRole("button", { name: "Send" }).click();
 
-  const chip = page.locator(".tool-call", { hasText: "search_repos" }).first();
+  const chip = page.locator(".tool-call", { hasText: "query_metrics" }).first();
   await expect(chip).toBeVisible({ timeout: 15_000 });
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
     "Mock reply to: Find our deploy repos",
@@ -118,19 +188,26 @@ test("service-auth tool runs inline with no approval", async () => {
   // Click the chip -> right drawer with input/output and auth chip
   await chip.click();
   await expect(page.locator(".drawer")).toContainText("service auth");
-  await expect(page.locator(".drawer")).toContainText("deploy scripts");
-  await expect(page.locator(".drawer")).toContainText("acme/api");
+  await expect(page.locator(".drawer")).toContainText("deploys");
   await page.locator(".drawer-close").click();
 
-  // Emulator saw the tools/call
+  // Emulator saw the tools/call at the Datadog host, carrying the shared
+  // org token on the wire.
   const log = (await (
-    await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)
-  ).json()) as { requests: Array<{ path: string }> };
+    await fetch(`${EMULATOR}/admin/requests?host=mcp/datadog`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { name?: string; auth?: string | null } }>;
+  };
   expect(log.requests.some((r) => r.path === "tools/call")).toBe(true);
+  const metricCall = log.requests.find(
+    (r) => r.path === "tools/call" && r.body?.name === "query_metrics",
+  );
+  expect(metricCall).toBeDefined();
+  expect(metricCall!.body.auth).toBe("ddog-service-token");
 
   // Transcript recorded the call with service auth
   expect(await pollFirstToolCall("%Find our deploy repos%")).toMatchObject({
-    name: "search_repos",
+    name: "query_metrics",
     authType: "service",
   });
 });
@@ -161,6 +238,18 @@ test("user-auth tool pauses on the approval card; approve runs it", async () => 
     authType: "user",
     approval: { status: "approved", decidedByName: "Alex Lin" },
   });
+
+  // The user's OWN connected credential rode the wire — not the org's.
+  const ghLog = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { name?: string; auth?: string | null } }>;
+  };
+  const issueCalls = ghLog.requests.filter(
+    (r) => r.path === "tools/call" && r.body?.name === "create_issue",
+  );
+  expect(issueCalls.length).toBeGreaterThan(0);
+  expect(issueCalls[issueCalls.length - 1]!.body.auth).toBe("alex-github-token");
 });
 
 test("once-per-session posture: the next user-auth call auto-approves", async () => {
@@ -239,6 +328,7 @@ test("run-as-service keeps the action off the user's identity", async () => {
 });
 
 test("an unanswered approval times out and the tool is not run", async () => {
+  test.setTimeout(90_000); // spans the full 15s broker window; needs headroom
   await enqueueToolCall("create_issue", { title: "Never approved" });
 
   await page.getByRole("link", { name: "+ New session" }).click();
@@ -250,10 +340,14 @@ test("an unanswered approval times out and the tool is not run", async () => {
   await page.getByRole("button", { name: "Send" }).click();
 
   // Nobody clicks. The broker times out (15s in e2e) and the turn completes.
-  await expect(page.locator(".approval-card")).toBeVisible({ timeout: 15_000 });
+  // This test inherently spans the full broker window, so give the waits
+  // generous headroom — under CI/host load the card + post-timeout reply can
+  // run long, and a premature assertion failure here would cascade (serial
+  // mode) into the scope-violation setup below.
+  await expect(page.locator(".approval-card")).toBeVisible({ timeout: 20_000 });
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
     "Mock reply to: File the ignored issue",
-    { timeout: 30_000 },
+    { timeout: 40_000 },
   );
   expect(await pollFirstToolCall("%File the ignored issue%")).toMatchObject({
     name: "create_issue",
@@ -537,14 +631,15 @@ test("outbound web access: fetch obeys the network allowlist", async () => {
 });
 
 test("audit trail covers the tool governance actions", async () => {
+  // Governance actions in the credential-mode model: registering servers and
+  // attaching them to agents (there is no per-tool auth flip to audit).
   const audit = await dbQuery<{ action: string }>(
-    `SELECT action FROM audit_events
-     WHERE action IN ('mcp.register', 'agent.mcp.attach', 'agent.tool.configure')
+    `SELECT DISTINCT action FROM audit_events
+     WHERE action IN ('mcp.register', 'agent.mcp.attach')
      ORDER BY action`,
   );
   expect(audit.map((a) => a.action)).toEqual([
     "agent.mcp.attach",
-    "agent.tool.configure",
     "mcp.register",
   ]);
 });
@@ -571,4 +666,79 @@ test("mcp servers are editable in place — category changes, tools survive", as
   );
   expect(audit.length).toBeGreaterThanOrEqual(1);
   await page.getByRole("button", { name: "‹ MCP servers" }).click();
+});
+
+test("personal server with no credential prompts a connect card, then resumes", async () => {
+  // A fresh personal-mode server Alex has NOT connected, attached to a
+  // throwaway agent so its tool names don't collide with Eng On-Call's.
+  const modelsRes = (await (await page.request.get("/api/models")).json()) as {
+    models: Array<{ id: string; enabled: boolean }>;
+  };
+  const modelId = (modelsRes.models.find((m) => m.enabled) ?? modelsRes.models[0]!).id;
+  const created = (await (
+    await page.request.post("/api/agents", {
+      data: {
+        name: "Scratch Agent",
+        description: "Throwaway agent for the connect-card flow",
+        instructions: "Help.",
+        modelId,
+        status: "active",
+      },
+    })
+  ).json()) as { agent: { id: string } };
+  const agentId = created.agent.id;
+  const server = (await (
+    await page.request.post("/api/mcp-servers", {
+      data: {
+        name: "Scratch MCP",
+        url: `${EMULATOR}/mock/mcp/github`,
+        category: "Tools",
+        credentialMode: "personal",
+      },
+    })
+  ).json()) as { server: { id: string } };
+  const serverId = server.server.id;
+
+  try {
+    await page.request.put(`/api/agents/${agentId}/mcp-servers/${serverId}`);
+
+    await enqueueToolCall("create_issue", { title: "From an unconnected server" });
+
+    await page.locator("nav a[title='Sessions']").click();
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Scratch Agent" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("File an issue via the unconnected server");
+    await page.getByRole("button", { name: "Send" }).click();
+
+    // No connected credential on an interactive web surface -> connect card.
+    const connectCard = page.locator(".approval-card", { hasText: "Connect your account" });
+    await expect(connectCard).toBeVisible({ timeout: 15_000 });
+    await connectCard.locator("input[type=password]").fill("scratch-token");
+    await connectCard.getByRole("button", { name: "Connect" }).click();
+
+    // Resuming, the personal call still faces the approval gate (Alex's
+    // default posture asks once per session).
+    const approveBtn = page.getByRole("button", { name: "Approve as me" });
+    await expect(approveBtn).toBeVisible({ timeout: 15_000 });
+    await approveBtn.click();
+
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+      "Mock reply to: File an issue via the unconnected server",
+      { timeout: 15_000 },
+    );
+    const call = await pollFirstToolCall("%File an issue via the unconnected server%");
+    expect(call).toMatchObject({
+      name: "create_issue",
+      authType: "user",
+      approval: { status: "approved", decidedByName: "Alex Lin" },
+    });
+  } finally {
+    // Tidy up so the throwaway server/agent don't perturb later suites.
+    await dbQuery("DELETE FROM sessions WHERE agent_id = $1", [agentId]);
+    await page.request.delete(`/api/agents/${agentId}`);
+    await page.request.delete(`/api/mcp-servers/${serverId}`);
+  }
 });

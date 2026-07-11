@@ -231,6 +231,11 @@ export const api = {
         serverName: string | null;
         input: unknown;
       }>;
+      pendingConnects: Array<{
+        connectId: string;
+        serverId: string;
+        serverName: string;
+      }>;
     }>(`/api/sessions/${id}`),
   decideApproval: (sessionId: string, approvalId: string, body: ApprovalDecisionRequest) =>
     post<{ ok: true }>(`/api/sessions/${sessionId}/approvals/${approvalId}`, body),
@@ -296,11 +301,19 @@ export const api = {
     get<{ servers: Array<McpServer & { usedBy: Array<{ id: string; name: string }> }> }>(
       "/api/mcp-servers",
     ),
-  createMcpServer: (body: { name: string; url: string; category: string; token?: string }) =>
+  createMcpServer: (body: { name: string; url: string; category: string; credentialMode: "shared" | "personal"; token?: string }) =>
     post<{ server: McpServer }>("/api/mcp-servers", body),
   refreshMcpServer: (id: string) =>
     post<{ server: McpServer }>(`/api/mcp-servers/${id}/refresh`),
   deleteMcpServer: (id: string) => del<{ ok: true }>(`/api/mcp-servers/${id}`),
+  listMcpCredentials: () =>
+    get<{ credentials: Array<{ serverId: string; serverName: string; connectedAt: string }> }>(
+      "/api/profile/mcp-credentials",
+    ),
+  connectMcpCredential: (serverId: string, token: string) =>
+    put<{ ok: true }>(`/api/profile/mcp-credentials/${serverId}`, { token }),
+  disconnectMcpCredential: (serverId: string) =>
+    del<{ ok: true }>(`/api/profile/mcp-credentials/${serverId}`),
   updateMcpServer: (
     id: string,
     body: Partial<{ name: string; url: string; category: string; token: string | null }>,

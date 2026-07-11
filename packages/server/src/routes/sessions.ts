@@ -13,7 +13,7 @@ import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
 import { routeByIntent } from "../runtime/router.js";
-import { decideApproval, pendingApprovalsFor } from "../runtime/approvals.js";
+import { decideApproval, pendingApprovalsFor, pendingConnectsFor } from "../runtime/approvals.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
 import { judgeSession } from "../evals/judge.js";
 
@@ -179,6 +179,7 @@ export async function sessionRoutes(app: FastifyInstance) {
       })),
       evalResults: evals,
       pendingApprovals: pendingApprovalsFor(id, req.user!.id),
+      pendingConnects: pendingConnectsFor(id, req.user!.id),
     };
   });
 
@@ -346,6 +347,13 @@ export async function sessionRoutes(app: FastifyInstance) {
             toolName: event.toolName,
             serverName: event.serverName,
             input: event.input,
+          });
+        } else if (event.type === "connect-request") {
+          sendEvent(reply, {
+            type: "connect-request",
+            connectId: event.connectId,
+            serverId: event.serverId,
+            serverName: event.serverName,
           });
         }
       }

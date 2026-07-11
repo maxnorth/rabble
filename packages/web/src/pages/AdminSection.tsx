@@ -1055,6 +1055,9 @@ function McpServersPage() {
               {selected.status}
             </span>
             <span className="chip">{selected.category}</span>
+            <span className={`chip ${selected.credentialMode === "personal" ? "amber" : "green"}`}>
+              {selected.credentialMode === "personal" ? "personal credential" : "shared credential"}
+            </span>
             <span className="chip blue">{count(selected.tools.length, "tool")}</span>
             <span style={{ fontSize: 12, color: "var(--text-dim)", alignSelf: "center" }}>
               Test connection re-discovers the tool catalog. Enablement and
@@ -1130,6 +1133,9 @@ function McpServersPage() {
                   <div className="sub mono">{s.url}</div>
                 </div>
                 <span className="chip">{s.category}</span>
+                <span className={`chip ${s.credentialMode === "personal" ? "amber" : "green"}`}>
+                  {s.credentialMode === "personal" ? "personal" : "shared"}
+                </span>
                 <span className="chip blue">{count(s.tools.length, "tool")}</span>
                 <span className="chip purple">used by {s.usedByCount}</span>
                 <button
@@ -1158,13 +1164,17 @@ function McpServersPage() {
 
 function AddMcpServerModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
-  const [form, setForm] = useState({ name: "", url: "", category: "Tools", token: "" });
+  const [form, setForm] = useState<{
+    name: string; url: string; category: string;
+    credentialMode: "shared" | "personal"; token: string;
+  }>({ name: "", url: "", category: "Tools", credentialMode: "shared", token: "" });
   const create = useMutation({
     mutationFn: () =>
       api.createMcpServer({
         name: form.name,
         url: form.url,
         category: form.category,
+        credentialMode: form.credentialMode,
         token: form.token || undefined,
       }),
     onSuccess: async () => {
@@ -1218,7 +1228,28 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
             </select>
           </div>
           <div className="field">
-            <label>Bearer token (optional)</label>
+            <label>Credential</label>
+            <select
+              value={form.credentialMode}
+              onChange={(e) =>
+                setForm({ ...form, credentialMode: e.target.value as "shared" | "personal" })
+              }
+            >
+              <option value="shared">Shared, one org credential for everyone</option>
+              <option value="personal">Personal, each user connects their own</option>
+            </select>
+            <span className="hint">
+              {form.credentialMode === "shared"
+                ? "Every agent call carries this one credential. Calls run as the org service account."
+                : "No org credential. Each person connects their own account under Profile; calls act as them, with an in-thread approval."}
+            </span>
+          </div>
+          <div className="field">
+            <label>
+              {form.credentialMode === "shared"
+                ? "Bearer token (optional)"
+                : "Your bearer token (optional, connects your own account now)"}
+            </label>
             <input
               type="password"
               value={form.token}

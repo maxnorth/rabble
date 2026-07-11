@@ -26,12 +26,8 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
     onSuccess: refresh,
   });
   const updateTool = useMutation({
-    mutationFn: (body: {
-      serverId: string;
-      toolName: string;
-      enabled?: boolean;
-      authType?: "service" | "user";
-    }) => api.updateAgentTool(agentId, body),
+    mutationFn: (body: { serverId: string; toolName: string; enabled?: boolean }) =>
+      api.updateAgentTool(agentId, body),
     onSuccess: refresh,
   });
 
@@ -48,10 +44,12 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
   return (
     <>
       <p className="page-subtitle">
-        Tools from the org's MCP server library. Every tool runs either under
-        the org <span className="chip green">service</span> credential or{" "}
-        <span className="chip amber">user</span>, as the person in the
-        session, with an in-thread approval.
+        Tools from the org's MCP server library. Each server's credential mode
+        decides whose identity its calls carry: a{" "}
+        <span className="chip green">service</span> server runs on the org
+        credential; a <span className="chip amber">personal</span> server runs
+        as the person in the session, with an in-thread approval. Set the mode
+        where you register the server, in Admin › MCP servers.
       </p>
       {[...byServer.entries()].map(([serverId, serverTools]) => {
         const enabledTools = serverTools.filter((t) => t.enabled);
@@ -75,7 +73,7 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
             {serviceCount > 0 && (
               <span className="chip green">{serviceCount} service</span>
             )}
-            {userCount > 0 && <span className="chip amber">{userCount} user</span>}
+            {userCount > 0 && <span className="chip amber">{userCount} personal</span>}
             <span style={{ flex: 1 }} />
             {canEdit && (
               <button
@@ -107,24 +105,9 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
                   </div>
                   <div className="sub">{t.description}</div>
                 </div>
-                <div className="segmented">
-                  {(["service", "user"] as const).map((auth) => (
-                    <button
-                      key={auth}
-                      disabled={!canEdit}
-                      className={t.authType === auth ? "active" : ""}
-                      onClick={() =>
-                        updateTool.mutate({
-                          serverId: t.serverId,
-                          toolName: t.toolName,
-                          authType: auth,
-                        })
-                      }
-                    >
-                      {auth}
-                    </button>
-                  ))}
-                </div>
+                <span className={`chip ${t.authType === "user" ? "amber" : "green"}`}>
+                  {t.authType === "user" ? "personal" : "service"}
+                </span>
               </div>
             ))}
           </div>

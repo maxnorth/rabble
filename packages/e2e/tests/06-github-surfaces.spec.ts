@@ -42,7 +42,9 @@ test("github surface delivery: issue comments become governed sessions", async (
 
   // Alex bridges his GitHub identity via Profile › Connected accounts
   await page.locator("nav a[title*='profile']").click();
-  const githubRow = page.locator(".row", { hasText: "Github" });
+  const githubRow = page
+    .locator(".row", { hasText: "Github" })
+    .filter({ has: page.locator(".chip.blue") });
   await githubRow.getByRole("button", { name: "Connect" }).click();
   await page.getByPlaceholder("Username (for surface identity)").fill("alexcodes");
   await page.getByPlaceholder("Token").fill("gho-alex");

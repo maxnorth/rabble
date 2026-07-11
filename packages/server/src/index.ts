@@ -119,6 +119,11 @@ if (isMain) {
       syncBuilderInstructions().catch((err) =>
         app.log.warn({ err }, "builder instructions sync failed"),
       );
+      // Expire stale pending approvals (recurring sweeps land with Hatchet).
+      const { expireStaleApprovals } = await import("./runtime/approvalDecide.js");
+      expireStaleApprovals().catch((err) =>
+        app.log.warn({ err }, "approval expiry sweep failed"),
+      );
       // Boot-time retention sweep (recurring sweeps land with Hatchet).
       const { applyRetentionForAllOrgs } = await import("./retention.js");
       applyRetentionForAllOrgs().catch((err) =>

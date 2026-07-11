@@ -667,7 +667,7 @@ test("socket mode interactivity: DM buttons resolve approvals over the WebSocket
       return log.requests.some(
         (r) =>
           r.path === "/response/socket-appr-1" &&
-          r.body.text?.includes("Approved. The agent is continuing"),
+          r.body.text?.includes("Approved"),
       );
     })
     .toBe(true);

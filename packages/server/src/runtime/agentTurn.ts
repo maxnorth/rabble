@@ -149,6 +149,8 @@ export function gateContextFor(
 ): GateContext {
   return {
     sessionId: input.sessionId,
+    orgId: input.agent.orgId,
+    agentId: input.agent.id,
     userId: input.user.id,
     userName: input.user.name,
     requireApproval: input.requireApproval,
@@ -302,15 +304,22 @@ async function buildGovernedTools(
               }
               credential = resolved.token;
 
-              const gate = await gateUserAuth(gateContextFor(input, preferences, emit), call);
-              if (gate.outcome === "refused") {
-                const denied: ToolCall = {
+              const gate = await gateUserAuth(
+                gateContextFor(input, preferences, emit),
+                call,
+                { kind: "mcp", serverId: server.id },
+              );
+              if (gate.outcome !== "proceed") {
+                // Refused outright, or queued for an async decision — either
+                // way this turn does not run the tool. A pending ask is
+                // executed by the platform when approved (approvalDecide.ts).
+                const settled: ToolCall = {
                   ...call,
                   output: gate.toolOutput,
                   approval: gate.approval,
                   durationMs: Date.now() - startedAt,
                 };
-                emit({ type: "tool-end", toolCall: denied });
+                emit({ type: "tool-end", toolCall: settled });
                 return gate.modelText;
               }
               approval = gate.approval;

@@ -246,9 +246,10 @@ test("user-auth tool pauses on the approval card; approve runs it", async () => 
   await expect(card).toContainText("scope violations (30d)");
   await card.getByRole("button", { name: "Approve as me" }).click();
 
-  // Wait for THIS turn's reply (the echo includes this turn's user text)
+  // Async contract: the turn already completed without blocking. Deciding
+  // executed the recorded call and the agent reacted in a follow-up turn.
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to: File an issue about the flaky deploy",
+    "Approval update",
     { timeout: 15_000 },
   );
 
@@ -307,16 +308,25 @@ test("denying the approval blocks the tool and records the denial", async () => 
   await expect(card).toBeVisible({ timeout: 15_000 });
   await card.getByRole("button", { name: "Deny" }).click();
 
+  // The denial reaches the agent as a follow-up turn; nothing executed.
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to: File another issue",
+    "DECLINED",
     { timeout: 15_000 },
   );
 
   expect(await pollFirstToolCall("%File another issue%")).toMatchObject({
     name: "create_issue",
-    approval: { status: "denied" },
-    output: "The user declined this action.",
+    approval: { status: "denied", decidedByName: "Alex Lin" },
+    output: "Queued for Alex Lin's approval.",
   });
+  const ghLogAfterDeny = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)
+  ).json()) as { requests: Array<{ body: { arguments?: { title?: string } } }> };
+  expect(
+    ghLogAfterDeny.requests.some(
+      (r) => r.body?.arguments?.title === "Should not exist",
+    ),
+  ).toBe(false);
 });
 
 test("run-as-service keeps the action off the user's identity", async () => {
@@ -335,7 +345,7 @@ test("run-as-service keeps the action off the user's identity", async () => {
   await card.getByRole("button", { name: "Run as service account" }).click();
 
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to: File it under the service account",
+    "Approval update",
     { timeout: 15_000 },
   );
   expect(
@@ -346,8 +356,7 @@ test("run-as-service keeps the action off the user's identity", async () => {
   });
 });
 
-test("an unanswered approval times out and the tool is not run", async () => {
-  test.setTimeout(90_000); // spans the full 15s broker window; needs headroom
+test("an unanswered approval stays pending — the turn is never blocked", async () => {
   await enqueueToolCall("create_issue", { title: "Never approved" });
 
   await page.getByRole("link", { name: "+ New session" }).click();
@@ -358,21 +367,28 @@ test("an unanswered approval times out and the tool is not run", async () => {
     .fill("File the ignored issue");
   await page.getByRole("button", { name: "Send" }).click();
 
-  // Nobody clicks. The broker times out (15s in e2e) and the turn completes.
-  // This test inherently spans the full broker window, so give the waits
-  // generous headroom — under CI/host load the card + post-timeout reply can
-  // run long, and a premature assertion failure here would cascade (serial
-  // mode) into the scope-violation setup below.
+  // Nobody clicks. The turn still completes immediately: the ask is durable,
+  // the tool did NOT run, and the agent was told not to retry.
   await expect(page.locator(".approval-card")).toBeVisible({ timeout: 20_000 });
-  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to: File the ignored issue",
-    { timeout: 40_000 },
-  );
   expect(await pollFirstToolCall("%File the ignored issue%")).toMatchObject({
     name: "create_issue",
-    approval: { status: "timed-out", decidedByName: null },
-    output: "The user declined this action.",
+    approval: { status: "pending", decidedByName: null },
+    output: "Queued for Alex Lin's approval.",
   });
+  const [pendingRow] = await dbQuery<{ status: string }>(
+    `SELECT status FROM approvals
+     WHERE tool_name = 'create_issue' AND status = 'pending'
+     ORDER BY created_at DESC LIMIT 1`,
+  );
+  expect(pendingRow).toEqual({ status: "pending" });
+  const ghLogPending = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)
+  ).json()) as { requests: Array<{ body: { arguments?: { title?: string } } }> };
+  expect(
+    ghLogPending.requests.some(
+      (r) => r.body?.arguments?.title === "Never approved",
+    ),
+  ).toBe(false);
 });
 
 test("sub-agent delegation: a linked agent runs as a governed tool", async () => {

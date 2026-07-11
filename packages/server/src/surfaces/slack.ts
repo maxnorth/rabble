@@ -599,19 +599,22 @@ export async function processSlackInteraction(
   } catch {
     return { ok: false, error: "Invalid action value" };
   }
-  const { decideApproval } = await import("../runtime/approvals.js");
+  const { decideDurableApproval } = await import("../runtime/approvalDecide.js");
   const ok =
     ref.approvalId && ref.sessionId
-      ? decideApproval(
-          ref.approvalId,
-          ref.sessionId,
-          decider.id,
-          action.action_id === "rabble_approve" ? "approve" : "deny",
-        )
+      ? (
+          await decideDurableApproval({
+            approvalId: ref.approvalId,
+            sessionId: ref.sessionId,
+            deciderId: decider.id,
+            decision:
+              action.action_id === "rabble_approve" ? "approve" : "deny",
+          })
+        ).ok
       : false;
   const outcomeText = ok
     ? action.action_id === "rabble_approve"
-      ? "✅ Approved. The agent is continuing."
+      ? "✅ Approved — the platform ran it and the agent picks up from there."
       : "🚫 Denied. The agent was told no."
     : "This approval already resolved or isn't yours to decide.";
 

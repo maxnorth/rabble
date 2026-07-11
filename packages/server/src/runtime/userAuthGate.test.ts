@@ -1,7 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ToolCall } from "@rabblehq/core";
-import { decideApproval } from "./approvals.js";
-import { gateUserAuth, type GateContext } from "./userAuthGate.js";
+
+// The pending path records the ask durably; give it an in-memory stand-in
+// so these stay unit tests.
+const inserted: Array<Record<string, unknown>> = [];
+vi.mock("../db/client.js", () => ({
+  db: {
+    insert: () => ({
+      values: (v: Record<string, unknown>) => ({
+        returning: async () => {
+          inserted.push(v);
+          return [{ id: "00000000-0000-4000-8000-000000000001" }];
+        },
+      }),
+    }),
+  },
+}));
+
+const { gateUserAuth } = await import("./userAuthGate.js");
+type GateContext = import("./userAuthGate.js").GateContext;
 
 const call: ToolCall = {
   id: "t1",
@@ -13,9 +30,13 @@ const call: ToolCall = {
   approval: null,
 };
 
+const meta = { kind: "mcp" as const, serverId: "srv1" };
+
 function ctx(overrides: Partial<GateContext> = {}): GateContext {
   return {
     sessionId: "s1",
+    orgId: "o1",
+    agentId: "a1",
     userId: "u1",
     userName: "Alex Lin",
     requireApproval: false,
@@ -27,9 +48,9 @@ function ctx(overrides: Partial<GateContext> = {}): GateContext {
   };
 }
 
-describe("gateUserAuth", () => {
+describe("gateUserAuth (async approvals)", () => {
   it("auto-approves under trust posture", async () => {
-    const result = await gateUserAuth(ctx({ approvalPosture: "trust" }), call);
+    const result = await gateUserAuth(ctx({ approvalPosture: "trust" }), call, meta);
     expect(result).toEqual({
       outcome: "proceed",
       approval: { status: "auto-approved", decidedByName: "Alex Lin" },
@@ -37,109 +58,70 @@ describe("gateUserAuth", () => {
   });
 
   it("auto-approves the rest of a session once one call was approved", async () => {
-    const result = await gateUserAuth(ctx({ sessionApproved: true }), call);
+    const result = await gateUserAuth(ctx({ sessionApproved: true }), call, meta);
     expect(result.outcome).toBe("proceed");
     expect(
       result.outcome === "proceed" ? result.approval?.status : null,
     ).toBe("auto-approved");
   });
 
-  it("the org floor overrides trust posture", async () => {
-    // With requireApproval on, even trust posture must prompt — resolve it
-    // via the broker so the test doesn't wait for the timeout.
-    const emitted: Array<{ approvalId: string }> = [];
-    const pending = gateUserAuth(
-      ctx({
-        approvalPosture: "trust",
-        requireApproval: true,
-        emit: (e) => emitted.push(e),
-      }),
+  it("refuses on a surface that can't host a prompt", async () => {
+    const result = await gateUserAuth(
+      ctx({ interactive: false, approvalPosture: "trust" }),
       call,
+      meta,
     );
-    await new Promise((r) => setTimeout(r, 10));
+    expect(result.outcome).toBe("refused");
+  });
+
+  it("goes PENDING instead of blocking: records the ask, emits, returns immediately", async () => {
+    inserted.length = 0;
+    const emitted: Array<{ approvalId: string }> = [];
+    const result = await gateUserAuth(
+      ctx({ emit: (e) => emitted.push(e) }),
+      call,
+      meta,
+    );
+    // No decision happened, yet the gate already resolved — the turn moves on.
+    expect(result.outcome).toBe("pending");
+    if (result.outcome !== "pending") throw new Error("unreachable");
+    expect(result.approval.status).toBe("pending");
+    expect(result.approval.approvalId).toBeTruthy();
+    expect(result.modelText).toContain("Do NOT retry");
     expect(emitted).toHaveLength(1);
-    decideApproval(emitted[0]!.approvalId, "s1", "u1", "approve");
-    const result = await pending;
-    expect(result).toEqual({
-      outcome: "proceed",
-      approval: { status: "approved", decidedByName: "Alex Lin" },
+    expect(inserted[0]).toMatchObject({
+      sessionId: "s1",
+      userId: "u1",
+      kind: "mcp",
+      toolName: "create_issue",
+      serverId: "srv1",
     });
   });
 
-  it("refuses outright when the surface can't host a prompt", async () => {
+  it("the org floor overrides trust posture (still pending, not auto)", async () => {
     const result = await gateUserAuth(
-      ctx({ interactive: false, approvalPrompt: undefined }),
+      ctx({ approvalPosture: "trust", requireApproval: true }),
       call,
+      meta,
     );
-    expect(result.outcome).toBe("refused");
-    if (result.outcome === "refused") {
-      expect(result.approval.status).toBe("denied");
-      expect(result.modelText).toContain("web app");
-    }
-  });
-
-  it("trust posture does not auto-approve where the user can't see it", async () => {
-    // A delegated sub-agent / automation turn is non-interactive with no
-    // out-of-band prompt. Even under trust, the write must be refused, not
-    // run silently as the user in a turn they never saw.
-    const result = await gateUserAuth(
-      ctx({ approvalPosture: "trust", interactive: false, approvalPrompt: undefined }),
-      call,
-    );
-    expect(result.outcome).toBe("refused");
-    if (result.outcome === "refused") {
-      expect(result.approval.status).toBe("denied");
-    }
-  });
-
-  it("a denial resolves as refused with the decider's name", async () => {
-    const emitted: Array<{ approvalId: string }> = [];
-    const pending = gateUserAuth(ctx({ emit: (e) => emitted.push(e) }), call);
-    await new Promise((r) => setTimeout(r, 10));
-    decideApproval(emitted[0]!.approvalId, "s1", "u1", "deny");
-    const result = await pending;
-    expect(result.outcome).toBe("refused");
-    if (result.outcome === "refused") {
-      expect(result.approval).toEqual({ status: "denied", decidedByName: "Alex Lin" });
-      expect(result.modelText).toContain("declined");
-    }
-  });
-
-  it("only the owning user's decision counts", async () => {
-    const emitted: Array<{ approvalId: string }> = [];
-    const pending = gateUserAuth(ctx({ emit: (e) => emitted.push(e) }), call);
-    await new Promise((r) => setTimeout(r, 10));
-    expect(decideApproval(emitted[0]!.approvalId, "s1", "someone-else", "approve")).toBe(
-      false,
-    );
-    expect(decideApproval(emitted[0]!.approvalId, "s1", "u1", "run-as-service")).toBe(
-      true,
-    );
-    const result = await pending;
-    expect(result).toEqual({
-      outcome: "proceed",
-      approval: { status: "ran-as-service", decidedByName: "Alex Lin" },
-    });
+    expect(result.outcome).toBe("pending");
   });
 
   it("delivers the ask out-of-band when a prompt hook is supplied", async () => {
-    const prompts: Array<{ approvalId: string; toolName: string }> = [];
-    const emitted: Array<{ approvalId: string }> = [];
-    const pending = gateUserAuth(
+    const prompts: Array<{ toolName: string }> = [];
+    const result = await gateUserAuth(
       ctx({
         interactive: false,
-        approvalPrompt: async (p) => {
-          prompts.push(p);
+        approvalPrompt: async (r) => {
+          prompts.push(r);
         },
-        emit: (e) => emitted.push(e),
       }),
       call,
+      meta,
     );
-    await new Promise((r) => setTimeout(r, 10));
+    expect(result.outcome).toBe("pending");
+    await new Promise((r) => setTimeout(r, 5));
     expect(prompts).toHaveLength(1);
     expect(prompts[0]!.toolName).toBe("create_issue");
-    decideApproval(emitted[0]!.approvalId, "s1", "u1", "approve");
-    const result = await pending;
-    expect(result.outcome).toBe("proceed");
   });
 });

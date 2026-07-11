@@ -517,8 +517,9 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
     }),
   });
 
-  // Fire the delivery WITHOUT awaiting — it blocks on the approval
-  const deliveryPromise = signedSlackPost({
+  // Async approvals: the delivery completes immediately — the ask pends
+  // durably while the thread already got the agent's interim reply.
+  const delivery = await signedSlackPost({
     type: "event_callback",
     event: {
       type: "message",
@@ -529,6 +530,7 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
       thread_ts: "1712.001",
     },
   });
+  expect(delivery.status).toBe(200);
 
   // The approval ask lands as DM buttons; grab the broker reference
   let value = "";
@@ -586,9 +588,7 @@ test("approvals resolve from Slack: DM buttons drive the pending decision", asyn
   });
   expect(((await interaction.json()) as { resolved: boolean }).resolved).toBe(true);
 
-  // The blocked delivery completes: tool ran as Alex, approved from Slack
-  const delivery = await deliveryPromise;
-  expect(delivery.status).toBe(200);
+  // Deciding executed the call as Alex and the agent followed up in-thread.
   expect(await pollFirstToolCall("%File the issue we discussed%")).toMatchObject({
     name: "create_issue",
     authType: "user",

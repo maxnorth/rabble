@@ -78,14 +78,14 @@ interface PlatformToolDef {
   run: (args: Record<string, unknown>) => Promise<string>;
 }
 
-export function buildPlatformTools(
-  input: AgentTurnInput,
-  emit: (event: AgentTurnEvent) => void,
-) {
-  const user = input.user;
-  const preferences = userPreferencesSchema.parse({
-    ...(user.preferences as Record<string, unknown>),
-  });
+/**
+ * The platform tool definitions for a given acting user. Split from the
+ * LangChain wrapping so the async-approval executor (approvalDecide.ts) can
+ * run an approved call verbatim without an agent turn in flight.
+ */
+export function buildPlatformDefs(
+  user: typeof users.$inferSelect,
+): PlatformToolDef[] {
 
   const loadAgent = async (agentId: string) => {
     const [row] = await db
@@ -1248,6 +1248,17 @@ export function buildPlatformTools(
       },
     },
   ];
+  return defs;
+}
+
+export function buildPlatformTools(
+  input: AgentTurnInput,
+  emit: (event: AgentTurnEvent) => void,
+) {
+  const preferences = userPreferencesSchema.parse({
+    ...(input.user.preferences as Record<string, unknown>),
+  });
+  const defs = buildPlatformDefs(input.user);
 
   return defs.map((def) =>
     tool(
@@ -1267,15 +1278,19 @@ export function buildPlatformTools(
 
         let approval: ToolCall["approval"] = null;
         if (def.authType === "user") {
-          const gate = await gateUserAuth(gateContextFor(input, preferences, emit), call);
-          if (gate.outcome === "refused") {
-            const denied: ToolCall = {
+          const gate = await gateUserAuth(
+            gateContextFor(input, preferences, emit),
+            call,
+            { kind: "platform" },
+          );
+          if (gate.outcome !== "proceed") {
+            const settled: ToolCall = {
               ...call,
               output: gate.toolOutput,
               approval: gate.approval,
               durationMs: Date.now() - startedAt,
             };
-            emit({ type: "tool-end", toolCall: denied });
+            emit({ type: "tool-end", toolCall: settled });
             return gate.modelText;
           }
           approval = gate.approval;

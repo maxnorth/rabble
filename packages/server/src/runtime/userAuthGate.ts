@@ -1,15 +1,22 @@
 /**
  * The user-auth consent gate, shared by every governed tool source (MCP
  * tools and the Builder's platform tools). A user-auth call either
- * auto-approves (trust posture / session posture), pauses on the approval
- * broker (in-thread card, or an out-of-band prompt like Slack DM buttons),
- * or is refused outright when the surface can't host a prompt.
+ * auto-approves (trust posture / session posture), is refused outright when
+ * the surface can't host a prompt, or goes PENDING: the ask is recorded
+ * durably, surfaced on every surface (web card, Slack DM buttons), and the
+ * tool returns immediately — the turn never blocks on a human. On approval
+ * the platform executes the recorded call verbatim and notifies the agent
+ * in a follow-up turn (runtime/approvalDecide.ts). See DECISIONS.md
+ * "Approvals are asynchronous".
  */
 import type { ApprovalOutcome, ToolCall } from "@rabblehq/core";
-import { requestApproval, type ApprovalDecision } from "./approvals.js";
+import { db } from "../db/client.js";
+import { approvals } from "../db/schema.js";
 
 export interface GateContext {
   sessionId: string;
+  orgId: string;
+  agentId: string;
   userId: string;
   userName: string;
   /** Org floor: when true, user-auth tools always prompt. */
@@ -32,13 +39,21 @@ export interface GateContext {
   }) => void;
 }
 
+/** What the durable executor needs to re-run the call on approval. */
+export interface GateCallMeta {
+  kind: "mcp" | "platform";
+  serverId?: string | null;
+}
+
 export type GateResult =
   | { outcome: "proceed"; approval: ApprovalOutcome | null }
-  | { outcome: "refused"; approval: ApprovalOutcome; toolOutput: string; modelText: string };
+  | { outcome: "refused"; approval: ApprovalOutcome; toolOutput: string; modelText: string }
+  | { outcome: "pending"; approval: ApprovalOutcome; toolOutput: string; modelText: string };
 
 export async function gateUserAuth(
   ctx: GateContext,
   call: ToolCall,
+  meta: GateCallMeta,
 ): Promise<GateResult> {
   // A surface with no way to prompt (a delegated sub-agent turn, an
   // automation, an inbound event without an out-of-band prompt) can never
@@ -71,13 +86,24 @@ export async function gateUserAuth(
     };
   }
 
-  const { approvalId, decision } = requestApproval({
-    sessionId: ctx.sessionId,
-    userId: ctx.userId,
-    toolName: call.name,
-    serverName: call.serverName ?? null,
-    input: call.input,
-  });
+  // Async ask: record it durably and move on. The decision can land hours
+  // later, from any surface, even after a restart.
+  const [row] = await db
+    .insert(approvals)
+    .values({
+      orgId: ctx.orgId,
+      sessionId: ctx.sessionId,
+      agentId: ctx.agentId,
+      userId: ctx.userId,
+      kind: meta.kind,
+      toolName: call.name,
+      serverId: meta.serverId ?? null,
+      serverName: call.serverName ?? null,
+      input: call.input ?? {},
+    })
+    .returning({ id: approvals.id });
+  const approvalId = row!.id;
+
   if (!ctx.interactive && ctx.approvalPrompt) {
     // Deliver the ask where the user actually is.
     void ctx
@@ -96,24 +122,16 @@ export async function gateUserAuth(
     serverName: call.serverName ?? null,
     input: call.input,
   });
-  const result: ApprovalDecision = await decision;
-  if (result === "deny" || result === "timed-out") {
-    return {
-      outcome: "refused",
-      approval: {
-        status: result === "deny" ? "denied" : "timed-out",
-        decidedByName: result === "deny" ? ctx.userName : null,
-      },
-      toolOutput: "The user declined this action.",
-      modelText:
-        "The user declined this action. Do not retry it; explain what you were unable to do.",
-    };
-  }
+
   return {
-    outcome: "proceed",
-    approval: {
-      status: result === "approve" ? "approved" : "ran-as-service",
-      decidedByName: ctx.userName,
-    },
+    outcome: "pending",
+    approval: { status: "pending", decidedByName: null, approvalId },
+    toolOutput: `Queued for ${ctx.userName}'s approval.`,
+    modelText:
+      `This action needs ${ctx.userName}'s approval and has been queued — ` +
+      "you are not blocked. When it's decided, the platform will run it " +
+      "exactly as asked (or not, if declined) and post the outcome into " +
+      "this conversation. Do NOT retry or re-issue this call; continue " +
+      "with anything that doesn't depend on it, or wrap up for now.",
   };
 }

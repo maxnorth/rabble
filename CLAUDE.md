@@ -177,10 +177,22 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   connected workspace. Set at registration (checkbox) or any time
   (row "Make primary" / edit modal); promoting one steps the old one
   down.
-- Approvals: the in-memory broker (runtime/approvals.ts) arbitrates all
-  surfaces — web card, Slack DM buttons (interactivity endpoint), and
-  pending asks returned on session GET. e2e runs with
-  APPROVAL_TIMEOUT_MS=15000; UI-path approval tests must beat that window.
+- Approvals are ASYNC (DECISIONS.md): a turn never blocks on a decision.
+  The gate (runtime/userAuthGate.ts) records the ask in the `approvals`
+  table, the tool returns "pending" to the model, and the turn completes.
+  Deciding (web card, Slack DM buttons — both call
+  runtime/approvalDecide.ts) executes the RECORDED call verbatim (approve =
+  the user's credential, run-as-service = org credential, platform tools
+  via buildPlatformDefs), flips the persisted tool-call chip from pending
+  to the outcome (which is also what unlocks "once per session" posture),
+  and notifies the agent with a follow-up turn — delivered back into the
+  Slack thread for slack: sessions. Pending asks hydrate session GET from
+  the table (they survive restarts); a boot sweep expires rows older than
+  APPROVAL_TTL_MS (default 24h). The in-memory broker (approvals.ts) now
+  handles only personal-credential CONNECT asks, which still pause the
+  turn (APPROVAL_TIMEOUT_MS). In e2e, remember each decision triggers a
+  follow-up turn + judging — assert on the follow-up ("Approval update"
+  bubble / thread post) before enqueueing the next scripted reply.
 - Trust data (spot-check queue, scope violations 30d, graded count, judge
   model) comes from GET /api/agents/:id/trust; scope violations are
   recorded by the runtime when the model calls a tool outside its governed

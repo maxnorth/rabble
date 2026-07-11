@@ -891,12 +891,16 @@ function SessionThread({ sessionId }: { sessionId: string }) {
     decision: "approve" | "deny" | "run-as-service",
   ) => {
     try {
+      // Async approvals: by the time this resolves, the platform has run
+      // the approved call and the agent has already replied in a follow-up
+      // turn — refetch the session so both land in the transcript.
       await api.decideApproval(sessionId, approval.approvalId, { decision });
       setApprovals((prev) =>
         prev.map((a) =>
           a.approvalId === approval.approvalId ? { ...a, resolved: decision } : a,
         ),
       );
+      await queryClient.invalidateQueries({ queryKey: ["session", sessionId] });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Decision failed");
     }

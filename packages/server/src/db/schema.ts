@@ -141,6 +141,44 @@ export const agents = pgTable(
   (t) => [uniqueIndex("agents_org_slug_idx").on(t.orgId, t.slug)],
 );
 
+/** Durable tool-approval asks (DECISIONS.md "Approvals are asynchronous"):
+ * a turn never blocks on a decision; the platform executes the recorded
+ * call verbatim on approval and notifies the agent in a follow-up turn. */
+export const approvals = pgTable("approvals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  orgId: uuid("org_id")
+    .notNull()
+    .references(() => orgs.id),
+  sessionId: uuid("session_id")
+    .notNull()
+    .references(() => sessions.id, { onDelete: "cascade" }),
+  agentId: uuid("agent_id")
+    .notNull()
+    .references(() => agents.id),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id),
+  kind: text("kind", { enum: ["mcp", "platform"] }).notNull(),
+  toolName: text("tool_name").notNull(),
+  serverId: uuid("server_id").references(() => mcpServers.id, {
+    onDelete: "cascade",
+  }),
+  serverName: text("server_name"),
+  input: jsonb("input").notNull().default({}),
+  status: text("status", {
+    enum: ["pending", "approved", "ran-as-service", "denied", "expired"],
+  })
+    .notNull()
+    .default("pending"),
+  decidedBy: uuid("decided_by").references(() => users.id),
+  decidedAt: timestamp("decided_at", { withTimezone: true }),
+  executedAt: timestamp("executed_at", { withTimezone: true }),
+  output: text("output"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const sessions = pgTable("sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
   orgId: uuid("org_id")

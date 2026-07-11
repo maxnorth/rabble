@@ -13,7 +13,11 @@ import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
 import { orderAutoRoster, routeByIntent } from "../runtime/router.js";
-import { decideApproval, pendingApprovalsFor, pendingConnectsFor } from "../runtime/approvals.js";
+import { pendingConnectsFor } from "../runtime/approvals.js";
+import {
+  decideDurableApproval,
+  pendingDurableApprovals,
+} from "../runtime/approvalDecide.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
 import { judgeSession } from "../evals/judge.js";
 
@@ -183,7 +187,7 @@ export async function sessionRoutes(app: FastifyInstance) {
         authorName: h.authorName,
       })),
       evalResults: evals,
-      pendingApprovals: pendingApprovalsFor(id, req.user!.id),
+      pendingApprovals: await pendingDurableApprovals(id, req.user!.id),
       pendingConnects: pendingConnectsFor(id, req.user!.id),
     };
   });
@@ -227,26 +231,31 @@ export async function sessionRoutes(app: FastifyInstance) {
     return { ok: true };
   });
 
-  // Resolve a pending in-thread approval
+  // Decide a pending approval. Async contract (DECISIONS.md): the agent's
+  // turn already moved on — deciding executes the recorded call verbatim
+  // (approve / run-as-service), flips the transcript chip, and notifies the
+  // agent in a follow-up turn before this responds, so the UI can simply
+  // refetch the session to show the outcome.
   app.post("/api/sessions/:id/approvals/:approvalId", async (req, reply) => {
     const { id, approvalId } = req.params as { id: string; approvalId: string };
     const body = approvalDecisionSchema.parse(req.body);
-    const ok = decideApproval(
+    const result = await decideDurableApproval({
       approvalId,
-      id,
-      req.user!.id,
-      body.decision === "approve"
-        ? "approve"
-        : body.decision === "deny"
-          ? "deny"
-          : "run-as-service",
-    );
-    if (!ok) {
+      sessionId: id,
+      deciderId: req.user!.id,
+      decision:
+        body.decision === "approve"
+          ? "approve"
+          : body.decision === "deny"
+            ? "deny"
+            : "run-as-service",
+    });
+    if (!result.ok) {
       return reply
         .code(404)
         .send({ error: "This approval is no longer pending" });
     }
-    return { ok: true };
+    return { ok: true, status: result.status };
   });
 
   // Post a user message; the agent's reply streams back as SSE.

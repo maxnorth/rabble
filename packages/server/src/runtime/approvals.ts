@@ -1,87 +1,13 @@
 /**
- * In-memory broker for in-thread tool approvals. When an agent invokes a
- * user-auth tool, the turn pauses on a pending approval; the approval card
- * in the session UI resolves it (approve / deny / run as service account).
- * Unanswered requests time out as denials.
+ * In-memory broker for personal-credential CONNECT asks (a turn pauses
+ * until the user connects an account, or times out). Tool APPROVALS are no
+ * longer brokered here — they are durable and asynchronous
+ * (runtime/approvalDecide.ts; DECISIONS.md "Approvals are asynchronous").
  */
 import { randomUUID } from "node:crypto";
 
-export type ApprovalDecision = "approve" | "deny" | "run-as-service" | "timed-out";
-
-interface Pending {
-  sessionId: string;
-  userId: string;
-  toolName: string;
-  serverName: string | null;
-  input: unknown;
-  resolve: (decision: ApprovalDecision) => void;
-  timer: NodeJS.Timeout;
-}
-
-const pending = new Map<string, Pending>();
-
 // Overridable so tests (and impatient orgs) can tighten the window.
 const APPROVAL_TIMEOUT_MS = Number(process.env.APPROVAL_TIMEOUT_MS ?? 120_000);
-
-export function requestApproval(input: {
-  sessionId: string;
-  userId: string;
-  toolName?: string;
-  serverName?: string | null;
-  input?: unknown;
-}): { approvalId: string; decision: Promise<ApprovalDecision> } {
-  const approvalId = randomUUID();
-  const decision = new Promise<ApprovalDecision>((resolve) => {
-    const timer = setTimeout(() => {
-      pending.delete(approvalId);
-      resolve("timed-out");
-    }, APPROVAL_TIMEOUT_MS);
-    pending.set(approvalId, {
-      sessionId: input.sessionId,
-      userId: input.userId,
-      toolName: input.toolName ?? "tool",
-      serverName: input.serverName ?? null,
-      input: input.input ?? null,
-      resolve: (d) => {
-        clearTimeout(timer);
-        pending.delete(approvalId);
-        resolve(d);
-      },
-      timer,
-    });
-  });
-  return { approvalId, decision };
-}
-
-/** Returns false when the approval is unknown or not the caller's to decide. */
-export function decideApproval(
-  approvalId: string,
-  sessionId: string,
-  userId: string,
-  decision: Exclude<ApprovalDecision, "timed-out">,
-): boolean {
-  const entry = pending.get(approvalId);
-  if (!entry || entry.sessionId !== sessionId || entry.userId !== userId) {
-    return false;
-  }
-  entry.resolve(decision);
-  return true;
-}
-
-/** Pending approvals a given user can decide on a session (for UI resume). */
-export function pendingApprovalsFor(
-  sessionId: string,
-  userId: string,
-): Array<{ approvalId: string; toolName: string; serverName: string | null; input: unknown }> {
-  return [...pending.entries()]
-    .filter(([, p]) => p.sessionId === sessionId && p.userId === userId)
-    .map(([approvalId, p]) => ({
-      approvalId,
-      toolName: p.toolName,
-      serverName: p.serverName,
-      input: p.input,
-    }));
-}
 
 // --- Personal-credential connect asks -------------------------------------
 // Same pause/resume shape as approvals, but resolved by the user CONNECTING

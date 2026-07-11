@@ -238,8 +238,15 @@ export const approvalOutcomeSchema = z.object({
     "ran-as-service",
     "auto-approved",
     "timed-out",
+    // Async approvals: the ask is recorded and the turn moves on; the
+    // persisted tool call is updated in place when the decision lands.
+    "pending",
+    "expired",
   ]),
   decidedByName: z.string().nullable(),
+  /** Durable ask id — set while pending so the decision can update the
+   * persisted call in place. */
+  approvalId: z.string().uuid().optional(),
 });
 export type ApprovalOutcome = z.infer<typeof approvalOutcomeSchema>;
 

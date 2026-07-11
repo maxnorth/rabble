@@ -56,8 +56,10 @@ test("the Builder creates a measured draft agent conversationally", async () => 
   await expect(card).toBeVisible({ timeout: 15000 });
   await expect(card).toContainText("create_agent_draft");
   await card.getByRole("button", { name: "Approve as me" }).click();
+  // Async approvals: approving made the PLATFORM execute create_agent_draft
+  // and the Builder reacted in a follow-up turn.
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Mock reply to:",
+    "Approval update",
     { timeout: 15000 },
   );
 

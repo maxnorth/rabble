@@ -159,3 +159,33 @@ export async function agentInOrg(orgId: string, agentId: string): Promise<boolea
     .limit(1);
   return Boolean(row);
 }
+
+/**
+ * MCP-server access scope: with no grants on the server anyone in the org
+ * may attach it; with grants, only grantees — org admins always may. Used
+ * by the HTTP attach route AND the Builder's attach_mcp_server tool, so
+ * the conversational path can't sidestep the scope.
+ */
+export async function canUseMcpServer(
+  user: { id: string; orgId: string; role: string },
+  serverId: string,
+): Promise<boolean> {
+  if (user.role === "owner" || user.role === "admin") return true;
+  const serverGrants = await db
+    .select({ subjectType: grants.subjectType, subjectId: grants.subjectId })
+    .from(grants)
+    .where(
+      and(
+        eq(grants.orgId, user.orgId),
+        eq(grants.targetType, "mcp-server"),
+        eq(grants.targetId, serverId),
+      ),
+    );
+  if (serverGrants.length === 0) return true;
+  const { userIds, teamIds } = await grantSubjectsFor(user.id, user.orgId);
+  const users = new Set(userIds);
+  const teamSet = new Set(teamIds);
+  return serverGrants.some((g) =>
+    g.subjectType === "user" ? users.has(g.subjectId) : teamSet.has(g.subjectId),
+  );
+}

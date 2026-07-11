@@ -23,7 +23,7 @@ import {
   type OAuthEndpoints,
 } from "../mcp/oauth.js";
 import { publicBaseUrl } from "../publicUrl.js";
-import { hasRight, rightsForAllAgents, grantSubjectsFor } from "../rights.js";
+import { hasRight, rightsForAllAgents, grantSubjectsFor, canUseMcpServer } from "../rights.js";
 import { MCP_LIBRARY } from "../mcp/library.js";
 
 export const MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback";
@@ -522,16 +522,13 @@ export async function mcpRoutes(app: FastifyInstance) {
       .limit(1);
     if (!server) return reply.code(404).send({ error: "Server not found" });
     // Access scope: a granted server may only be attached by its grantees
-    // (org admins always can). Same semantics as model access.
-    if (!isOrgAdmin(req.user)) {
-      const { grantCounts, reachable } = await usableServerIds(req.user!);
-      const grantCount = grantCounts.get(serverId) ?? 0;
-      if (grantCount > 0 && !reachable.has(serverId)) {
-        return reply.code(403).send({
-          error:
-            "This MCP server is restricted. Ask an org admin for access, or request it from the server's page.",
-        });
-      }
+    // (org admins always can). Same semantics as model access — and the
+    // same shared check the Builder's attach tool runs.
+    if (!(await canUseMcpServer(req.user!, serverId))) {
+      return reply.code(403).send({
+        error:
+          "This MCP server is restricted. Ask an org admin for access, or request it from the server's page.",
+      });
     }
     await db
       .insert(agentMcpServers)

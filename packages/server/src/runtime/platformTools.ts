@@ -32,7 +32,7 @@ import {
   users,
 } from "../db/schema.js";
 import { recordAudit } from "../audit.js";
-import { rightForAgent, hasRight } from "../rights.js";
+import { rightForAgent, hasRight, canUseMcpServer } from "../rights.js";
 import { gateUserAuth } from "./userAuthGate.js";
 import {
   gateContextFor,
@@ -380,6 +380,14 @@ export function buildPlatformTools(
           .limit(1);
         if (!server) {
           return `No MCP server named "${serverName}" is registered. Use list_mcp_servers to see what exists.`;
+        }
+        // The same access scope the HTTP attach route enforces — the
+        // conversational path is not a side door.
+        if (!(await canUseMcpServer(user, server.id))) {
+          return (
+            `"${server.name}" is restricted to specific teams or people. ` +
+            "Offer to request access on the user's behalf with the request_access tool."
+          );
         }
         await db
           .insert(agentMcpServers)

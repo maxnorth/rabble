@@ -538,11 +538,13 @@ test("suites open up: cases are visible and editable, suites rename in place", a
   const caseLine = page.locator(".row div", { hasText: "→" }).first();
   await expect(caseLine).toBeVisible();
 
-  // Edit the rubric in place; the case id (and its run history) survives.
-  // Cases render oldest → newest and the test edits the LAST one, so pin
-  // the newest case here — the suite holds several by this point.
-  const [before] = await dbQuery<{ id: string }>(
-    "SELECT c.id FROM eval_cases c JOIN eval_suites s ON s.id = c.suite_id WHERE s.name = 'Smoke' ORDER BY c.created_at DESC LIMIT 1",
+  // Edit the rubric in place. Several cases can share the default rubric
+  // and created_at can tie, so no single-row lookup is reliable; assert the
+  // invariants instead: the suite's id set is unchanged (edit-in-place,
+  // nothing created) and exactly one case now carries the new rubric.
+  const beforeIds = await dbQuery<{ id: string }>(
+    `SELECT c.id FROM eval_cases c JOIN eval_suites s ON s.id = c.suite_id
+     WHERE s.name = 'Smoke' ORDER BY c.id`,
   );
   await page.getByRole("button", { name: "Edit", exact: true }).last().click();
   await page
@@ -550,11 +552,21 @@ test("suites open up: cases are visible and editable, suites rename in place", a
     .fill("Mentions the runbook by name and links it.");
   await page.getByRole("button", { name: "Save case" }).click();
   await expect(page.getByText("Mentions the runbook by name")).toBeVisible();
-  const [after] = await dbQuery<{ id: string; rubric: string }>(
-    "SELECT c.id, c.rubric FROM eval_cases c JOIN eval_suites s ON s.id = c.suite_id WHERE s.name = 'Smoke' ORDER BY c.created_at DESC LIMIT 1",
+  await expect
+    .poll(async () => {
+      const rows = await dbQuery<{ n: number }>(
+        `SELECT count(*)::int AS n FROM eval_cases c
+         JOIN eval_suites s ON s.id = c.suite_id
+         WHERE s.name = 'Smoke' AND c.rubric LIKE 'Mentions the runbook%'`,
+      );
+      return rows[0]!.n;
+    })
+    .toBe(1);
+  const afterIds = await dbQuery<{ id: string }>(
+    `SELECT c.id FROM eval_cases c JOIN eval_suites s ON s.id = c.suite_id
+     WHERE s.name = 'Smoke' ORDER BY c.id`,
   );
-  expect(after!.id).toBe(before!.id);
-  expect(after!.rubric).toContain("Mentions the runbook");
+  expect(afterIds.map((c) => c.id)).toEqual(beforeIds.map((c) => c.id));
 
   // Rename the suite through the pencil. Once editing starts the row's
   // text lives in the input VALUE, so the text-filtered row locator no

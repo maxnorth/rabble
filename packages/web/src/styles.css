@@ -236,10 +236,10 @@ select:focus-visible {
   width: 30px;
   height: 30px;
   border-radius: 8px;
-  /* The brand mark (public/favicon.svg). Shown as a background so every
-     `.rail-logo` — rail, login, setup, sidebars — updates from one place; the
-     "R" text kept in the markup stays as a transparent fallback. */
-  background: #fff url("/favicon.svg") center / cover no-repeat;
+  /* The brand mark (public/favicon.svg, transparent). Shown as a background so
+     every `.rail-logo` — rail, login, setup, sidebars — updates from one place;
+     the "R" text kept in the markup stays as a transparent fallback. */
+  background: url("/favicon.svg") center / contain no-repeat;
   color: transparent;
   font-weight: 700;
   font-size: 15px;

@@ -129,7 +129,7 @@ test("agents: create, configure, and activate an agent", async () => {
   // A fresh org isn't empty: the built-in Builder ships with the platform.
   const builderRow = page.locator(".dir-table tbody tr", { hasText: "Builder" });
   await expect(builderRow).toBeVisible();
-  await expect(builderRow.getByText("built-in")).toBeVisible();
+  await expect(builderRow.locator(".meta-note", { hasText: "built-in" })).toBeVisible();
 
   await page.getByRole("button", { name: "+ New agent" }).click();
   await page.getByPlaceholder("Eng On-Call").fill("Eng On-Call");

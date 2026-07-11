@@ -169,7 +169,10 @@ test("audit log viewer shows the accumulated control-plane history", async () =>
   // Rows with metadata expand to reveal the detail behind the summary — the
   // gating block from 04 shows which case regressed and the judge's reasoning.
   await page.locator("select").selectOption("eval");
-  const gateRow = page.locator(".row", { hasText: "blocked a change" }).first();
+  // Journey 08's Builder block also lands here — pin to the one from 04.
+  const gateRow = page
+    .locator(".row", { hasText: 'blocked a change to "Eng On-Call"' })
+    .first();
   await expect(gateRow).toBeVisible();
   await gateRow.click();
   await expect(

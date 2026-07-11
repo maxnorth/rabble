@@ -19,6 +19,9 @@ import { dbQuery, pollFirstToolCall } from "./db";
 test.describe.configure({ mode: "serial" });
 
 let page: Page;
+// Set once the OAuth MCP server ("Incidents") is registered; reused by the
+// personal-OAuth slice at the end of the file and its afterAll cleanup.
+let incidentsServerId = "";
 
 async function enqueueToolCall(name: string, args: Record<string, unknown>) {
   await fetch(`${EMULATOR}/admin/llm/enqueue`, {
@@ -38,6 +41,20 @@ test.beforeAll(async ({ browser }) => {
 });
 
 test.afterAll(async () => {
+  // Detach the OAuth server so it doesn't alter Eng On-Call's live tool set
+  // for the Slack/admin suites that follow (they drive create_issue flows on
+  // this same agent). The registration + connected credential persist — no
+  // later suite pins the exact server list.
+  if (incidentsServerId) {
+    const [eng] = await dbQuery<{ id: string }>(
+      "SELECT id FROM agents WHERE name = 'Eng On-Call'",
+    );
+    if (eng) {
+      await page.request
+        .delete(`/api/agents/${eng.id}/mcp-servers/${incidentsServerId}`)
+        .catch(() => {});
+    }
+  }
   await page.close();
 });
 
@@ -741,4 +758,229 @@ test("personal server with no credential prompts a connect card, then resumes", 
     await page.request.delete(`/api/agents/${agentId}`);
     await page.request.delete(`/api/mcp-servers/${serverId}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Personal MCP OAuth (slice b): a server whose endpoint 401s with OAuth
+// metadata is auto-detected at registration (auth-server discovery + DCR,
+// tools left empty until a token exists). A user connects their own account
+// via the OAuth authorize/callback dance — which discovers the tool catalog
+// on first connect — and an agent then calls those tools AS that user,
+// carrying the user's OAuth access token on the wire.
+// ---------------------------------------------------------------------------
+
+test("register an OAuth MCP server (auto-detected, no tools yet)", async () => {
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByPlaceholder("GitHub").fill("Incidents");
+  await page
+    .getByPlaceholder("https://mcp.example.com/mcp")
+    .fill(`${EMULATOR}/mock/oauthmcp/mcp`);
+  // Personal mode + an endpoint that 401s → Rabble discovers the auth server
+  // and dynamically registers a client; there is no token field to fill.
+  await page
+    .locator(".modal .field", { hasText: "Credential" })
+    .locator("select")
+    .selectOption("personal");
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  const row = page.locator(".row", { hasText: "Incidents" });
+  await expect(row).toBeVisible();
+  await expect(row.locator(".chip", { hasText: "personal" })).toBeVisible();
+  // Tools are unknown until someone authorizes — the catalog starts empty.
+  await expect(row.locator(".chip.blue")).toHaveText("0 tools");
+
+  const [server] = await dbQuery<{
+    credential_mode: string;
+    has_oauth: boolean;
+    n: number;
+  }>(
+    `SELECT credential_mode, oauth_config IS NOT NULL AS has_oauth,
+            jsonb_array_length(tools) AS n
+       FROM mcp_servers WHERE slug = 'incidents'`,
+  );
+  expect(server).toMatchObject({
+    credential_mode: "personal",
+    has_oauth: true,
+    n: 0,
+  });
+  // The MCP servers list/detail surfaces no explicit "OAuth" chip — nothing
+  // to assert there without inventing UI.
+});
+
+test("connect the OAuth account from Profile discovers the tools", async () => {
+  const [s] = await dbQuery<{ id: string }>(
+    "SELECT id FROM mcp_servers WHERE slug = 'incidents'",
+  );
+  incidentsServerId = s!.id;
+
+  // Profile surfaces the personal-OAuth server with an OAuth "Connect" button
+  // (rather than a paste-a-token field).
+  await page.locator("nav a[title*='profile']").click();
+  const mcpAccounts = page.locator(
+    '.sidebar-title:has-text("MCP tool accounts") + .row-group',
+  );
+  const incRow = mcpAccounts.locator(".row", { hasText: "Incidents" });
+  await expect(incRow.getByRole("button", { name: "Connect" })).toBeVisible();
+
+  // Drive the OAuth hop deterministically instead of fighting window.open:
+  // (1) start the flow — the server mints PKCE + state and returns the
+  //     authorize URL; (2) hit the emulator's authorize with redirects OFF
+  //     and read the Location it 302s to (Rabble's callback, carrying
+  //     code&state); (3) GET that callback through page.request so the app
+  //     session cookie rides, letting the server exchange the code (PKCE),
+  //     store the tokens, and discover the tool catalog on first connect.
+  const start = await page.request.post(
+    `/api/profile/mcp-credentials/${incidentsServerId}/oauth/start`,
+  );
+  expect(start.ok()).toBe(true);
+  const { authorizeUrl } = (await start.json()) as { authorizeUrl: string };
+
+  const authRes = await page.request.get(authorizeUrl, { maxRedirects: 0 });
+  expect(authRes.status()).toBe(302);
+  const callbackUrl = authRes.headers()["location"]!;
+  expect(callbackUrl).toContain("/api/mcp/oauth/callback");
+  const cbRes = await page.request.get(callbackUrl);
+  expect(cbRes.ok()).toBe(true);
+  expect(cbRes.url()).toContain("mcp=connected");
+
+  // The UI now shows the account as connected (remount to refetch).
+  await page.locator("nav a[title='Sessions']").click();
+  await page.locator("nav a[title*='profile']").click();
+  await expect(incRow.locator(".chip", { hasText: "connected" })).toBeVisible();
+
+  // The credential row carries access + refresh tokens and an expiry.
+  const [cred] = await dbQuery<{
+    has_token: boolean;
+    has_refresh: boolean;
+    has_exp: boolean;
+  }>(
+    `SELECT umc.encrypted_token IS NOT NULL AS has_token,
+            umc.encrypted_refresh_token IS NOT NULL AS has_refresh,
+            umc.expires_at IS NOT NULL AS has_exp
+       FROM user_mcp_credentials umc
+       JOIN mcp_servers s ON s.id = umc.server_id
+       JOIN users u ON u.id = umc.user_id
+      WHERE s.slug = 'incidents' AND u.email = 'alex@acme.com'`,
+  );
+  expect(cred).toMatchObject({ has_token: true, has_refresh: true, has_exp: true });
+
+  // First connect discovered the tool catalog (empty until now).
+  const [toolCount] = await dbQuery<{ n: number }>(
+    "SELECT jsonb_array_length(tools) AS n FROM mcp_servers WHERE slug = 'incidents'",
+  );
+  expect(toolCount!.n).toBe(2);
+
+  const audit = await dbQuery<{ action: string }>(
+    "SELECT action FROM audit_events WHERE action = 'mcp.credential.connect' AND target_id = $1",
+    [incidentsServerId],
+  );
+  expect(audit.length).toBeGreaterThanOrEqual(1);
+});
+
+test("an agent calls an OAuth tool as the user, carrying the user's token", async () => {
+  // Attach Incidents to Eng On-Call through the governed MCP tab.
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "mcp" }).click();
+  await page
+    .locator(".row", { hasText: "Incidents" })
+    .getByRole("button", { name: "Attach" })
+    .click();
+
+  // Its tools land as personal (amber) — identity derived from server mode.
+  const incidentRow = page.locator(".row", { hasText: "create_incident" });
+  await expect(incidentRow).toBeVisible();
+  await expect(
+    incidentRow.locator(".chip.amber", { hasText: "personal" }),
+  ).toBeVisible();
+
+  await enqueueToolCall("create_incident", { title: "Prod is down" });
+
+  await page.locator("nav a[title='Sessions']").click();
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("Open an incident: prod is down");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  // Personal tool on an interactive surface → approval gate ("acting as you").
+  const card = page.locator(".approval-card");
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  await expect(card).toContainText("create_incident");
+  await expect(card).toContainText("acting as you");
+  await card.getByRole("button", { name: "Approve as me" }).click();
+
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: Open an incident: prod is down",
+    { timeout: 15_000 },
+  );
+
+  const call = await pollFirstToolCall("%Open an incident: prod is down%");
+  expect(call).toMatchObject({
+    name: "create_incident",
+    authType: "user",
+    approval: { status: "approved", decidedByName: "Alex Lin" },
+  });
+
+  // The emulator saw tools/call carrying the user's OAuth ACCESS token — the
+  // emulator-minted "at_…" shape (see issueTokens in mcpOauth.ts), never a
+  // pasted token like the GitHub one from earlier tests.
+  const log = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=mcp/oauthmcp`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { name?: string; auth?: string | null } }>;
+  };
+  const calls = log.requests.filter(
+    (r) => r.path === "tools/call" && r.body?.name === "create_incident",
+  );
+  expect(calls.length).toBeGreaterThan(0);
+  const wireToken = calls[calls.length - 1]!.body.auth;
+  expect(wireToken).toMatch(/^at_/);
+  expect(wireToken).not.toBe("alex-github-token");
+});
+
+test("an expired access token is refreshed transparently", async () => {
+  // Capture the stored token, then force it to look expired. The next call
+  // must refresh (refresh_token grant) before hitting the MCP endpoint.
+  const [before] = await dbQuery<{ encrypted_token: string }>(
+    `SELECT umc.encrypted_token FROM user_mcp_credentials umc
+       JOIN mcp_servers s ON s.id = umc.server_id
+       JOIN users u ON u.id = umc.user_id
+      WHERE s.slug = 'incidents' AND u.email = 'alex@acme.com'`,
+  );
+  await dbQuery(
+    `UPDATE user_mcp_credentials SET expires_at = now() - interval '1 hour'
+       WHERE server_id = $1
+         AND user_id = (SELECT id FROM users WHERE email = 'alex@acme.com')`,
+    [incidentsServerId],
+  );
+
+  await enqueueToolCall("create_incident", { title: "Second incident" });
+  // Continue the SAME session — Alex's once-per-session approval already
+  // covers create_incident, so this runs without another card.
+  await page.locator(".thread-composer textarea").fill("Open a second incident");
+  await page.locator(".thread-composer button", { hasText: "Send" }).click();
+
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
+    "Mock reply to: Open a second incident",
+    { timeout: 15_000 },
+  );
+  const call = await pollFirstToolCall("%Open a second incident%");
+  expect(call).toMatchObject({ name: "create_incident", authType: "user" });
+
+  // The transparent refresh rotated the stored access token and pushed the
+  // expiry back into the future.
+  const [after] = await dbQuery<{ encrypted_token: string; expired: boolean }>(
+    `SELECT umc.encrypted_token, umc.expires_at <= now() AS expired
+       FROM user_mcp_credentials umc
+       JOIN mcp_servers s ON s.id = umc.server_id
+       JOIN users u ON u.id = umc.user_id
+      WHERE s.slug = 'incidents' AND u.email = 'alex@acme.com'`,
+  );
+  expect(after!.encrypted_token).not.toBe(before!.encrypted_token);
+  expect(after!.expired).toBe(false);
 });

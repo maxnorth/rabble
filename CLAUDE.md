@@ -98,6 +98,20 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   stream event (in-session connect card) on an interactive surface, and fails
   closed everywhere else. Register the same upstream twice to split some tools
   shared and others personal.
+- MCP OAuth (personal servers): a personal server whose endpoint 401s at
+  registration is auto-detected as OAuth. Rabble runs discovery (RFC 9728
+  resource metadata → RFC 8414 auth-server metadata), dynamic client
+  registration (RFC 7591), and stores endpoints+client on
+  `mcp_servers.oauth_config` (`mcp/oauth.ts`); tools start empty (no token to
+  discover with). A user connects via Profile: POST
+  `…/mcp-credentials/:id/oauth/start` → authorize URL (PKCE state in
+  `mcp_oauth_pending`); the browser authorizes and lands on
+  `GET /api/mcp/oauth/callback`, which exchanges the code, stores access +
+  refresh + expiry, discovers the catalog on first connect, and resolves any
+  paused connect. Runtime uses `mcp/oauthFlow.usableAccessToken` (refreshes an
+  expired token in place). The connect card shows a "Connect" OAuth button
+  when `requiresOAuth`. First connect must be via Profile (an unconnected
+  OAuth server has no tools yet, so nothing can trigger the in-session card).
 - The Builder: agents with `builtin = 'builder'` (seeded per org at setup)
   get platform tools (runtime/platformTools.ts) — create_agent_draft,
   add_eval_criterion, attach_mcp_server, request_access — user-auth,

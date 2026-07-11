@@ -354,6 +354,7 @@ export async function sessionRoutes(app: FastifyInstance) {
             connectId: event.connectId,
             serverId: event.serverId,
             serverName: event.serverName,
+            requiresOAuth: event.requiresOAuth,
           });
         }
       }

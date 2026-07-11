@@ -222,6 +222,10 @@ function McpCredentials() {
     mutationFn: (serverId: string) => api.disconnectMcpCredential(serverId),
     onSuccess: invalidate,
   });
+  const startOAuth = useMutation({
+    mutationFn: (serverId: string) => api.startMcpOAuth(serverId),
+    onSuccess: ({ authorizeUrl }) => window.open(authorizeUrl, "_blank", "noopener"),
+  });
 
   // Only personal-credential servers need a per-user connection.
   const personal = (servers.data?.servers ?? []).filter(
@@ -253,6 +257,14 @@ function McpCredentials() {
               {cred ? (
                 <button className="btn danger" onClick={() => disconnect.mutate(s.id)}>
                   Disconnect
+                </button>
+              ) : s.requiresOAuth ? (
+                <button
+                  className="btn primary"
+                  disabled={startOAuth.isPending}
+                  onClick={() => startOAuth.mutate(s.id)}
+                >
+                  Connect
                 </button>
               ) : connecting === s.id ? (
                 <>

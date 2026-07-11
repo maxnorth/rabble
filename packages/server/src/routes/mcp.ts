@@ -15,8 +15,16 @@ import {
 import { requireUser, isOrgAdmin } from "../auth.js";
 import { recordAudit } from "../audit.js";
 import { decryptSecret, encryptSecret } from "../crypto.js";
-import { mcpListTools } from "../mcp/client.js";
+import { mcpListTools, McpOAuthRequiredError } from "../mcp/client.js";
+import {
+  discoverOAuth,
+  registerOAuthClient,
+  type OAuthEndpoints,
+} from "../mcp/oauth.js";
+import { publicBaseUrl } from "../publicUrl.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
+
+export const MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback";
 
 function serializeServer(
   row: typeof mcpServers.$inferSelect,
@@ -30,6 +38,7 @@ function serializeServer(
     url: row.url,
     category: row.category,
     credentialMode: row.credentialMode,
+    requiresOAuth: row.oauthConfig !== null,
     hasToken: row.encryptedToken !== null,
     tools: (row.tools ?? []) as McpToolInfo[],
     status: row.status,
@@ -104,13 +113,45 @@ export async function mcpRoutes(app: FastifyInstance) {
   // Register an MCP server: connects, discovers tools, stores the catalog.
   app.post("/api/mcp-servers", async (req, reply) => {
     const body = createMcpServerSchema.parse(req.body);
-    let tools: McpToolInfo[];
+    let tools: McpToolInfo[] = [];
+    // OAuth servers (personal mode) can't list tools until a user authorizes,
+    // so a 401 here isn't a failure: discover the auth server, register a
+    // client, and store that config. Tools are discovered on first connect.
+    let oauth:
+      | { endpoints: OAuthEndpoints; clientId: string; clientSecret?: string }
+      | null = null;
     try {
       tools = await mcpListTools(body.url, body.token);
     } catch (err) {
-      return reply.code(422).send({
-        error: `Couldn't reach the MCP server: ${err instanceof Error ? err.message : "unknown error"}`,
-      });
+      if (err instanceof McpOAuthRequiredError && body.credentialMode === "personal") {
+        if (!err.resourceMetadataUrl) {
+          return reply.code(422).send({
+            error: "The server requires OAuth but advertised no metadata URL",
+          });
+        }
+        try {
+          const endpoints = await discoverOAuth(err.resourceMetadataUrl);
+          const redirectUri = `${publicBaseUrl(req)}${MCP_OAUTH_CALLBACK_PATH}`;
+          if (!endpoints.registrationEndpoint) {
+            return reply.code(422).send({
+              error: "The authorization server doesn't support dynamic client registration",
+            });
+          }
+          const client = await registerOAuthClient(
+            endpoints.registrationEndpoint,
+            redirectUri,
+          );
+          oauth = { endpoints, clientId: client.clientId, clientSecret: client.clientSecret };
+        } catch (e) {
+          return reply.code(422).send({
+            error: `OAuth setup failed: ${e instanceof Error ? e.message : "unknown error"}`,
+          });
+        }
+      } else {
+        return reply.code(422).send({
+          error: `Couldn't reach the MCP server: ${err instanceof Error ? err.message : "unknown error"}`,
+        });
+      }
     }
     const slug = slugify(body.name) || "server";
     const [existing] = await db
@@ -136,6 +177,12 @@ export async function mcpRoutes(app: FastifyInstance) {
           body.credentialMode === "shared" && body.token
             ? encryptSecret(body.token)
             : null,
+        oauthConfig: oauth
+          ? { ...oauth.endpoints, clientId: oauth.clientId }
+          : null,
+        encryptedOauthClientSecret: oauth?.clientSecret
+          ? encryptSecret(oauth.clientSecret)
+          : null,
         tools,
       })
       .returning();

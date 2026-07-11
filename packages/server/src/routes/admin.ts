@@ -25,14 +25,9 @@ import { requireUser } from "../auth.js";
 import { recordAudit, toAuditCsv } from "../audit.js";
 import { encryptSecret, hashAuthToken, hashPassword } from "../crypto.js";
 import { env } from "../env.js";
+import { publicBaseUrl } from "../publicUrl.js";
 
-/** Rabble's public base URL — configured, or derived from the request. */
-function publicBaseUrl(req: FastifyRequest): string {
-  if (env.publicUrl) return env.publicUrl;
-  const proto = String(req.headers["x-forwarded-proto"] ?? "http");
-  const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
-  return `${proto}://${host}`;
-}
+
 
 async function requireOrgAdmin(req: FastifyRequest, reply: FastifyReply) {
   if (!req.user) return reply.code(401).send({ error: "Not authenticated" });

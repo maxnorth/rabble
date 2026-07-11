@@ -103,6 +103,7 @@ export type AgentTurnEvent =
       connectId: string;
       serverId: string;
       serverName: string;
+      requiresOAuth: boolean;
     };
 
 export function buildSystemPrompt(
@@ -165,25 +166,15 @@ export function gateContextFor(
  */
 async function resolvePersonalCredential(
   input: AgentTurnInput,
-  server: { id: string; name: string; url: string },
+  server: typeof mcpServers.$inferSelect,
   emit: (event: AgentTurnEvent) => void,
 ): Promise<
   | { ok: true; token: string }
   | { ok: false; toolOutput: string; modelText: string }
 > {
-  const lookup = async () => {
-    const [row] = await db
-      .select()
-      .from(userMcpCredentials)
-      .where(
-        and(
-          eq(userMcpCredentials.userId, input.user.id),
-          eq(userMcpCredentials.serverId, server.id),
-        ),
-      )
-      .limit(1);
-    return row ? decryptSecret(row.encryptedToken) : null;
-  };
+  const { usableAccessToken } = await import("../mcp/oauthFlow.js");
+  // Resolves the stored token, refreshing an expired OAuth one in place.
+  const lookup = () => usableAccessToken(server, input.user.id, Date.now());
 
   const existing = await lookup();
   if (existing) return { ok: true, token: existing };
@@ -197,17 +188,20 @@ async function resolvePersonalCredential(
   };
   if (!input.interactive) return refusal;
 
+  const requiresOAuth = server.oauthConfig != null;
   const { connectId, decision } = requestConnect({
     sessionId: input.sessionId,
     userId: input.user.id,
     serverId: server.id,
     serverName: server.name,
+    requiresOAuth,
   });
   emit({
     type: "connect-request",
     connectId,
     serverId: server.id,
     serverName: server.name,
+    requiresOAuth,
   });
   if ((await decision) === "timed-out") return refusal;
   const token = await lookup();

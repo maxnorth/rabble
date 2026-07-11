@@ -95,6 +95,7 @@ interface PendingConnect {
   userId: string;
   serverId: string;
   serverName: string;
+  requiresOAuth: boolean;
   resolve: (decision: ConnectDecision) => void;
 }
 
@@ -105,6 +106,7 @@ export function requestConnect(input: {
   userId: string;
   serverId: string;
   serverName: string;
+  requiresOAuth: boolean;
 }): { connectId: string; decision: Promise<ConnectDecision> } {
   const connectId = randomUUID();
   const decision = new Promise<ConnectDecision>((resolve) => {
@@ -135,12 +137,13 @@ export function resolveConnects(userId: string, serverId: string): void {
 export function pendingConnectsFor(
   sessionId: string,
   userId: string,
-): Array<{ connectId: string; serverId: string; serverName: string }> {
+): Array<{ connectId: string; serverId: string; serverName: string; requiresOAuth: boolean }> {
   return [...pendingConnects.entries()]
     .filter(([, p]) => p.sessionId === sessionId && p.userId === userId)
     .map(([connectId, p]) => ({
       connectId,
       serverId: p.serverId,
       serverName: p.serverName,
+      requiresOAuth: p.requiresOAuth,
     }));
 }

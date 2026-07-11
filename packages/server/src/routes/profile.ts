@@ -148,6 +148,111 @@ export async function profileRoutes(app: FastifyInstance) {
     };
   });
 
+  // Begin the OAuth authorize flow for a personal OAuth server: mint PKCE +
+  // state, stash them, and hand back the authorize URL for the client to open.
+  app.post("/api/profile/mcp-credentials/:serverId/oauth/start", async (req, reply) => {
+    const { serverId } = req.params as { serverId: string };
+    const [server] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, serverId), eq(mcpServers.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!server) return reply.code(404).send({ error: "Server not found" });
+    const { serverOAuth } = await import("../mcp/oauthFlow.js");
+    const oauth = serverOAuth(server);
+    if (!oauth) return reply.code(400).send({ error: "This server doesn't use OAuth" });
+
+    const { makePkce, authorizeUrl } = await import("../mcp/oauth.js");
+    const { randomUUID } = await import("node:crypto");
+    const { mcpOauthPending } = await import("../db/schema.js");
+    const { publicBaseUrl } = await import("../publicUrl.js");
+    const { MCP_OAUTH_CALLBACK_PATH } = await import("./mcp.js");
+    const { verifier, challenge } = makePkce();
+    const state = randomUUID();
+    await db.insert(mcpOauthPending).values({
+      state,
+      userId: req.user!.id,
+      serverId,
+      codeVerifier: verifier,
+    });
+    const url = authorizeUrl({
+      endpoints: oauth.endpoints,
+      client: oauth.client,
+      redirectUri: `${publicBaseUrl(req)}${MCP_OAUTH_CALLBACK_PATH}`,
+      state,
+      challenge,
+    });
+    return { authorizeUrl: url };
+  });
+
+  // OAuth redirect target: exchange the code for tokens, store them, discover
+  // tools if this is the first connect, and release any paused session turn.
+  app.get("/api/mcp/oauth/callback", async (req, reply) => {
+    const { code, state, error } = req.query as {
+      code?: string;
+      state?: string;
+      error?: string;
+    };
+    const back = (status: string) =>
+      reply.redirect(`/?mcp=${encodeURIComponent(status)}`);
+    if (error || !code || !state) return back(error ?? "failed");
+
+    const { mcpOauthPending } = await import("../db/schema.js");
+    const [pending] = await db
+      .select()
+      .from(mcpOauthPending)
+      .where(eq(mcpOauthPending.state, state))
+      .limit(1);
+    // The state also authenticates the user: only its owner may complete it.
+    if (!pending || pending.userId !== req.user!.id) return back("failed");
+    await db.delete(mcpOauthPending).where(eq(mcpOauthPending.state, state));
+
+    const [server] = await db
+      .select()
+      .from(mcpServers)
+      .where(eq(mcpServers.id, pending.serverId))
+      .limit(1);
+    if (!server) return back("failed");
+
+    const { serverOAuth, storeUserTokens } = await import("../mcp/oauthFlow.js");
+    const oauth = serverOAuth(server);
+    if (!oauth) return back("failed");
+    const { exchangeCode } = await import("../mcp/oauth.js");
+    const { publicBaseUrl } = await import("../publicUrl.js");
+    const { MCP_OAUTH_CALLBACK_PATH } = await import("./mcp.js");
+    try {
+      const tokens = await exchangeCode({
+        endpoints: oauth.endpoints,
+        client: oauth.client,
+        code,
+        redirectUri: `${publicBaseUrl(req)}${MCP_OAUTH_CALLBACK_PATH}`,
+        verifier: pending.codeVerifier,
+      });
+      await storeUserTokens(req.user!.id, server.id, tokens, Date.now());
+      // First connect: discover the tool catalog with the fresh token.
+      if (((server.tools ?? []) as unknown[]).length === 0) {
+        const { mcpListTools } = await import("../mcp/client.js");
+        const tools = await mcpListTools(server.url, tokens.accessToken).catch(() => null);
+        if (tools) {
+          await db.update(mcpServers).set({ tools }).where(eq(mcpServers.id, server.id));
+        }
+      }
+      const { resolveConnects } = await import("../runtime/approvals.js");
+      resolveConnects(req.user!.id, server.id);
+      await recordAudit({
+        orgId: req.user!.orgId,
+        actorUserId: req.user!.id,
+        action: "mcp.credential.connect",
+        targetType: "mcp-server",
+        targetId: server.id,
+        summary: `Connected ${server.name} via OAuth`,
+      });
+      return back("connected");
+    } catch {
+      return back("failed");
+    }
+  });
+
   app.put("/api/profile/mcp-credentials/:serverId", async (req, reply) => {
     const { serverId } = req.params as { serverId: string };
     const { token } = (req.body ?? {}) as { token?: string };

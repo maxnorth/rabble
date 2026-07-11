@@ -235,6 +235,7 @@ export const api = {
         connectId: string;
         serverId: string;
         serverName: string;
+        requiresOAuth: boolean;
       }>;
     }>(`/api/sessions/${id}`),
   decideApproval: (sessionId: string, approvalId: string, body: ApprovalDecisionRequest) =>
@@ -312,6 +313,8 @@ export const api = {
     ),
   connectMcpCredential: (serverId: string, token: string) =>
     put<{ ok: true }>(`/api/profile/mcp-credentials/${serverId}`, { token }),
+  startMcpOAuth: (serverId: string) =>
+    post<{ authorizeUrl: string }>(`/api/profile/mcp-credentials/${serverId}/oauth/start`),
   disconnectMcpCredential: (serverId: string) =>
     del<{ ok: true }>(`/api/profile/mcp-credentials/${serverId}`),
   updateMcpServer: (

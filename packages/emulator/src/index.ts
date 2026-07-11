@@ -24,6 +24,7 @@ import Fastify from "fastify";
 import websocket from "@fastify/websocket";
 import { mountAnthropic, mountOpenAi } from "./llm.js";
 import { mountMcp } from "./mcp.js";
+import { mountMcpOauth } from "./mcpOauth.js";
 import { mountSlack, pushSlackSocketEnvelope } from "./slack.js";
 import { mountGithub } from "./github.js";
 import { logRequest, reset, state, type McpToolDef, type ScriptedReply } from "./state.js";
@@ -54,6 +55,7 @@ export async function buildEmulator() {
   mountOpenAi(app);
   mountAnthropic(app);
   mountMcp(app);
+  mountMcpOauth(app);
   mountSlack(app);
   mountGithub(app);
 

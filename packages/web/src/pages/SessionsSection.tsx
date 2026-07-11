@@ -23,6 +23,7 @@ interface PendingConnect {
   connectId: string;
   serverId: string;
   serverName: string;
+  requiresOAuth: boolean;
   connected?: boolean;
 }
 
@@ -587,6 +588,13 @@ function ConnectCard({
     mutationFn: () => api.connectMcpCredential(connect.serverId, token),
     onSuccess: onConnected,
   });
+  // OAuth: open the provider's authorize page; the callback stores the
+  // credential and the paused turn resumes on its own (server-side resolve),
+  // reflected here by the pendingConnects hydration flipping this to done.
+  const startOAuth = useMutation({
+    mutationFn: () => api.startMcpOAuth(connect.serverId),
+    onSuccess: ({ authorizeUrl }) => window.open(authorizeUrl, "_blank", "noopener"),
+  });
   const done = connect.connected;
   return (
     <div className={`approval-card${done ? " resolved" : ""}`}>
@@ -603,6 +611,11 @@ function ConnectCard({
             Your <span className="mono">{connect.serverName}</span> account is connected. The
             agent is continuing.
           </>
+        ) : connect.requiresOAuth ? (
+          <>
+            <span className="mono">{connect.serverName}</span> runs as you. Authorize your
+            account to continue.
+          </>
         ) : (
           <>
             <span className="mono">{connect.serverName}</span> runs as you. Paste your token to
@@ -610,7 +623,18 @@ function ConnectCard({
           </>
         )}
       </div>
-      {!done && (
+      {!done && connect.requiresOAuth && (
+        <div style={{ marginTop: 10 }}>
+          <button
+            className="btn primary"
+            disabled={startOAuth.isPending}
+            onClick={() => startOAuth.mutate()}
+          >
+            Connect {connect.serverName}
+          </button>
+        </div>
+      )}
+      {!done && !connect.requiresOAuth && (
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
           <input
             type="password"
@@ -790,6 +814,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
               connectId: event.connectId,
               serverId: event.serverId,
               serverName: event.serverName,
+              requiresOAuth: event.requiresOAuth,
             },
           ]);
         } else if (event.type === "done") {

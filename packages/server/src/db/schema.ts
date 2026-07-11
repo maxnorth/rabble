@@ -353,6 +353,9 @@ export const mcpServers = pgTable(
       .notNull()
       .default("shared"),
     encryptedToken: text("encrypted_token"),
+    // OAuth (MCP auth spec): discovered AS endpoints + registered client.
+    oauthConfig: jsonb("oauth_config"),
+    encryptedOauthClientSecret: text("encrypted_oauth_client_secret"),
     tools: jsonb("tools").notNull().default([]),
     status: text("status", { enum: ["connected", "error"] })
       .notNull()
@@ -409,12 +412,28 @@ export const userMcpCredentials = pgTable(
       .notNull()
       .references(() => mcpServers.id, { onDelete: "cascade" }),
     encryptedToken: text("encrypted_token").notNull(),
+    encryptedRefreshToken: text("encrypted_refresh_token"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
   },
   (t) => [uniqueIndex("user_mcp_credentials_idx").on(t.userId, t.serverId)],
 );
+
+export const mcpOauthPending = pgTable("mcp_oauth_pending", {
+  state: text("state").primaryKey(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  serverId: uuid("server_id")
+    .notNull()
+    .references(() => mcpServers.id, { onDelete: "cascade" }),
+  codeVerifier: text("code_verifier").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const agentLinks = pgTable(
   "agent_links",

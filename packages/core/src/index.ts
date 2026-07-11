@@ -341,6 +341,7 @@ export const streamEventSchema = z.discriminatedUnion("type", [
     connectId: z.string(),
     serverId: z.string(),
     serverName: z.string(),
+    requiresOAuth: z.boolean(),
   }),
   /** The completed, persisted agent message. */
   z.object({ type: z.literal("done"), message: messageSchema }),
@@ -463,6 +464,7 @@ export const mcpServerSchema = z.object({
   url: z.string(),
   category: z.string(),
   credentialMode: z.enum(["shared", "personal"]),
+  requiresOAuth: z.boolean(),
   hasToken: z.boolean(),
   tools: z.array(mcpToolInfoSchema),
   status: z.enum(["connected", "error"]),

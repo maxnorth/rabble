@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { api } from "../../api";
 import { count } from "../../lib/time";
 
@@ -29,6 +30,19 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
     mutationFn: (body: { serverId: string; toolName: string; enabled?: boolean }) =>
       api.updateAgentTool(agentId, body),
     onSuccess: refresh,
+  });
+
+  const [requested, setRequested] = useState<Set<string>>(new Set());
+  const requestAccess = useMutation({
+    mutationFn: (serverId: string) =>
+      api.createAccessRequest({
+        targetType: "mcp-server",
+        targetId: serverId,
+        accessRight: "use",
+        reason: "Needs this server's tools on an agent",
+      }),
+    onSuccess: (_res, serverId) =>
+      setRequested((prev) => new Set(prev).add(serverId)),
   });
 
   const attachedIds = new Set(tools.data?.servers ?? []);
@@ -139,13 +153,26 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
                     <button className="btn" onClick={() => attach.mutate(s.id)}>
                       Attach
                     </button>
-                  ) : (
-                    <span
-                      className="chip amber"
-                      title="This server is restricted. Ask an org admin for access."
-                    >
-                      restricted
+                  ) : requested.has(s.id) ? (
+                    <span className="chip green" title="An org admin has been notified.">
+                      access requested ✓
                     </span>
+                  ) : (
+                    <>
+                      <span
+                        className="chip amber"
+                        title="This server is restricted to specific teams or people."
+                      >
+                        restricted
+                      </span>
+                      <button
+                        className="btn"
+                        disabled={requestAccess.isPending}
+                        onClick={() => requestAccess.mutate(s.id)}
+                      >
+                        Request access
+                      </button>
+                    </>
                   )}
                 </div>
               );

@@ -653,7 +653,11 @@ export function GrantEditor({
         ))}
         {grants.length === 0 && (
           <div className="row">
-            <div className="sub">No grants yet. Access comes only from grants.</div>
+            <div className="sub">
+              {targetType === "model" || targetType === "mcp-server"
+                ? "No grants — everyone in the org can use this. Add one to restrict it."
+                : "No grants yet. Access comes only from grants."}
+            </div>
           </div>
         )}
         <div className="row">

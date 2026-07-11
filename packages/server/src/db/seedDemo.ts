@@ -781,6 +781,7 @@ export async function seedDemo(): Promise<void> {
       url: "https://mcp.acme.dev/github",
       category: "Tools",
       credentialMode: "personal" as const,
+      libraryKey: "github",
       tools: [
         { name: "search_repos", description: "Search repositories in the org" },
         { name: "search_ci_runs", description: "Look up recent CI runs for a repo" },

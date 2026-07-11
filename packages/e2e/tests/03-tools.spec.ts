@@ -1058,61 +1058,73 @@ test("one platform, many copies: slugs dedupe and configs stay independent", asy
 });
 
 test("definition-level disable removes the tool from every agent — and the runtime", async () => {
-  // GitHub's create_issue is attached (user-auth) on Eng On-Call from the
-  // earlier journey. Kill it at the definition level.
-  await page.locator(".row", { hasText: "GitHub" }).first().click();
-  const issueRow = page.locator(".row", { hasText: "create_issue" });
-  await issueRow.locator(".toggle").click();
-  await expect(issueRow.locator(".chip", { hasText: "off for all agents" })).toBeVisible();
+  const { servers } = (await (await page.request.get("/api/mcp-servers")).json()) as {
+    servers: Array<{ id: string; name: string }>;
+  };
+  const github = servers.find((s) => s.name === "GitHub")!;
+  try {
+    // GitHub's create_issue is attached (user-auth) on Eng On-Call from the
+    // earlier journey. Kill it at the definition level.
+    await page.locator(".row", { hasText: "GitHub" }).first().click();
+    const issueRow = page.locator(".row", { hasText: "create_issue" });
+    await issueRow.locator(".toggle").click();
+    await expect(issueRow.locator(".chip", { hasText: "off for all agents" })).toBeVisible();
 
-  // The agent's MCP tab no longer offers it at all.
-  await page.locator("nav a[title='Agents']").click();
-  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
-  await page.getByRole("button", { name: "mcp" }).click();
-  await expect(page.locator(".row", { hasText: "search_repos" })).toBeVisible();
-  await expect(page.locator(".row", { hasText: "create_issue" })).toHaveCount(0);
+    // The agent's MCP tab no longer offers it at all.
+    await page.locator("nav a[title='Agents']").click();
+    await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+    await page.getByRole("button", { name: "mcp" }).click();
+    await expect(page.locator(".row", { hasText: "search_repos" })).toBeVisible();
+    await expect(page.locator(".row", { hasText: "create_issue" })).toHaveCount(0);
 
-  // And the runtime never offers it to the model: a scripted call for the
-  // disabled tool is refused as out-of-scope, and no MCP traffic leaves.
-  const mcpCallsBefore = (
-    (await (await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)).json()) as {
-      requests: Array<{ path: string }>;
-    }
-  ).requests.filter((r) => r.path === "tools/call").length;
-  await enqueueToolCall("create_issue", { title: "Should never exist" });
-  await page.locator("nav a[title='Sessions']").click();
-  await page.getByRole("link", { name: "+ New session" }).click();
-  await page.locator(".target-pill").click();
-  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
-  await page
-    .getByPlaceholder("Describe what you need help with…")
-    .fill("File an issue post-disable");
-  await page.getByRole("button", { name: "Send" }).click();
-  await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
-    timeout: 15_000,
-  });
-  const mcpCallsAfter = (
-    (await (await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)).json()) as {
-      requests: Array<{ path: string }>;
-    }
-  ).requests.filter((r) => r.path === "tools/call").length;
-  expect(mcpCallsAfter).toBe(mcpCallsBefore);
-  const violations = await dbQuery<{ tool_name: string }>(
-    "SELECT tool_name FROM scope_violations WHERE tool_name = 'create_issue'",
+    // And the runtime never offers it to the model: a scripted call for the
+    // disabled tool is refused as out-of-scope, and no MCP traffic leaves.
+    const mcpCallsBefore = (
+      (await (await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)).json()) as {
+        requests: Array<{ path: string }>;
+      }
+    ).requests.filter((r) => r.path === "tools/call").length;
+    await enqueueToolCall("create_issue", { title: "Should never exist" });
+    await page.locator("nav a[title='Sessions']").click();
+    await page.getByRole("link", { name: "+ New session" }).click();
+    await page.locator(".target-pill").click();
+    await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+    await page
+      .getByPlaceholder("Describe what you need help with…")
+      .fill("File an issue post-disable");
+    await page.getByRole("button", { name: "Send" }).click();
+    await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+      timeout: 15_000,
+    });
+    const mcpCallsAfter = (
+      (await (await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)).json()) as {
+        requests: Array<{ path: string }>;
+      }
+    ).requests.filter((r) => r.path === "tools/call").length;
+    expect(mcpCallsAfter).toBe(mcpCallsBefore);
+    // The violation row lands in the stream's finally, just after the last
+    // delta renders — poll, don't read once (the CLAUDE.md gotcha).
+    await expect
+      .poll(async () => {
+        const violations = await dbQuery<{ tool_name: string }>(
+          "SELECT tool_name FROM scope_violations WHERE tool_name = 'create_issue'",
+        );
+        return violations.length;
+      })
+      .toBeGreaterThanOrEqual(1);
+  } finally {
+    // Flip it back on no matter what happened above — later journeys drive
+    // approvals through create_issue, and a stranded disable would cascade.
+    const restored = await page.request.patch(`/api/mcp-servers/${github.id}`, {
+      data: { disabledTools: [] },
+    });
+    expect(restored.ok()).toBe(true);
+  }
+  const [row] = await dbQuery<{ disabled_tools: string[] }>(
+    "SELECT disabled_tools FROM mcp_servers WHERE id = $1",
+    [github.id],
   );
-  expect(violations.length).toBeGreaterThanOrEqual(1);
-
-  // Flip it back on — later journeys drive approvals through create_issue.
-  await page.locator("nav a[title='Admin']").click();
-  await page.getByRole("link", { name: "MCP servers" }).click();
-  await page.locator(".row", { hasText: "GitHub" }).first().click();
-  await page.locator(".row", { hasText: "create_issue" }).locator(".toggle").click();
-  await expect(
-    page.locator(".row", { hasText: "create_issue" }).locator(".chip", {
-      hasText: "off for all agents",
-    }),
-  ).toHaveCount(0);
-  await page.getByRole("button", { name: "‹ MCP servers" }).click();
+  expect(row!.disabled_tools).toEqual([]);
 });
 
 test("access scopes: a granted server is attachable only by its grantees", async ({

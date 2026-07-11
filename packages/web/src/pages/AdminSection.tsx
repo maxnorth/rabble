@@ -993,6 +993,11 @@ function EditConnectionModal({
 function McpServersPage() {
   const queryClient = useQueryClient();
   const servers = useQuery({ queryKey: ["mcp-servers"], queryFn: api.listMcpServers });
+  const library = useQuery({ queryKey: ["mcp-library"], queryFn: api.mcpLibrary });
+  const libraryByKey = new Map(
+    (library.data?.library ?? []).map((e) => [e.key, e]),
+  );
+  const [toolFilter, setToolFilter] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
   const [editingServer, setEditingServer] = useState(false);
@@ -1032,6 +1037,17 @@ function McpServersPage() {
             ‹ MCP servers
           </button>
           <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            {selected.libraryKey && libraryByKey.has(selected.libraryKey) && (
+              <span
+                className="mcp-library-glyph"
+                style={{
+                  background: libraryByKey.get(selected.libraryKey)!.brandColor,
+                  marginTop: 2,
+                }}
+              >
+                {libraryByKey.get(selected.libraryKey)!.glyph}
+              </span>
+            )}
             <div style={{ flex: 1 }}>
               <h1 className="page-title">
                 <EditableTitle
@@ -1125,8 +1141,23 @@ function McpServersPage() {
             Switching a tool off here removes it from every agent using this
             server — agents can only narrow further, never re-enable it.
           </p>
+          {selected.tools.length > 8 && (
+            <input
+              placeholder="Filter tools…"
+              value={toolFilter}
+              onChange={(e) => setToolFilter(e.target.value)}
+              style={{ marginBottom: 8, width: 260 }}
+            />
+          )}
           <div className="row-group" style={{ marginBottom: 18 }}>
-            {selected.tools.map((t) => {
+            {selected.tools
+              .filter(
+                (t) =>
+                  !toolFilter ||
+                  t.name.toLowerCase().includes(toolFilter.toLowerCase()) ||
+                  t.description.toLowerCase().includes(toolFilter.toLowerCase()),
+              )
+              .map((t) => {
               const off = selected.disabledTools.includes(t.name);
               return (
                 <div className="row" key={t.name} style={off ? { opacity: 0.6 } : undefined}>
@@ -1175,15 +1206,13 @@ function McpServersPage() {
               Not attached to any agent yet.
             </p>
           )}
-          <div className="sidebar-title" style={{ padding: "16px 0 8px" }}>
-            Access
-          </div>
-          <p className="page-subtitle" style={{ marginBottom: 8 }}>
-            With no grants, anyone can attach this server to their agents and
-            automations. Add a grant to restrict it — then only the grantees
-            (and org admins) can.
-          </p>
+          <div style={{ marginTop: 16 }} />
           <McpServerAccess serverId={selected.id} />
+          <p className="page-subtitle" style={{ marginTop: 8 }}>
+            With no grants, anyone can attach this server to their agents and
+            automations. Grants restrict attachment to the grantees (and org
+            admins); people outside the scope can request access.
+          </p>
         </>
       ) : (
         <>
@@ -1208,6 +1237,19 @@ function McpServersPage() {
                 style={{ cursor: "pointer" }}
                 onClick={() => setDetail(s.id)}
               >
+                {s.libraryKey && libraryByKey.has(s.libraryKey) && (
+                  <span
+                    className="mcp-library-glyph"
+                    style={{
+                      width: 24,
+                      height: 24,
+                      fontSize: 12,
+                      background: libraryByKey.get(s.libraryKey)!.brandColor,
+                    }}
+                  >
+                    {libraryByKey.get(s.libraryKey)!.glyph}
+                  </span>
+                )}
                 <span
                   className="status-dot"
                   style={{

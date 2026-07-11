@@ -467,7 +467,7 @@ export const api = {
   listAccessRequests: () =>
     get<{ requests: AccessRequest[] }>("/api/access-requests"),
   createAccessRequest: (body: {
-    targetType: "agent" | "domain" | "model";
+    targetType: "agent" | "domain" | "model" | "mcp-server";
     targetId: string;
     accessRight: "use" | "edit" | "admin";
     reason?: string;

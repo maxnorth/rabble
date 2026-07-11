@@ -6,13 +6,13 @@ import {
   type StreamEvent,
   type ToolCall,
 } from "@rabblehq/core";
-import { and, desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { agents, messages, sessions, users } from "../db/schema.js";
 import { requireUser } from "../auth.js";
 import { serializeMessage, serializeSession } from "../serialize.js";
 import { runAgentTurn } from "../runtime/agentTurn.js";
-import { routeByIntent } from "../runtime/router.js";
+import { orderAutoRoster, routeByIntent } from "../runtime/router.js";
 import { decideApproval, pendingApprovalsFor, pendingConnectsFor } from "../runtime/approvals.js";
 import { hasRight, rightsForAllAgents } from "../rights.js";
 import { judgeSession } from "../evals/judge.js";
@@ -90,7 +90,9 @@ export async function sessionRoutes(app: FastifyInstance) {
       }
     } else {
       // "Auto": route by intent across the agents the user can actually use.
-      // Built-ins (the Builder) are picked deliberately, never auto-routed.
+      // The Builder rides the roster LAST (orderAutoRoster): "help me build
+      // an agent" must land on it, while the no-intent fallback stays on a
+      // regular agent.
       const candidates = await db
         .select()
         .from(agents)
@@ -99,12 +101,15 @@ export async function sessionRoutes(app: FastifyInstance) {
             eq(agents.orgId, req.user!.orgId),
             eq(agents.status, "active"),
             eq(agents.webEnabled, true),
-            isNull(agents.builtin),
           ),
         )
         .orderBy(agents.name);
-      const usable = candidates.filter((c) =>
-        hasRight(rights.get(c.id) ?? null, "use"),
+      const usable = orderAutoRoster(
+        candidates.filter(
+          (c) =>
+            (!c.builtin || c.builtin === "builder") &&
+            hasRight(rights.get(c.id) ?? null, "use"),
+        ),
       );
       if (usable.length === 0) {
         return reply

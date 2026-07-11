@@ -167,9 +167,11 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   (`connections.is_primary`, one per org via partial unique index, 0032):
   Rabble's own front door. Unlinked, it still answers DMs/mentions —
   each new thread routes by intent (`routePrimaryInterface`) across the
-  agents the sender can use, with the Builder LAST on the roster so
-  "build me an agent…" works from Slack; threads continue under their
-  session's agent as usual. Platform notifications (approval DMs,
+  agents the sender can use; threads continue under their session's agent
+  as usual. Web Auto and the primary connection share one roster policy
+  (`orderAutoRoster`): the Builder rides LAST, so "build me an agent…"
+  routes to it everywhere while the no-intent fallback stays on a regular
+  agent. Platform notifications (approval DMs,
   background-reply pings, eval alerts, access requests) resolve through
   `orgSlackConnection` (runtime/notify.ts): primary first, else any
   connected workspace. Set at registration (checkbox) or any time

@@ -329,6 +329,39 @@ test("auto routes by intent across usable agents", async () => {
   expect(routed).toEqual([{ slug: "eng-on-call" }]);
 });
 
+test("auto reaches the Builder for build-an-agent asks", async () => {
+  // The Builder rides the Auto roster last — "help me build…" must land on
+  // it instead of the least-wrong regular agent.
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify([
+      { type: "text", text: "builder" },
+      { type: "text", text: "Happy to help — what should the agent do?" },
+    ]),
+  });
+
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await expect(page.locator(".session-greeting")).toBeVisible();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("Help me build an agent that summarizes standups");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(page.locator(".msg-agent .bubble")).toContainText(
+    "what should the agent do",
+    { timeout: 15_000 },
+  );
+  await expect(page.locator(".thread-composer .composer-agent")).toHaveText(
+    "Builder",
+  );
+  const routedToBuilder = await dbQuery<{ builtin: string | null }>(
+    `SELECT a.builtin FROM sessions s JOIN agents a ON a.id = s.agent_id
+     WHERE s.title LIKE 'Help me build an agent%'`,
+  );
+  expect(routedToBuilder).toEqual([{ builtin: "builder" }]);
+});
+
 test("spot-check: a disputed verdict queues for review; overturn flips it", async () => {
   // Disagree with the judge from the session's eval drawer
   await page.locator("nav a[title='Sessions']").click();

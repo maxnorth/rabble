@@ -42,6 +42,11 @@ export function matchAgentReply(
 
 const ROUTER_SYSTEM =
   "You route incoming requests to the best-suited agent on an agent platform. " +
+  "Weigh each agent's description against what the user actually wants — " +
+  "never pick an agent whose job doesn't cover the request just because " +
+  "nothing fits perfectly. Requests to create, configure, edit, or improve " +
+  "AGENTS THEMSELVES (\"build me an agent\", \"change how X responds\") " +
+  "belong to the platform's builder when it is on the roster. " +
   "Reply with exactly one agent slug from the roster — nothing else.";
 
 export function buildRouterPrompt(
@@ -106,13 +111,26 @@ export async function routeByIntent(
 }
 
 /**
+ * The Auto roster, shared by web Auto sessions and the primary Slack
+ * connection: the usable regular agents in stable name order, plus the
+ * Builder LAST — "build me an agent that…" must be intent-routable, while
+ * Builder-last keeps the no-intent fallback on a working agent (and makes
+ * the Builder the answer of last resort when nothing else exists).
+ */
+export function orderAutoRoster<T extends { builtin: string | null }>(
+  usable: T[],
+): T[] {
+  return [
+    ...usable.filter((r) => !r.builtin),
+    ...usable.filter((r) => r.builtin === "builder"),
+  ];
+}
+
+/**
  * Route a message arriving on the org's PRIMARY connection — Rabble's own
- * front door, not any single agent's identity. Candidates are the active
- * agents this user can use, in stable name order, plus the Builder LAST:
- * a Slack DM has no agent picker, so "build me an agent that…" must be
- * intent-routable too (on web the Builder is picked deliberately instead).
- * Builder-last keeps the no-intent/error fallback on a working agent while
- * making the Builder the answer of last resort when nothing else exists.
+ * front door, not any single agent's identity. Same roster policy as web
+ * Auto (orderAutoRoster), minus the web-enabled filter: Slack reachability
+ * doesn't depend on an agent being offered in web sessions.
  */
 export async function routePrimaryInterface(
   platformUser: { id: string; orgId: string; role: string },
@@ -128,10 +146,7 @@ export async function routePrimaryInterface(
     )
     .orderBy(agents.name);
   const usable = rows.filter((r) => hasRight(rights.get(r.id) ?? null, "use"));
-  const candidates = [
-    ...usable.filter((r) => !r.builtin),
-    ...usable.filter((r) => r.builtin === "builder"),
-  ];
+  const candidates = orderAutoRoster(usable);
   if (candidates.length === 0) return null;
   const chosenId = await routeByIntent(platformUser.orgId, intent, candidates);
   return candidates.find((c) => c.id === chosenId) ?? candidates[0]!;

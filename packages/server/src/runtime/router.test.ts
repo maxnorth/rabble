@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildRouterPrompt, matchAgentReply, type RouteCandidate } from "./router.js";
+import {
+  buildRouterPrompt,
+  matchAgentReply,
+  orderAutoRoster,
+  type RouteCandidate,
+} from "./router.js";
 
 const candidates: RouteCandidate[] = [
   { id: "1", slug: "eng-on-call", name: "Eng On-Call", description: "CI triage" },
@@ -51,5 +56,38 @@ describe("buildRouterPrompt", () => {
   it("truncates very long intents", () => {
     const prompt = buildRouterPrompt("x".repeat(5000), candidates);
     expect(prompt.length).toBeLessThan(4000);
+  });
+});
+
+describe("orderAutoRoster", () => {
+  const rows = [
+    { slug: "builder", builtin: "builder" as string | null },
+    { slug: "email-reader", builtin: null as string | null },
+    { slug: "deploy-gate", builtin: null as string | null },
+  ];
+
+  it("keeps regular agents first (the no-intent fallback) and the Builder last", () => {
+    expect(orderAutoRoster(rows).map((r) => r.slug)).toEqual([
+      "email-reader",
+      "deploy-gate",
+      "builder",
+    ]);
+  });
+
+  it("with only the Builder usable, the Builder still answers", () => {
+    expect(orderAutoRoster([rows[0]!]).map((r) => r.slug)).toEqual(["builder"]);
+  });
+});
+
+describe("router system guidance", () => {
+  it("the prompt tells the model build/configure requests belong to the builder", () => {
+    // The instruction lives in the system message, exercised via routeByIntent;
+    // pin the roster line format here so the builder is identifiable by slug.
+    const prompt = buildRouterPrompt("build me an agent for standups", [
+      { id: "1", slug: "builder", name: "Builder", description: "Creates and configures agents conversationally." },
+      { id: "2", slug: "email-reader", name: "Email Reader", description: "Reads email." },
+    ]);
+    expect(prompt).toContain("builder — Builder");
+    expect(prompt).toContain("Creates and configures agents");
   });
 });

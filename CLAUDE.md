@@ -112,6 +112,15 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   expired token in place). The connect card shows a "Connect" OAuth button
   when `requiresOAuth`. First connect must be via Profile (an unconnected
   OAuth server has no tools yet, so nothing can trigger the in-session card).
+  Shared OAuth donation: a SHARED server that 401s is detected the same way;
+  instead of per-user connects, one admin donates via POST
+  `/api/mcp-servers/:id/oauth/donate` (admin-gated) and the grant becomes the
+  org credential (`mcp_servers.encrypted_token` + `encrypted_org_refresh_token`
+  + `org_token_expires_at` + `donated_by_user_id`, migration 0030). The shared
+  callback branch stores org-level and audits `mcp.credential.donate`; the
+  runtime's service path resolves via `usableOrgAccessToken` (refresh-aware).
+  Admin › MCP detail shows "Connect org account" / "the org's X access is
+  <donor>'s account".
 - The Builder: agents with `builtin = 'builder'` (seeded per org at setup)
   get platform tools (runtime/platformTools.ts) — create_agent_draft,
   add_eval_criterion, attach_mcp_server, request_access — user-auth,

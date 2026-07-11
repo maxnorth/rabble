@@ -315,6 +315,8 @@ export const api = {
     put<{ ok: true }>(`/api/profile/mcp-credentials/${serverId}`, { token }),
   startMcpOAuth: (serverId: string) =>
     post<{ authorizeUrl: string }>(`/api/profile/mcp-credentials/${serverId}/oauth/start`),
+  donateMcpOAuth: (serverId: string) =>
+    post<{ authorizeUrl: string }>(`/api/mcp-servers/${serverId}/oauth/donate`),
   disconnectMcpCredential: (serverId: string) =>
     del<{ ok: true }>(`/api/profile/mcp-credentials/${serverId}`),
   updateMcpServer: (

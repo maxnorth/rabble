@@ -1004,6 +1004,10 @@ function McpServersPage() {
     mutationFn: (id: string) => api.refreshMcpServer(id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] }),
   });
+  const donate = useMutation({
+    mutationFn: (id: string) => api.donateMcpOAuth(id),
+    onSuccess: ({ authorizeUrl }) => window.open(authorizeUrl, "_blank", "noopener"),
+  });
 
   const selected = servers.data?.servers.find((s) => s.id === detail);
 
@@ -1064,6 +1068,35 @@ function McpServersPage() {
               service/user auth are set per agent on its MCP tab.
             </span>
           </div>
+          {selected.requiresOAuth && selected.credentialMode === "shared" && (
+            <div
+              className="card"
+              style={{ padding: 12, marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}
+            >
+              <span className="chip amber">OAuth</span>
+              <div className="grow" style={{ fontSize: 12.5, color: "var(--text-dim)" }}>
+                {selected.donatedByName ? (
+                  <>
+                    The org's <strong>{selected.name}</strong> access is{" "}
+                    <strong>{selected.donatedByName}</strong>'s account. Every agent call runs
+                    on it.
+                  </>
+                ) : (
+                  <>
+                    This server authenticates with OAuth. Connect your account to provide the
+                    org credential every agent will use.
+                  </>
+                )}
+              </div>
+              <button
+                className="btn primary"
+                disabled={donate.isPending}
+                onClick={() => donate.mutate(selected.id)}
+              >
+                {selected.donatedByName ? "Reconnect" : "Connect org account"}
+              </button>
+            </div>
+          )}
           <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
             Tools
           </div>
@@ -1136,6 +1169,11 @@ function McpServersPage() {
                 <span className={`chip ${s.credentialMode === "personal" ? "amber" : "green"}`}>
                   {s.credentialMode === "personal" ? "personal" : "shared"}
                 </span>
+                {s.requiresOAuth && s.credentialMode === "shared" && !s.hasToken && (
+                  <span className="chip amber" title="Authorize an org account on this server">
+                    needs org account
+                  </span>
+                )}
                 <span className="chip blue">{count(s.tools.length, "tool")}</span>
                 <span className="chip purple">used by {s.usedByCount}</span>
                 <button
@@ -1240,13 +1278,13 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
             </select>
             <span className="hint">
               {form.credentialMode === "shared"
-                ? "Every agent call carries this one credential. Calls run as the org service account."
+                ? "Every agent call carries this one credential. Calls run as the org service account. If the server uses OAuth, leave the token blank and authorize an org account after."
                 : "No org credential. Each person connects their own account under Profile; calls act as them, with an in-thread approval."}
             </span>
           </div>
           {form.credentialMode === "shared" && (
             <div className="field">
-              <label>Bearer token (optional)</label>
+              <label>Bearer token (optional, blank for OAuth)</label>
               <input
                 type="password"
                 value={form.token}

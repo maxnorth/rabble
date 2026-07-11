@@ -29,6 +29,7 @@ export const MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback";
 function serializeServer(
   row: typeof mcpServers.$inferSelect,
   usedByCount: number,
+  donatedByName: string | null = null,
 ) {
   return {
     id: row.id,
@@ -40,6 +41,9 @@ function serializeServer(
     credentialMode: row.credentialMode,
     requiresOAuth: row.oauthConfig !== null,
     hasToken: row.encryptedToken !== null,
+    // For a shared OAuth server: whether an org grant has been donated, and by
+    // whom (transparency — the org's access is really this person's account).
+    donatedByName,
     tools: (row.tools ?? []) as McpToolInfo[],
     status: row.status,
     usedByCount,
@@ -98,13 +102,16 @@ export async function mcpRoutes(app: FastifyInstance) {
            WHERE ams.server_id = mcp_servers.id),
           '[]'::jsonb
         )`,
+        donatedByName: sql<string | null>`(
+          SELECT u.name FROM users u WHERE u.id = mcp_servers.donated_by_user_id
+        )`,
       })
       .from(mcpServers)
       .where(eq(mcpServers.orgId, req.user!.orgId))
       .orderBy(mcpServers.name);
     return {
       servers: rows.map((r) => ({
-        ...serializeServer(r.server, r.usedByCount),
+        ...serializeServer(r.server, r.usedByCount, r.donatedByName),
         usedBy: r.usedBy,
       })),
     };
@@ -123,7 +130,9 @@ export async function mcpRoutes(app: FastifyInstance) {
     try {
       tools = await mcpListTools(body.url, body.token);
     } catch (err) {
-      if (err instanceof McpOAuthRequiredError && body.credentialMode === "personal") {
+      // OAuth applies to both modes: personal servers have each user connect,
+      // shared servers have one admin donate their grant as the org credential.
+      if (err instanceof McpOAuthRequiredError) {
         if (!err.resourceMetadataUrl) {
           return reply.code(422).send({
             error: "The server requires OAuth but advertised no metadata URL",
@@ -195,6 +204,46 @@ export async function mcpRoutes(app: FastifyInstance) {
       summary: `Registered MCP server "${body.name}" (${body.credentialMode} credentials, ${tools.length} tools)`,
     });
     return { server: serializeServer(row!, 0) };
+  });
+
+  // Shared OAuth donation: an admin completes the authorize flow and the
+  // resulting grant becomes the org credential. Admin-gated (POST on
+  // /api/mcp-servers is), and the shared branch of the callback stores it
+  // org-level. Returns the authorize URL for the client to open.
+  app.post("/api/mcp-servers/:id/oauth/donate", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const [server] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, id), eq(mcpServers.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!server) return reply.code(404).send({ error: "Server not found" });
+    if (server.credentialMode !== "shared") {
+      return reply.code(400).send({ error: "Only shared servers take a donated org account" });
+    }
+    const { serverOAuth } = await import("../mcp/oauthFlow.js");
+    const oauth = serverOAuth(server);
+    if (!oauth) return reply.code(400).send({ error: "This server doesn't use OAuth" });
+
+    const { makePkce, authorizeUrl } = await import("../mcp/oauth.js");
+    const { randomUUID } = await import("node:crypto");
+    const { mcpOauthPending } = await import("../db/schema.js");
+    const { verifier, challenge } = makePkce();
+    const state = randomUUID();
+    await db.insert(mcpOauthPending).values({
+      state,
+      userId: req.user!.id,
+      serverId: id,
+      codeVerifier: verifier,
+    });
+    const url = authorizeUrl({
+      endpoints: oauth.endpoints,
+      client: oauth.client,
+      redirectUri: `${publicBaseUrl(req)}${MCP_OAUTH_CALLBACK_PATH}`,
+      state,
+      challenge,
+    });
+    return { authorizeUrl: url };
   });
 
   // Edit in place — registered servers aren't one-way doors. Changing the

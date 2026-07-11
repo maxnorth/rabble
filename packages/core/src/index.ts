@@ -466,6 +466,7 @@ export const mcpServerSchema = z.object({
   credentialMode: z.enum(["shared", "personal"]),
   requiresOAuth: z.boolean(),
   hasToken: z.boolean(),
+  donatedByName: z.string().nullable(),
   tools: z.array(mcpToolInfoSchema),
   status: z.enum(["connected", "error"]),
   usedByCount: z.number().int(),

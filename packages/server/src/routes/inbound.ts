@@ -16,6 +16,8 @@ import {
   agentSurfaces,
   agents,
   connections,
+  mcpOauthPending,
+  mcpServers,
   models,
   sessions,
   users,
@@ -478,6 +480,97 @@ export async function inboundRoutes(app: FastifyInstance) {
       } catch (err) {
         req.log.error({ err }, "slack oauth callback failed");
         return reply.redirect(back("error"));
+      }
+    });
+
+    // MCP OAuth callback. Public and authenticated by the single-use `state`
+    // nonce (which maps to the connecting user + server) rather than the
+    // session cookie: the redirect back from an external authorization server
+    // lands on PUBLIC_URL, which may not be the origin the user is logged in
+    // on, so requiring a session here would fail intermittently.
+    scope.get("/api/mcp/oauth/callback", async (req, reply) => {
+      const { code, state, error } = req.query as {
+        code?: string;
+        state?: string;
+        error?: string;
+      };
+      const publicUrl = env.publicUrl ?? `http://${req.headers.host ?? ""}`;
+      const back = (status: string) =>
+        reply.redirect(`${publicUrl}/?mcp=${encodeURIComponent(status)}`);
+      if (error || !code || !state) return back(error || "failed");
+
+      const [pending] = await db
+        .select()
+        .from(mcpOauthPending)
+        .where(eq(mcpOauthPending.state, state))
+        .limit(1);
+      if (!pending) return back("failed");
+      await db.delete(mcpOauthPending).where(eq(mcpOauthPending.state, state));
+
+      const [server] = await db
+        .select()
+        .from(mcpServers)
+        .where(eq(mcpServers.id, pending.serverId))
+        .limit(1);
+      if (!server) return back("failed");
+
+      const { serverOAuth, storeUserTokens, storeOrgTokens } = await import(
+        "../mcp/oauthFlow.js"
+      );
+      const oauth = serverOAuth(server);
+      if (!oauth) return back("failed");
+      const { exchangeCode } = await import("../mcp/oauth.js");
+      const { MCP_OAUTH_CALLBACK_PATH } = await import("./mcp.js");
+      try {
+        const tokens = await exchangeCode({
+          endpoints: oauth.endpoints,
+          client: oauth.client,
+          code,
+          redirectUri: `${publicUrl}${MCP_OAUTH_CALLBACK_PATH}`,
+          verifier: pending.codeVerifier,
+        });
+        const now = Date.now();
+        // Shared servers store the grant as the org credential (donation);
+        // personal servers store it for the connecting user.
+        if (server.credentialMode === "shared") {
+          await storeOrgTokens(server.id, tokens, now, pending.userId);
+        } else {
+          await storeUserTokens(pending.userId, server.id, tokens, now);
+        }
+        // First connect: discover the tool catalog with the fresh token.
+        if (((server.tools ?? []) as unknown[]).length === 0) {
+          const { mcpListTools } = await import("../mcp/client.js");
+          const tools = await mcpListTools(server.url, tokens.accessToken).catch(
+            () => null,
+          );
+          if (tools) {
+            await db.update(mcpServers).set({ tools }).where(eq(mcpServers.id, server.id));
+          }
+        }
+        // Personal: release any session turn paused on this user's connect card.
+        if (server.credentialMode === "personal") {
+          const { resolveConnects } = await import("../runtime/approvals.js");
+          resolveConnects(pending.userId, server.id);
+        }
+        const { recordAudit } = await import("../audit.js");
+        await recordAudit({
+          orgId: server.orgId,
+          actorUserId: pending.userId,
+          action:
+            server.credentialMode === "shared"
+              ? "mcp.credential.donate"
+              : "mcp.credential.connect",
+          targetType: "mcp-server",
+          targetId: server.id,
+          summary:
+            server.credentialMode === "shared"
+              ? `Donated an org account for ${server.name} via OAuth`
+              : `Connected ${server.name} via OAuth`,
+        });
+        return back("connected");
+      } catch (err) {
+        req.log.error({ err }, "mcp oauth callback failed");
+        return back("failed");
       }
     });
   });

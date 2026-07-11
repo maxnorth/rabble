@@ -38,6 +38,7 @@ import { decryptSecret } from "../crypto.js";
 import { chatModelFor } from "../models/chat.js";
 import { resolveAgentModel } from "../models/resolve.js";
 import { mcpCallTool } from "../mcp/client.js";
+import { permissiveToolSchema } from "../mcp/toolSchema.js";
 import { recordAudit } from "../audit.js";
 import { Channel } from "./channel.js";
 import { requestConnect } from "./approvals.js";
@@ -269,9 +270,13 @@ async function buildGovernedTools(
             emit({ type: "tool-start", toolCall: call });
 
             let approval: ApprovalOutcome | null = null;
-            let credential: string | null = server.encryptedToken
-              ? decryptSecret(server.encryptedToken)
-              : null;
+            // Service (shared) tools ride the org credential, refreshing an
+            // OAuth-donated org token in place. Pasted org tokens pass through.
+            let credential: string | null = null;
+            if (authType === "service") {
+              const { usableOrgAccessToken } = await import("../mcp/oauthFlow.js");
+              credential = await usableOrgAccessToken(server, Date.now());
+            }
             if (authType === "user") {
               // Personal mode: the caller's own credential, connected via
               // Profile or the in-thread connect card. No credential and no
@@ -339,7 +344,7 @@ async function buildGovernedTools(
             description:
               `${toolInfo.description} (via ${server.name}; runs as ` +
               `${authType === "service" ? "the org service account" : "the requesting user"})`,
-            schema: toolInfo.inputSchema ?? { type: "object", properties: {} },
+            schema: permissiveToolSchema(toolInfo.inputSchema),
           },
         ),
       );

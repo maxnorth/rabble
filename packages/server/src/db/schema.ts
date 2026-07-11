@@ -356,6 +356,13 @@ export const mcpServers = pgTable(
     // OAuth (MCP auth spec): discovered AS endpoints + registered client.
     oauthConfig: jsonb("oauth_config"),
     encryptedOauthClientSecret: text("encrypted_oauth_client_secret"),
+    // Shared OAuth donation: the org credential's refresh token + expiry, and
+    // the admin who donated it (encrypted_token holds the access token).
+    encryptedOrgRefreshToken: text("encrypted_org_refresh_token"),
+    orgTokenExpiresAt: timestamp("org_token_expires_at", { withTimezone: true }),
+    donatedByUserId: uuid("donated_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
     tools: jsonb("tools").notNull().default([]),
     status: text("status", { enum: ["connected", "error"] })
       .notNull()

@@ -71,6 +71,57 @@ export async function storeUserTokens(
     });
 }
 
+/** Store an OAuth grant as the shared org credential. A donorUserId stamps
+ * who provided it (the donation); a refresh omits it, preserving the donor. */
+export async function storeOrgTokens(
+  serverId: string,
+  tokens: OAuthTokens,
+  now: number,
+  donorUserId?: string,
+): Promise<void> {
+  const expiresAt = tokens.expiresIn
+    ? new Date(now + (tokens.expiresIn - 60) * 1000)
+    : null;
+  await db
+    .update(mcpServers)
+    .set({
+      encryptedToken: encryptSecret(tokens.accessToken),
+      encryptedOrgRefreshToken: tokens.refreshToken
+        ? encryptSecret(tokens.refreshToken)
+        : null,
+      orgTokenExpiresAt: expiresAt,
+      ...(donorUserId ? { donatedByUserId: donorUserId } : {}),
+    })
+    .where(eq(mcpServers.id, serverId));
+}
+
+/**
+ * The shared org credential for a server, refreshing an expired OAuth-donated
+ * token in place. Returns null when the server has no org credential at all.
+ * A pasted org token (no oauth config) is used as-is.
+ */
+export async function usableOrgAccessToken(
+  server: ServerRow,
+  now: number,
+): Promise<string | null> {
+  if (!server.encryptedToken) return null;
+  const expired =
+    server.orgTokenExpiresAt != null && server.orgTokenExpiresAt.getTime() <= now;
+  if (expired && server.encryptedOrgRefreshToken) {
+    const oauth = serverOAuth(server);
+    if (oauth) {
+      const tokens = await refreshTokens({
+        endpoints: oauth.endpoints,
+        client: oauth.client,
+        refreshToken: decryptSecret(server.encryptedOrgRefreshToken),
+      });
+      await storeOrgTokens(server.id, tokens, now);
+      return tokens.accessToken;
+    }
+  }
+  return decryptSecret(server.encryptedToken);
+}
+
 /**
  * A usable access token for (user, server): the stored one, refreshed first
  * if it has expired and a refresh token is on file. Returns null when the

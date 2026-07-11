@@ -627,8 +627,15 @@ test("a fresh judgment updates the open session without a reload", async () => {
   // below verifies the settled single-result state).
   await expect(chip).toContainText(/! 0\/\d+ criteria/);
 
-  // A new turn triggers re-judging (emulator default: PASS). The chip must
-  // flip in place — no reload — once the background verdict lands.
+  // A new turn triggers re-judging (emulator default: PASS). This is an
+  // AUTO session — script the orchestrator so Eng On-Call answers (judging
+  // accrues to the responder; another agent's turn wouldn't refresh this
+  // criterion's verdict).
+  await fetch(`${EMULATOR}/admin/llm/enqueue`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ type: "text", text: "eng-on-call" }),
+  });
   await page.locator(".thread-composer textarea").fill("Checking prod again");
   await page.locator(".thread-composer button", { hasText: "Send" }).click();
   await expect(page.locator(".msg-agent .bubble").last()).toContainText(

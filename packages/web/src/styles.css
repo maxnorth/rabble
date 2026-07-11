@@ -424,6 +424,68 @@ select:focus-visible {
   border-radius: 10px;
 }
 
+/* MCP library picker: brand tiles in the add-server modal. */
+.mcp-library-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+
+.mcp-library-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  padding: 12px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-1);
+  border-radius: 10px;
+  transition: border-color 0.13s ease, box-shadow 0.13s ease;
+}
+
+.mcp-library-tile:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.mcp-library-tile.custom {
+  border-style: dashed;
+}
+
+.mcp-library-glyph {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  margin-bottom: 4px;
+}
+
+.mcp-library-glyph.custom {
+  background: var(--surface-tool);
+  border: 1px solid var(--border-2);
+  color: var(--text-dim);
+}
+
+.mcp-library-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.mcp-library-desc {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
 /* Inline rename: the pencil appears on hover so titles read as editable. */
 .editable-title {
   display: inline-flex;

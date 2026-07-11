@@ -5,6 +5,7 @@ import { Link, NavLink, useParams } from "react-router-dom";
 import { api } from "../api";
 import { EditableTitle } from "../components/EditableTitle";
 import { GrantEditor } from "./AgentsSection";
+import type { McpLibraryEntry } from "@rabblehq/core";
 import { relativeTime, count } from "../lib/time";
 
 const ADMIN_PAGES = [
@@ -1008,6 +1009,18 @@ function McpServersPage() {
     mutationFn: (id: string) => api.donateMcpOAuth(id),
     onSuccess: ({ authorizeUrl }) => window.open(authorizeUrl, "_blank", "noopener"),
   });
+  const duplicate = useMutation({
+    mutationFn: (id: string) => api.duplicateMcpServer(id),
+    onSuccess: async ({ server }) => {
+      await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+      setDetail(server.id);
+    },
+  });
+  const setDisabledTools = useMutation({
+    mutationFn: ({ id, disabledTools }: { id: string; disabledTools: string[] }) =>
+      api.updateMcpServer(id, { disabledTools }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] }),
+  });
 
   const selected = servers.data?.servers.find((s) => s.id === detail);
 
@@ -1033,6 +1046,14 @@ function McpServersPage() {
             </div>
             <button className="btn" onClick={() => setEditingServer(true)}>
               Edit
+            </button>
+            <button
+              className="btn"
+              disabled={duplicate.isPending}
+              title="A copy with the same endpoint but its own tool set and access scope. Credentials don't carry over."
+              onClick={() => duplicate.mutate(selected.id)}
+            >
+              Duplicate
             </button>
             <button
               className="btn"
@@ -1100,17 +1121,40 @@ function McpServersPage() {
           <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
             Tools
           </div>
+          <p className="page-subtitle" style={{ marginBottom: 8 }}>
+            Switching a tool off here removes it from every agent using this
+            server — agents can only narrow further, never re-enable it.
+          </p>
           <div className="row-group" style={{ marginBottom: 18 }}>
-            {selected.tools.map((t) => (
-              <div className="row" key={t.name}>
-                <div className="grow">
-                  <div className="title mono" style={{ fontSize: 12 }}>
-                    {t.name}
+            {selected.tools.map((t) => {
+              const off = selected.disabledTools.includes(t.name);
+              return (
+                <div className="row" key={t.name} style={off ? { opacity: 0.6 } : undefined}>
+                  <span
+                    className={`toggle${off ? "" : " on"}`}
+                    role="switch"
+                    aria-checked={!off}
+                    aria-label={`${t.name} enabled`}
+                    style={{ cursor: "pointer" }}
+                    onClick={() =>
+                      setDisabledTools.mutate({
+                        id: selected.id,
+                        disabledTools: off
+                          ? selected.disabledTools.filter((n) => n !== t.name)
+                          : [...selected.disabledTools, t.name],
+                      })
+                    }
+                  />
+                  <div className="grow">
+                    <div className="title mono" style={{ fontSize: 12 }}>
+                      {t.name}
+                    </div>
+                    <div className="sub">{t.description}</div>
                   </div>
-                  <div className="sub">{t.description}</div>
+                  {off && <span className="chip amber">off for all agents</span>}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           <div className="sidebar-title" style={{ padding: "0 0 8px" }}>
             Used by
@@ -1131,6 +1175,15 @@ function McpServersPage() {
               Not attached to any agent yet.
             </p>
           )}
+          <div className="sidebar-title" style={{ padding: "16px 0 8px" }}>
+            Access
+          </div>
+          <p className="page-subtitle" style={{ marginBottom: 8 }}>
+            With no grants, anyone can attach this server to their agents and
+            automations. Add a grant to restrict it — then only the grantees
+            (and org admins) can.
+          </p>
+          <McpServerAccess serverId={selected.id} />
         </>
       ) : (
         <>
@@ -1174,7 +1227,15 @@ function McpServersPage() {
                     needs org account
                   </span>
                 )}
-                <span className="chip blue">{count(s.tools.length, "tool")}</span>
+                <span className="chip blue">
+                  {count(s.tools.length - s.disabledTools.length, "tool")}
+                  {s.disabledTools.length > 0 ? ` · ${s.disabledTools.length} off` : ""}
+                </span>
+                {s.grantCount > 0 && (
+                  <span className="chip amber" title="Restricted — only grantees can attach it">
+                    restricted
+                  </span>
+                )}
                 <span className="chip purple">used by {s.usedByCount}</span>
                 <button
                   className="btn danger"
@@ -1200,8 +1261,38 @@ function McpServersPage() {
   );
 }
 
+/** Access scope for an MCP server — the same grants engine agents and
+ * models use, so restriction semantics stay uniform across the platform. */
+function McpServerAccess({ serverId }: { serverId: string }) {
+  const queryClient = useQueryClient();
+  const grants = useQuery({
+    queryKey: ["grants", "mcp-server", serverId],
+    queryFn: () => api.listGrants("mcp-server", serverId),
+  });
+  const teams = useQuery({ queryKey: ["teams"], queryFn: api.listTeams });
+  const users = useQuery({ queryKey: ["users"], queryFn: api.listUsers });
+  return (
+    <GrantEditor
+      targetType="mcp-server"
+      targetId={serverId}
+      grants={grants.data?.grants ?? []}
+      teams={teams.data?.teams ?? []}
+      users={users.data?.users ?? []}
+      onChanged={() => {
+        void queryClient.invalidateQueries({ queryKey: ["grants", "mcp-server", serverId] });
+        void queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+      }}
+    />
+  );
+}
+
 function AddMcpServerModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
+  const library = useQuery({ queryKey: ["mcp-library"], queryFn: api.mcpLibrary });
+  // Step 1: pick a platform from the curated library (or Custom). Step 2:
+  // the register form, prefilled by the pick — everything stays editable,
+  // and the same entry can be added again as another copy.
+  const [picked, setPicked] = useState<null | "custom" | McpLibraryEntry>(null);
   const [form, setForm] = useState<{
     name: string; url: string; category: string;
     credentialMode: "shared" | "personal"; token: string;
@@ -1214,6 +1305,7 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
         category: form.category,
         credentialMode: form.credentialMode,
         token: form.token || undefined,
+        libraryKey: picked && picked !== "custom" ? picked.key : undefined,
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
@@ -1221,10 +1313,66 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
     },
   });
 
+  if (picked === null) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal" style={{ width: 560 }} onClick={(e) => e.stopPropagation()}>
+          <h2>Add MCP server</h2>
+          <p className="page-subtitle">
+            Pick a platform — the endpoint comes preconfigured — or point at
+            any MCP server. The same platform can be added more than once as
+            separately-scoped copies.
+          </p>
+          <div className="mcp-library-grid">
+            {(library.data?.library ?? []).map((entry) => (
+              <button
+                key={entry.key}
+                type="button"
+                className="mcp-library-tile"
+                onClick={() => {
+                  setPicked(entry);
+                  setForm({
+                    name: entry.name,
+                    url: entry.url,
+                    category: entry.category,
+                    credentialMode: entry.credentialMode,
+                    token: "",
+                  });
+                }}
+              >
+                <span className="mcp-library-glyph" style={{ background: entry.brandColor }}>
+                  {entry.glyph}
+                </span>
+                <span className="mcp-library-name">{entry.name}</span>
+                <span className="mcp-library-desc">{entry.description}</span>
+              </button>
+            ))}
+            <button
+              type="button"
+              className="mcp-library-tile custom"
+              onClick={() => setPicked("custom")}
+            >
+              <span className="mcp-library-glyph custom">+</span>
+              <span className="mcp-library-name">Custom server</span>
+              <span className="mcp-library-desc">Any MCP endpoint — yours or a vendor's</span>
+            </button>
+          </div>
+          <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 14 }}>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <h2>Add MCP server</h2>
+        <h2>
+          {picked === "custom" ? "Add MCP server" : `Add ${picked.name}`}
+        </h2>
         <p className="page-subtitle">
           Rabble connects, discovers the tool list, and adds it to the library.
         </p>
@@ -1294,6 +1442,9 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
           )}
           {create.isError && <p className="error-text">{(create.error as Error).message}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="btn" onClick={() => setPicked(null)}>
+              ‹ Back
+            </button>
             <button type="button" className="btn" onClick={onClose}>
               Cancel
             </button>

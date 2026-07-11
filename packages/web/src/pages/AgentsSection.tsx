@@ -579,7 +579,7 @@ export function GrantEditor({
   users,
   onChanged,
 }: {
-  targetType: "agent" | "domain" | "model";
+  targetType: "agent" | "domain" | "model" | "mcp-server";
   targetId: string;
   grants: Array<{
     id: string;

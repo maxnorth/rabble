@@ -20,6 +20,7 @@ import type {
   EvalCriterion,
   EvalSuite,
   Grant,
+  McpLibraryEntry,
   McpServer,
   Message,
   Model,
@@ -286,23 +287,26 @@ export const api = {
     patch<{ domain: Domain }>(`/api/domains/${id}`, body),
 
   // grants
-  listGrants: (targetType: "agent" | "domain" | "model", targetId: string) =>
+  listGrants: (targetType: "agent" | "domain" | "model" | "mcp-server", targetId: string) =>
     get<{ grants: Grant[] }>(`/api/grants?targetType=${targetType}&targetId=${targetId}`),
   createGrant: (body: {
     subjectType: "user" | "team";
     subjectId: string;
     accessRight: "use" | "edit" | "admin";
-    targetType: "agent" | "domain" | "model";
+    targetType: "agent" | "domain" | "model" | "mcp-server";
     targetId: string;
   }) => post<{ grant: Grant }>("/api/grants", body),
   deleteGrant: (id: string) => del<{ ok: true }>(`/api/grants/${id}`),
 
   // MCP servers
+  mcpLibrary: () => get<{ library: McpLibraryEntry[] }>("/api/mcp-servers/library"),
+  duplicateMcpServer: (id: string) =>
+    post<{ server: McpServer }>(`/api/mcp-servers/${id}/duplicate`),
   listMcpServers: () =>
     get<{ servers: Array<McpServer & { usedBy: Array<{ id: string; name: string }> }> }>(
       "/api/mcp-servers",
     ),
-  createMcpServer: (body: { name: string; url: string; category: string; credentialMode: "shared" | "personal"; token?: string }) =>
+  createMcpServer: (body: { name: string; url: string; category: string; credentialMode: "shared" | "personal"; token?: string; libraryKey?: string }) =>
     post<{ server: McpServer }>("/api/mcp-servers", body),
   refreshMcpServer: (id: string) =>
     post<{ server: McpServer }>(`/api/mcp-servers/${id}/refresh`),
@@ -321,7 +325,13 @@ export const api = {
     del<{ ok: true }>(`/api/profile/mcp-credentials/${serverId}`),
   updateMcpServer: (
     id: string,
-    body: Partial<{ name: string; url: string; category: string; token: string | null }>,
+    body: Partial<{
+      name: string;
+      url: string;
+      category: string;
+      token: string | null;
+      disabledTools: string[];
+    }>,
   ) => patch<{ server: McpServer }>(`/api/mcp-servers/${id}`, body),
 
   // evals

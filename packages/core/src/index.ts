@@ -170,7 +170,7 @@ export const accessRequestSchema = z.object({
   id: z.string().uuid(),
   requesterUserId: z.string().uuid(),
   requesterName: z.string(),
-  targetType: z.enum(["agent", "domain", "model"]),
+  targetType: z.enum(["agent", "domain", "model", "mcp-server"]),
   targetId: z.string().uuid(),
   targetName: z.string(),
   accessRight: z.enum(["use", "edit", "admin"]),
@@ -192,7 +192,7 @@ export const accessRequestSchema = z.object({
 export type AccessRequest = z.infer<typeof accessRequestSchema>;
 
 export const createAccessRequestSchema = z.object({
-  targetType: z.enum(["agent", "domain", "model"]),
+  targetType: z.enum(["agent", "domain", "model", "mcp-server"]),
   targetId: z.string().uuid(),
   accessRight: z.enum(["use", "edit", "admin"]),
   reason: z.string().max(1000).optional(),
@@ -427,7 +427,7 @@ export const grantSchema = z.object({
   subjectId: z.string().uuid(),
   subjectName: z.string(),
   accessRight: accessRightSchema,
-  targetType: z.enum(["agent", "domain", "model"]),
+  targetType: z.enum(["agent", "domain", "model", "mcp-server"]),
   targetId: z.string().uuid(),
   targetName: z.string(),
   /** Present when the grant reaches an agent through its domain. */
@@ -440,7 +440,7 @@ export const createGrantSchema = z.object({
   subjectType: z.enum(["user", "team"]),
   subjectId: z.string().uuid(),
   accessRight: accessRightSchema,
-  targetType: z.enum(["agent", "domain", "model"]),
+  targetType: z.enum(["agent", "domain", "model", "mcp-server"]),
   targetId: z.string().uuid(),
 });
 export type CreateGrantRequest = z.infer<typeof createGrantSchema>;
@@ -468,17 +468,39 @@ export const mcpServerSchema = z.object({
   hasToken: z.boolean(),
   donatedByName: z.string().nullable(),
   tools: z.array(mcpToolInfoSchema),
+  /** Tool names switched off at the definition level (org admin). */
+  disabledTools: z.array(z.string()).default([]),
+  /** Curated library entry this server came from (null = custom). */
+  libraryKey: z.string().nullable().default(null),
+  /** Whether the caller may attach this server (grants; admins always). */
+  canUse: z.boolean().default(true),
+  /** How many grants scope this server (0 = org-wide). */
+  grantCount: z.number().int().default(0),
   status: z.enum(["connected", "error"]),
   usedByCount: z.number().int(),
   createdAt: z.string(),
 });
 export type McpServer = z.infer<typeof mcpServerSchema>;
 
+/** A curated, preconfigured MCP server the org can add in one click. */
+export const mcpLibraryEntrySchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  description: z.string(),
+  url: z.string(),
+  category: z.string(),
+  credentialMode: z.enum(["shared", "personal"]),
+  glyph: z.string(),
+  brandColor: z.string(),
+});
+export type McpLibraryEntry = z.infer<typeof mcpLibraryEntrySchema>;
+
 export const createMcpServerSchema = z.object({
   name: z.string().min(1).max(120),
   url: z.string().url(),
   category: z.string().min(1).max(40).default("Tools"),
   credentialMode: z.enum(["shared", "personal"]).default("shared"),
+  libraryKey: z.string().max(60).optional(),
   token: z.string().max(500).optional(),
 });
 export type CreateMcpServerRequest = z.infer<typeof createMcpServerSchema>;

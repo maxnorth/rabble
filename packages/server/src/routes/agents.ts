@@ -635,17 +635,22 @@ export async function agentRoutes(app: FastifyInstance) {
         name: string;
         description: string;
       }>;
-      return serverTools.map((t) => {
-        const config = configFor.get(`${a.server.id}:${t.name}`);
-        return {
-          serverId: a.server.id,
-          serverName: a.server.name,
-          toolName: t.name,
-          description: t.description,
-          enabled: config?.enabled ?? true,
-          authType: a.server.credentialMode === "personal" ? "user" : "service",
-        };
-      });
+      // Definition-level disables don't reach agents at all — they aren't
+      // "off, could be on", they simply don't exist from here.
+      const adminDisabled = new Set((a.server.disabledTools ?? []) as string[]);
+      return serverTools
+        .filter((t) => !adminDisabled.has(t.name))
+        .map((t) => {
+          const config = configFor.get(`${a.server.id}:${t.name}`);
+          return {
+            serverId: a.server.id,
+            serverName: a.server.name,
+            toolName: t.name,
+            description: t.description,
+            enabled: config?.enabled ?? true,
+            authType: a.server.credentialMode === "personal" ? "user" : "service",
+          };
+        });
     });
     return { tools, servers: attached.map((a) => a.server.id) };
   });

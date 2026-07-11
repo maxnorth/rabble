@@ -125,20 +125,37 @@ export function McpTab({ agentId, canEdit }: { agentId: string; canEdit: boolean
             Attach from library
           </div>
           <div className="row-group">
-            {attachable.map((s) => (
-              <div className="row" key={s.id}>
-                <div className="grow">
-                  <div className="title">{s.name}</div>
-                  <div className="sub">
-                    {s.category} · {count(s.tools.length, "tool")}
+            {attachable.map((s) => {
+              const available = s.tools.length - s.disabledTools.length;
+              return (
+                <div className="row" key={s.id}>
+                  <div className="grow">
+                    <div className="title">{s.name}</div>
+                    <div className="sub">
+                      {s.category} · {count(available, "tool")}
+                    </div>
                   </div>
+                  {s.canUse ? (
+                    <button className="btn" onClick={() => attach.mutate(s.id)}>
+                      Attach
+                    </button>
+                  ) : (
+                    <span
+                      className="chip amber"
+                      title="This server is restricted. Ask an org admin for access."
+                    >
+                      restricted
+                    </span>
+                  )}
                 </div>
-                <button className="btn" onClick={() => attach.mutate(s.id)}>
-                  Attach
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
+          {attach.isError && (
+            <p className="error-text" style={{ marginTop: 8 }}>
+              {(attach.error as Error).message}
+            </p>
+          )}
         </>
       )}
     </>

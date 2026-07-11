@@ -5,11 +5,12 @@ import {
   updateToolConfigSchema,
   type McpToolInfo,
 } from "@rabblehq/core";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import {
   agentMcpServers,
   agentToolConfigs,
+  grants,
   mcpServers,
 } from "../db/schema.js";
 import { requireUser, isOrgAdmin } from "../auth.js";
@@ -22,7 +23,8 @@ import {
   type OAuthEndpoints,
 } from "../mcp/oauth.js";
 import { publicBaseUrl } from "../publicUrl.js";
-import { hasRight, rightsForAllAgents } from "../rights.js";
+import { hasRight, rightsForAllAgents, grantSubjectsFor } from "../rights.js";
+import { MCP_LIBRARY } from "../mcp/library.js";
 
 export const MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback";
 
@@ -30,6 +32,7 @@ function serializeServer(
   row: typeof mcpServers.$inferSelect,
   usedByCount: number,
   donatedByName: string | null = null,
+  access: { canUse: boolean; grantCount: number } = { canUse: true, grantCount: 0 },
 ) {
   return {
     id: row.id,
@@ -45,10 +48,72 @@ function serializeServer(
     // whom (transparency — the org's access is really this person's account).
     donatedByName,
     tools: (row.tools ?? []) as McpToolInfo[],
+    disabledTools: (row.disabledTools ?? []) as string[],
+    libraryKey: row.libraryKey,
+    canUse: access.canUse,
+    grantCount: access.grantCount,
     status: row.status,
     usedByCount,
     createdAt: row.createdAt.toISOString(),
   };
+}
+
+/** Slugs stay unique per org, but names may repeat — an org can run several
+ * copies of the same server (different tool sets, different audiences). */
+async function uniqueServerSlug(orgId: string, name: string): Promise<string> {
+  const base = slugify(name) || "server";
+  for (let i = 0; ; i++) {
+    const candidate = i === 0 ? base : `${base}-${i + 1}`;
+    const [clash] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.orgId, orgId), eq(mcpServers.slug, candidate)))
+      .limit(1);
+    if (!clash) return candidate;
+  }
+}
+
+/** MCP-server access mirrors model access: with no grants anyone in the org
+ * may attach the server; with grants, only grantees (and org admins). */
+async function usableServerIds(user: {
+  id: string;
+  orgId: string;
+}): Promise<{ grantCounts: Map<string, number>; reachable: Set<string> }> {
+  const counted = await db
+    .select({ targetId: grants.targetId, n: sql<number>`count(*)::int` })
+    .from(grants)
+    .where(and(eq(grants.orgId, user.orgId), eq(grants.targetType, "mcp-server")))
+    .groupBy(grants.targetId);
+  const grantCounts = new Map(counted.map((c) => [c.targetId, c.n]));
+  let reachable = new Set<string>();
+  if (grantCounts.size > 0) {
+    const { userIds, teamIds } = await grantSubjectsFor(user.id, user.orgId);
+    const subjectFilter = [];
+    if (userIds.length) {
+      subjectFilter.push(
+        and(eq(grants.subjectType, "user"), inArray(grants.subjectId, userIds)),
+      );
+    }
+    if (teamIds.length) {
+      subjectFilter.push(
+        and(eq(grants.subjectType, "team"), inArray(grants.subjectId, teamIds)),
+      );
+    }
+    if (subjectFilter.length) {
+      const found = await db
+        .select({ targetId: grants.targetId })
+        .from(grants)
+        .where(
+          and(
+            eq(grants.orgId, user.orgId),
+            eq(grants.targetType, "mcp-server"),
+            or(...subjectFilter),
+          ),
+        );
+      reachable = new Set(found.map((f) => f.targetId));
+    }
+  }
+  return { grantCounts, reachable };
 }
 
 
@@ -91,7 +156,13 @@ export async function mcpRoutes(app: FastifyInstance) {
     }
   });
 
+  // The curated library — presentation data only; adding an entry runs
+  // through the normal register flow with the form prefilled.
+  app.get("/api/mcp-servers/library", async () => ({ library: MCP_LIBRARY }));
+
   app.get("/api/mcp-servers", async (req) => {
+    const isAdmin = isOrgAdmin(req.user);
+    const { grantCounts, reachable } = await usableServerIds(req.user!);
     const rows = await db
       .select({
         server: mcpServers,
@@ -110,10 +181,16 @@ export async function mcpRoutes(app: FastifyInstance) {
       .where(eq(mcpServers.orgId, req.user!.orgId))
       .orderBy(mcpServers.name);
     return {
-      servers: rows.map((r) => ({
-        ...serializeServer(r.server, r.usedByCount, r.donatedByName),
-        usedBy: r.usedBy,
-      })),
+      servers: rows.map((r) => {
+        const grantCount = grantCounts.get(r.server.id) ?? 0;
+        return {
+          ...serializeServer(r.server, r.usedByCount, r.donatedByName, {
+            canUse: isAdmin || grantCount === 0 || reachable.has(r.server.id),
+            grantCount,
+          }),
+          usedBy: r.usedBy,
+        };
+      }),
     };
   });
 
@@ -162,21 +239,16 @@ export async function mcpRoutes(app: FastifyInstance) {
         });
       }
     }
-    const slug = slugify(body.name) || "server";
-    const [existing] = await db
-      .select({ id: mcpServers.id })
-      .from(mcpServers)
-      .where(and(eq(mcpServers.orgId, req.user!.orgId), eq(mcpServers.slug, slug)))
-      .limit(1);
-    if (existing) {
-      return reply.code(409).send({ error: "A server with that name already exists" });
-    }
+    // Multiple copies of the same server are a feature (different tool
+    // sets, different audiences), so the slug dedupes instead of 409ing.
+    const slug = await uniqueServerSlug(req.user!.orgId, body.name);
     const [row] = await db
       .insert(mcpServers)
       .values({
         orgId: req.user!.orgId,
         slug,
         name: body.name,
+        libraryKey: body.libraryKey ?? null,
         url: body.url,
         category: body.category,
         credentialMode: body.credentialMode,
@@ -258,6 +330,7 @@ export async function mcpRoutes(app: FastifyInstance) {
       url?: string;
       category?: string;
       token?: string | null;
+      disabledTools?: string[];
     };
     const [server] = await db
       .select()
@@ -273,6 +346,22 @@ export async function mcpRoutes(app: FastifyInstance) {
       updates.name = trimmed;
     }
     if (body.category !== undefined) updates.category = body.category;
+    if (body.disabledTools !== undefined) {
+      if (
+        !Array.isArray(body.disabledTools) ||
+        body.disabledTools.some((t) => typeof t !== "string")
+      ) {
+        return reply.code(400).send({ error: "disabledTools must be a list of tool names" });
+      }
+      // Only names the server actually has — a stale or mistyped name would
+      // sit invisibly forever.
+      const known = new Set(
+        ((server.tools ?? []) as McpToolInfo[]).map((t) => t.name),
+      );
+      updates.disabledTools = [...new Set(body.disabledTools)].filter((t) =>
+        known.has(t),
+      );
+    }
     if (body.token !== undefined) {
       if (server.credentialMode === "personal" && body.token !== null) {
         return reply.code(400).send({
@@ -309,13 +398,20 @@ export async function mcpRoutes(app: FastifyInstance) {
       .where(eq(mcpServers.id, id))
       .returning();
     const changed = Object.keys(updates).filter((k) => k !== "tools" && k !== "status");
+    const summaryParts = changed.map((k) =>
+      k === "encryptedToken"
+        ? "token"
+        : k === "disabledTools"
+          ? `disabled tools (${(updates.disabledTools as string[]).length} off)`
+          : k,
+    );
     await recordAudit({
       orgId: req.user!.orgId,
       actorUserId: req.user!.id,
       action: "mcp.update",
       targetType: "mcp-server",
       targetId: id,
-      summary: `Updated ${changed.map((k) => (k === "encryptedToken" ? "token" : k)).join(", ")} on MCP server "${row!.name}"`,
+      summary: `Updated ${summaryParts.join(", ")} on MCP server "${row!.name}"`,
     });
     const [usedBy] = await db
       .select({ n: sql<number>`count(*)::int` })
@@ -348,6 +444,47 @@ export async function mcpRoutes(app: FastifyInstance) {
       await db.update(mcpServers).set({ status: "error" }).where(eq(mcpServers.id, id));
       return reply.code(422).send({ error: "Couldn't reach the MCP server" });
     }
+  });
+
+  // Duplicate: a copy with the same endpoint/config but its own identity —
+  // give one team a narrow tool set and another the full one. App-level
+  // OAuth client config carries over (it's app config, not a credential);
+  // org tokens and donated grants do NOT.
+  app.post("/api/mcp-servers/:id/duplicate", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const [source] = await db
+      .select()
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, id), eq(mcpServers.orgId, req.user!.orgId)))
+      .limit(1);
+    if (!source) return reply.code(404).send({ error: "Server not found" });
+    const name = `${source.name} (copy)`;
+    const [row] = await db
+      .insert(mcpServers)
+      .values({
+        orgId: source.orgId,
+        slug: await uniqueServerSlug(source.orgId, name),
+        name,
+        url: source.url,
+        category: source.category,
+        credentialMode: source.credentialMode,
+        oauthConfig: source.oauthConfig,
+        encryptedOauthClientSecret: source.encryptedOauthClientSecret,
+        tools: source.tools,
+        disabledTools: source.disabledTools,
+        libraryKey: source.libraryKey,
+        status: source.status,
+      })
+      .returning();
+    await recordAudit({
+      orgId: req.user!.orgId,
+      actorUserId: req.user!.id,
+      action: "mcp.register",
+      targetType: "mcp-server",
+      targetId: row!.id,
+      summary: `Duplicated MCP server "${source.name}" as "${name}"`,
+    });
+    return { server: serializeServer(row!, 0) };
   });
 
   app.delete("/api/mcp-servers/:id", async (req, reply) => {
@@ -384,6 +521,18 @@ export async function mcpRoutes(app: FastifyInstance) {
       .where(and(eq(mcpServers.id, serverId), eq(mcpServers.orgId, req.user!.orgId)))
       .limit(1);
     if (!server) return reply.code(404).send({ error: "Server not found" });
+    // Access scope: a granted server may only be attached by its grantees
+    // (org admins always can). Same semantics as model access.
+    if (!isOrgAdmin(req.user)) {
+      const { grantCounts, reachable } = await usableServerIds(req.user!);
+      const grantCount = grantCounts.get(serverId) ?? 0;
+      if (grantCount > 0 && !reachable.has(serverId)) {
+        return reply.code(403).send({
+          error:
+            "This MCP server is restricted. Ask an org admin for access, or request it from the server's page.",
+        });
+      }
+    }
     await db
       .insert(agentMcpServers)
       .values({ agentId, serverId })

@@ -62,6 +62,7 @@ test("register a shared OAuth MCP server (auto-detected, awaiting donation)", as
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "MCP servers" }).click();
   await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByRole("button", { name: "Custom server" }).click();
   await page.getByPlaceholder("GitHub").fill("Ops Incidents");
   await page
     .getByPlaceholder("https://mcp.example.com/mcp")
@@ -172,11 +173,13 @@ test("an admin donates their account as the org credential", async () => {
   expect(audit.length).toBeGreaterThanOrEqual(1);
 
   // The detail now names the donor and offers a Reconnect instead of Connect.
+  // (Scoped to the banner's <strong> — the Access section's audience picker
+  // also lists members by name.)
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "MCP servers" }).click();
   await page.locator(".row", { hasText: "Ops Incidents" }).click();
   await expect(
-    page.getByText("Alex Lin", { exact: false }),
+    page.locator("strong", { hasText: "Alex Lin" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
   await page.getByRole("button", { name: "‹ MCP servers" }).click();

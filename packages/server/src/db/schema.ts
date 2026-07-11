@@ -282,7 +282,7 @@ export const accessRequests = pgTable(
       .notNull()
       .references(() => users.id),
     targetType: text("target_type", {
-      enum: ["agent", "domain", "model"],
+      enum: ["agent", "domain", "model", "mcp-server"],
     }).notNull(),
     targetId: uuid("target_id").notNull(),
     accessRight: text("access_right", { enum: ["use", "edit", "admin"] }).notNull(),
@@ -313,7 +313,7 @@ export const grants = pgTable(
       enum: ["use", "edit", "admin"],
     }).notNull(),
     targetType: text("target_type", {
-      enum: ["agent", "domain", "model"],
+      enum: ["agent", "domain", "model", "mcp-server"],
     }).notNull(),
     targetId: uuid("target_id").notNull(),
     createdBy: uuid("created_by").references(() => users.id),
@@ -364,6 +364,11 @@ export const mcpServers = pgTable(
       onDelete: "set null",
     }),
     tools: jsonb("tools").notNull().default([]),
+    // Tools switched off at the definition level — hidden from every agent
+    // that uses this server (per-agent enablement narrows further).
+    disabledTools: jsonb("disabled_tools").notNull().default([]),
+    // Which curated library entry this came from (null = custom).
+    libraryKey: text("library_key"),
     status: text("status", { enum: ["connected", "error"] })
       .notNull()
       .default("connected"),

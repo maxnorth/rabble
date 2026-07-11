@@ -98,6 +98,18 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   stream event (in-session connect card) on an interactive surface, and fails
   closed everywhere else. Register the same upstream twice to split some tools
   shared and others personal.
+- MCP library & governance: `mcp/library.ts` holds the curated catalog
+  (GitHub, Notion, Linear, Slack, …) served at GET /api/mcp-servers/library;
+  picking a tile only prefills the register form (`libraryKey` recorded for
+  presentation). Slugs auto-dedupe, so the same platform can run as many
+  copies (also POST /:id/duplicate — copies config + OAuth client, never
+  credentials). `mcp_servers.disabled_tools` is the definition-level kill
+  switch: those tools vanish from every agent (agents.ts /tools route,
+  agentTurn.buildGovernedTools) — per-agent config can only narrow further.
+  Access scope = grants with targetType 'mcp-server' (same semantics as
+  models: no grants ⇒ anyone can attach; grants ⇒ grantees + org admins;
+  enforced on the attach route, surfaced as canUse/grantCount + "restricted"
+  chips; access_requests accept mcp-server targets too).
 - MCP OAuth (personal servers): a personal server whose endpoint 401s at
   registration is auto-detected as OAuth. Rabble runs discovery (RFC 9728
   resource metadata → RFC 8414 auth-server metadata), dynamic client

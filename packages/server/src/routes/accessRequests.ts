@@ -36,7 +36,7 @@ async function requireOrgAdmin(req: FastifyRequest, reply: FastifyReply) {
  */
 async function evidenceFor(
   orgId: string,
-  targetType: "agent" | "domain" | "model",
+  targetType: "agent" | "domain" | "model" | "mcp-server",
   targetId: string,
 ): Promise<
   { passRate30d: number | null; graded30d: number; scopeViolations30d: number } | undefined
@@ -75,9 +75,18 @@ async function evidenceFor(
 // UUID can't be smuggled into a request or leak its name into an admin's view.
 async function targetNameFor(
   orgId: string,
-  targetType: "agent" | "domain" | "model",
+  targetType: "agent" | "domain" | "model" | "mcp-server",
   targetId: string,
 ): Promise<string> {
+  if (targetType === "mcp-server") {
+    const { mcpServers } = await import("../db/schema.js");
+    const [row] = await db
+      .select({ name: mcpServers.name })
+      .from(mcpServers)
+      .where(and(eq(mcpServers.id, targetId), eq(mcpServers.orgId, orgId)))
+      .limit(1);
+    return row?.name ?? "(deleted)";
+  }
   if (targetType === "agent") {
     const [row] = await db
       .select({ name: agents.name })

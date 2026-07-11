@@ -62,6 +62,7 @@ test("admin: register the emulated GitHub MCP server (personal credential)", asy
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "MCP servers" }).click();
   await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByRole("button", { name: "Custom server" }).click();
   await page.getByPlaceholder("GitHub").fill("GitHub");
   await page
     .getByPlaceholder("https://mcp.example.com/mcp")
@@ -102,6 +103,7 @@ test("admin: register the emulated GitHub MCP server (personal credential)", asy
 
 test("admin: register a shared-credential server (Datadog)", async () => {
   await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByRole("button", { name: "Custom server" }).click();
   await page.getByPlaceholder("GitHub").fill("Datadog");
   await page
     .getByPlaceholder("https://mcp.example.com/mcp")
@@ -773,6 +775,7 @@ test("register an OAuth MCP server (auto-detected, no tools yet)", async () => {
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "MCP servers" }).click();
   await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByRole("button", { name: "Custom server" }).click();
   await page.getByPlaceholder("GitHub").fill("Incidents");
   await page
     .getByPlaceholder("https://mcp.example.com/mcp")
@@ -983,4 +986,208 @@ test("an expired access token is refreshed transparently", async () => {
   );
   expect(after!.encrypted_token).not.toBe(before!.encrypted_token);
   expect(after!.expired).toBe(false);
+});
+
+test("mcp library: preconfigured platforms register with editable endpoints", async () => {
+  // Teach the emulator a Notion-shaped MCP server to stand in for the
+  // real hosted endpoint the library entry points at.
+  await fetch(`${EMULATOR}/admin/mcp/notion`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      tools: [
+        { name: "search_pages", description: "Search pages in the workspace" },
+        { name: "create_page", description: "Create a page" },
+      ],
+    }),
+  });
+
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await page.getByRole("button", { name: "+ Add server" }).click();
+
+  // The curated grid: popular platforms plus the Custom escape hatch.
+  await expect(page.locator(".mcp-library-tile", { hasText: "GitHub" })).toBeVisible();
+  await expect(page.locator(".mcp-library-tile", { hasText: "Custom server" })).toBeVisible();
+  await page.locator(".mcp-library-tile", { hasText: "Notion" }).click();
+
+  // Prefilled from the library; the endpoint stays editable (emulator here).
+  await expect(page.getByPlaceholder("GitHub")).toHaveValue("Notion");
+  await page
+    .getByPlaceholder("https://mcp.example.com/mcp")
+    .fill(`${EMULATOR}/mock/mcp/notion`);
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  const row = page.locator(".row", { hasText: "Notion" }).first();
+  await expect(row).toBeVisible();
+  await expect(row.locator(".chip", { hasText: "tool" })).toContainText("2 tools");
+  const [srv] = await dbQuery<{ library_key: string; slug: string }>(
+    "SELECT library_key, slug FROM mcp_servers WHERE name = 'Notion'",
+  );
+  expect(srv!.library_key).toBe("notion");
+  expect(srv!.slug).toBe("notion");
+});
+
+test("one platform, many copies: slugs dedupe and configs stay independent", async () => {
+  // A second Notion from the same library tile — no 409, slug dedupes.
+  await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.locator(".mcp-library-tile", { hasText: "Notion" }).click();
+  await page
+    .getByPlaceholder("https://mcp.example.com/mcp")
+    .fill(`${EMULATOR}/mock/mcp/notion`);
+  await page.getByPlaceholder("GitHub").fill("Notion (Support)");
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+  await expect(page.locator(".row", { hasText: "Notion (Support)" })).toBeVisible();
+
+  const copies = await dbQuery<{ slug: string }>(
+    "SELECT slug FROM mcp_servers WHERE library_key = 'notion' ORDER BY slug",
+  );
+  expect(copies.map((c) => c.slug)).toEqual(["notion", "notion-support"]);
+
+  // Disable a tool on the copy only — the original keeps its full set.
+  await page.locator(".row", { hasText: "Notion (Support)" }).click();
+  const createPageRow = page.locator(".row", { hasText: "create_page" });
+  await createPageRow.locator(".toggle").click();
+  await expect(createPageRow.locator(".chip", { hasText: "off for all agents" })).toBeVisible();
+  const rows = await dbQuery<{ slug: string; disabled_tools: string[] }>(
+    "SELECT slug, disabled_tools FROM mcp_servers WHERE library_key = 'notion' ORDER BY slug",
+  );
+  expect(rows.find((r) => r.slug === "notion")!.disabled_tools).toEqual([]);
+  expect(rows.find((r) => r.slug === "notion-support")!.disabled_tools).toEqual(["create_page"]);
+  await page.getByRole("button", { name: "‹ MCP servers" }).click();
+});
+
+test("definition-level disable removes the tool from every agent — and the runtime", async () => {
+  // GitHub's create_issue is attached (user-auth) on Eng On-Call from the
+  // earlier journey. Kill it at the definition level.
+  await page.locator(".row", { hasText: "GitHub" }).first().click();
+  const issueRow = page.locator(".row", { hasText: "create_issue" });
+  await issueRow.locator(".toggle").click();
+  await expect(issueRow.locator(".chip", { hasText: "off for all agents" })).toBeVisible();
+
+  // The agent's MCP tab no longer offers it at all.
+  await page.locator("nav a[title='Agents']").click();
+  await page.locator(".dir-table tbody tr", { hasText: "Eng On-Call" }).click();
+  await page.getByRole("button", { name: "mcp" }).click();
+  await expect(page.locator(".row", { hasText: "search_repos" })).toBeVisible();
+  await expect(page.locator(".row", { hasText: "create_issue" })).toHaveCount(0);
+
+  // And the runtime never offers it to the model: a scripted call for the
+  // disabled tool is refused as out-of-scope, and no MCP traffic leaves.
+  const mcpCallsBefore = (
+    (await (await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)).json()) as {
+      requests: Array<{ path: string }>;
+    }
+  ).requests.filter((r) => r.path === "tools/call").length;
+  await enqueueToolCall("create_issue", { title: "Should never exist" });
+  await page.locator("nav a[title='Sessions']").click();
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("File an issue post-disable");
+  await page.getByRole("button", { name: "Send" }).click();
+  await expect(page.locator(".msg-agent .bubble").last()).toContainText("Mock reply", {
+    timeout: 15_000,
+  });
+  const mcpCallsAfter = (
+    (await (await fetch(`${EMULATOR}/admin/requests?host=mcp/github`)).json()) as {
+      requests: Array<{ path: string }>;
+    }
+  ).requests.filter((r) => r.path === "tools/call").length;
+  expect(mcpCallsAfter).toBe(mcpCallsBefore);
+  const violations = await dbQuery<{ tool_name: string }>(
+    "SELECT tool_name FROM scope_violations WHERE tool_name = 'create_issue'",
+  );
+  expect(violations.length).toBeGreaterThanOrEqual(1);
+
+  // Flip it back on — later journeys drive approvals through create_issue.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await page.locator(".row", { hasText: "GitHub" }).first().click();
+  await page.locator(".row", { hasText: "create_issue" }).locator(".toggle").click();
+  await expect(
+    page.locator(".row", { hasText: "create_issue" }).locator(".chip", {
+      hasText: "off for all agents",
+    }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "‹ MCP servers" }).click();
+});
+
+test("access scopes: a granted server is attachable only by its grantees", async ({
+  browser,
+}) => {
+  // Restrict the Notion (Support) copy to one team (Platform).
+  const servers = (await (await page.request.get("/api/mcp-servers")).json()) as {
+    servers: Array<{ id: string; name: string }>;
+  };
+  const restricted = servers.servers.find((s) => s.name === "Notion (Support)")!;
+  const teams = (await (await page.request.get("/api/teams")).json()) as {
+    teams: Array<{ id: string; name: string }>;
+  };
+  const support = teams.teams.find((t) => t.name === "Platform") ?? teams.teams[0]!;
+  await page.request.post("/api/grants", {
+    data: {
+      subjectType: "team",
+      subjectId: support.id,
+      accessRight: "use",
+      targetType: "mcp-server",
+      targetId: restricted.id,
+    },
+  });
+
+  // The admin list flags it.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await expect(
+    page.locator(".row", { hasText: "Notion (Support)" }).locator(".chip", {
+      hasText: "restricted",
+    }),
+  ).toBeVisible();
+
+  // A fresh member outside the granted team can't attach it...
+  const invited = (await (
+    await page.request.post("/api/members", {
+      data: { name: "Nora New", email: "nora@acme.com" },
+    })
+  ).json()) as { user: { id: string }; tempPassword: string };
+  const noraPage = await browser.newPage();
+  await noraPage.goto("/");
+  await noraPage.locator("input[type=email]").fill("nora@acme.com");
+  await noraPage.locator("input[type=password]").fill(invited.tempPassword);
+  await noraPage.getByRole("button", { name: "Sign in" }).click();
+  // First sign-in with a temp password forces a change.
+  await noraPage.getByPlaceholder("Temporary password").fill(invited.tempPassword);
+  await noraPage.getByPlaceholder("At least 8 characters").fill("nora-first-pass-1");
+  await noraPage.getByRole("button", { name: "Save and continue" }).click();
+  await expect(noraPage.locator(".session-greeting")).toBeVisible();
+
+  const created = (await (
+    await noraPage.request.post("/api/agents", { data: { name: "Nora Helper" } })
+  ).json()) as { agent: { id: string } };
+  const denied = await noraPage.request.put(
+    `/api/agents/${created.agent.id}/mcp-servers/${restricted.id}`,
+  );
+  expect(denied.status()).toBe(403);
+
+  // ...until she's granted use — then the same attach succeeds.
+  await page.request.post("/api/grants", {
+    data: {
+      subjectType: "user",
+      subjectId: invited.user.id,
+      accessRight: "use",
+      targetType: "mcp-server",
+      targetId: restricted.id,
+    },
+  });
+  const allowed = await noraPage.request.put(
+    `/api/agents/${created.agent.id}/mcp-servers/${restricted.id}`,
+  );
+  expect(allowed.ok()).toBe(true);
+
+  // Tidy: the throwaway agent (attachments cascade), so later journeys'
+  // routing and counts stay untouched.
+  await noraPage.request.delete(`/api/agents/${created.agent.id}`);
+  await noraPage.close();
 });

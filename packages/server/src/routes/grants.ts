@@ -28,12 +28,12 @@ async function subjectNames(
 
 async function canManageTarget(
   req: { user: { id: string; orgId: string; role: string } | null },
-  targetType: "agent" | "domain" | "model",
+  targetType: "agent" | "domain" | "model" | "mcp-server",
   targetId: string,
 ): Promise<boolean> {
   const user = req.user!;
   if (user.role === "owner" || user.role === "admin") return true;
-  // Domain and model grants are org-admin territory
+  // Domain, model, and MCP-server grants are org-admin territory
   if (targetType !== "agent") return false;
   const right = await rightForAgent(user as never, targetId);
   return hasRight(right, "admin");
@@ -68,7 +68,7 @@ export async function grantRoutes(app: FastifyInstance) {
    */
   app.get("/api/grants", async (req, reply) => {
     const { targetType, targetId } = req.query as {
-      targetType?: "agent" | "domain" | "model";
+      targetType?: "agent" | "domain" | "model" | "mcp-server";
       targetId?: string;
     };
     if (!targetType || !targetId) {
@@ -125,7 +125,7 @@ export async function grantRoutes(app: FastifyInstance) {
         .limit(1);
       if (!domain) return reply.code(404).send({ error: "Domain not found" });
       targetName = domain.name;
-    } else {
+    } else if (targetType === "model") {
       const { models } = await import("../db/schema.js");
       const [model] = await db
         .select()
@@ -134,6 +134,15 @@ export async function grantRoutes(app: FastifyInstance) {
         .limit(1);
       if (!model) return reply.code(404).send({ error: "Model not found" });
       targetName = model.displayName;
+    } else {
+      const { mcpServers } = await import("../db/schema.js");
+      const [server] = await db
+        .select()
+        .from(mcpServers)
+        .where(and(eq(mcpServers.id, targetId), eq(mcpServers.orgId, req.user!.orgId)))
+        .limit(1);
+      if (!server) return reply.code(404).send({ error: "Server not found" });
+      targetName = server.name;
     }
 
     const names = await subjectNames([...direct, ...domainGrants]);
@@ -183,13 +192,22 @@ export async function grantRoutes(app: FastifyInstance) {
           .limit(1);
         return Boolean(d);
       }
-      const { models } = await import("../db/schema.js");
-      const [m] = await db
-        .select({ id: models.id })
-        .from(models)
-        .where(and(eq(models.id, body.targetId), eq(models.orgId, req.user!.orgId)))
+      if (body.targetType === "model") {
+        const { models } = await import("../db/schema.js");
+        const [m] = await db
+          .select({ id: models.id })
+          .from(models)
+          .where(and(eq(models.id, body.targetId), eq(models.orgId, req.user!.orgId)))
+          .limit(1);
+        return Boolean(m);
+      }
+      const { mcpServers } = await import("../db/schema.js");
+      const [srv] = await db
+        .select({ id: mcpServers.id })
+        .from(mcpServers)
+        .where(and(eq(mcpServers.id, body.targetId), eq(mcpServers.orgId, req.user!.orgId)))
         .limit(1);
-      return Boolean(m);
+      return Boolean(srv);
     })();
     if (!targetInOrg) {
       return reply.code(404).send({ error: "Target not found" });

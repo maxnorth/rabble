@@ -246,7 +246,11 @@ async function buildGovernedTools(
       description: string;
       inputSchema?: Record<string, unknown>;
     }>;
+    // Definition-level kill switch: tools an org admin disabled on the
+    // server itself never reach any agent, regardless of per-agent config.
+    const adminDisabled = new Set((server.disabledTools ?? []) as string[]);
     for (const toolInfo of serverTools) {
+      if (adminDisabled.has(toolInfo.name)) continue;
       const config = configFor.get(`${server.id}:${toolInfo.name}`);
       if (config && !config.enabled) continue;
       // Identity is the server's credential mode: personal-mode calls ride

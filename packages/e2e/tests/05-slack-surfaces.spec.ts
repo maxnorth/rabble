@@ -46,9 +46,11 @@ test("connections: add Slack, verified against the emulator", async () => {
 
   const row = page.locator(".row", { hasText: "Acme Slack" });
   await expect(row).toBeVisible();
-  // Healthy state is quiet: the dot is green and no warning chip shows.
+  // Healthy reachability is quiet (a dot, no "connected" badge) — but the
+  // fresh connection rightly warns it has no agent link yet.
   await expect(row.locator(".status-dot")).toBeVisible();
-  await expect(row.locator(".chip.amber")).toHaveCount(0);
+  await expect(row.getByText("needs auth")).toHaveCount(0);
+  await expect(row.locator(".chip.amber", { hasText: "no linked agent" })).toBeVisible();
 
   // The emulator's auth.test endpoint was actually called
   const log = (await (

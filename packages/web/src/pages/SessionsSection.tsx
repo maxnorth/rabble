@@ -482,7 +482,7 @@ function ApprovalCard({
   onViewTrackRecord,
 }: {
   approval: PendingApproval;
-  onDecide: (decision: "approve" | "deny" | "run-as-service") => void;
+  onDecide: (decision: "approve" | "deny") => void;
   agentId?: string;
   trackRecord?: { score: number | null };
   onViewTrackRecord?: () => void;
@@ -572,9 +572,6 @@ function ApprovalCard({
           </button>
           <button className="btn danger" onClick={() => onDecide("deny")}>
             Deny
-          </button>
-          <button className="btn" onClick={() => onDecide("run-as-service")}>
-            Run as service account
           </button>
         </div>
       )}
@@ -905,7 +902,7 @@ function SessionThread({ sessionId }: { sessionId: string }) {
 
   const decide = async (
     approval: PendingApproval,
-    decision: "approve" | "deny" | "run-as-service",
+    decision: "approve" | "deny",
   ) => {
     try {
       // Async approvals: by the time this resolves, the platform has run

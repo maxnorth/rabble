@@ -7,7 +7,7 @@
  * We register a personal GitHub and a shared Datadog, attach both, connect a
  * personal credential from Profile, then drive scripted tool calls: the
  * shared/service call runs inline, the personal/user call pauses on the
- * approval card (approve / deny / run-as-service / timeout / once-per-session),
+ * approval card (approve / deny / timeout / once-per-session),
  * and a personal server with no connected credential prompts an in-thread
  * "Connect your account" card. Asserts UI, the database transcript, and the
  * emulator request log — including which bearer token rode the wire.
@@ -306,6 +306,12 @@ test("denying the approval blocks the tool and records the denial", async () => 
 
   const card = page.locator(".approval-card");
   await expect(card).toBeVisible({ timeout: 15_000 });
+  // Deciding an ask is approve-or-deny only: service-account identity is
+  // the server's credential mode, never a per-approval choice.
+  await expect(card.getByRole("button", { name: "Approve as me" })).toBeVisible();
+  await expect(
+    card.getByRole("button", { name: "Run as service account" }),
+  ).toHaveCount(0);
   await card.getByRole("button", { name: "Deny" }).click();
 
   // The denial reaches the agent as a follow-up turn; nothing executed.
@@ -327,33 +333,6 @@ test("denying the approval blocks the tool and records the denial", async () => 
       (r) => r.body?.arguments?.title === "Should not exist",
     ),
   ).toBe(false);
-});
-
-test("run-as-service keeps the action off the user's identity", async () => {
-  await enqueueToolCall("create_issue", { title: "Service-run issue" });
-
-  await page.getByRole("link", { name: "+ New session" }).click();
-  await page.locator(".target-pill").click();
-  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
-  await page
-    .getByPlaceholder("Describe what you need help with…")
-    .fill("File it under the service account");
-  await page.getByRole("button", { name: "Send" }).click();
-
-  const card = page.locator(".approval-card");
-  await expect(card).toBeVisible({ timeout: 15_000 });
-  await card.getByRole("button", { name: "Run as service account" }).click();
-
-  await expect(page.locator(".msg-agent .bubble").last()).toContainText(
-    "Approval update",
-    { timeout: 15_000 },
-  );
-  expect(
-    await pollFirstToolCall("%File it under the service account%"),
-  ).toMatchObject({
-    name: "create_issue",
-    approval: { status: "ran-as-service", decidedByName: "Alex Lin" },
-  });
 });
 
 test("an unanswered approval stays pending — the turn is never blocked", async () => {

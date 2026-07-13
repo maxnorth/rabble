@@ -4,9 +4,8 @@
  * does three things, in order:
  *
  *   1. Executes the RECORDED call verbatim on approval (same tool, same
- *      arguments, same acting identity; "run as service" swaps only the
- *      credential). Approval authorizes one concrete action, never a
- *      re-plan.
+ *      arguments, same acting identity). Approval authorizes one concrete
+ *      action, never a re-plan.
  *   2. Updates the persisted tool-call chip in the transcript from
  *      "pending" to the outcome, so the session posture ("first approval
  *      covers the session") and the UI stay coherent.
@@ -30,15 +29,14 @@ import {
 } from "../db/schema.js";
 import { recordAudit } from "../audit.js";
 
-export type DurableDecision = "approve" | "deny" | "run-as-service";
+export type DurableDecision = "approve" | "deny";
 
 const finalStatus = (d: DurableDecision) =>
-  d === "approve" ? "approved" : d === "deny" ? "denied" : "ran-as-service";
+  d === "approve" ? "approved" : "denied";
 
 /** Execute the recorded call exactly as asked. Returns the tool output. */
 async function executeRecordedCall(
   row: typeof approvals.$inferSelect,
-  decision: Exclude<DurableDecision, "deny">,
 ): Promise<string> {
   const [actingUser] = await db
     .select()
@@ -62,18 +60,12 @@ async function executeRecordedCall(
     .limit(1);
   if (!server) throw new Error("MCP server no longer exists");
 
-  let credential: string | null = null;
-  if (decision === "run-as-service") {
-    const { usableOrgAccessToken } = await import("../mcp/oauthFlow.js");
-    credential = await usableOrgAccessToken(server, Date.now());
-  } else {
-    const { usableAccessToken } = await import("../mcp/oauthFlow.js");
-    credential = await usableAccessToken(server, row.userId, Date.now());
-    if (!credential) {
-      throw new Error(
-        `No ${server.name} account connected for the approver — connect one under Profile and approve again.`,
-      );
-    }
+  const { usableAccessToken } = await import("../mcp/oauthFlow.js");
+  const credential = await usableAccessToken(server, row.userId, Date.now());
+  if (!credential) {
+    throw new Error(
+      `No ${server.name} account connected for the approver — connect one under Profile and approve again.`,
+    );
   }
   const { mcpCallTool } = await import("../mcp/client.js");
   return mcpCallTool(
@@ -205,12 +197,12 @@ export async function decideDurableApproval(opts: {
     .returning({ id: approvals.id });
   if (claimed.length === 0) return { ok: false };
 
-  // 1. Execute (approve / run-as-service only).
+  // 1. Execute (approve only).
   let output: string | null = null;
   let executionError: string | null = null;
   if (opts.decision !== "deny") {
     try {
-      output = await executeRecordedCall(row, opts.decision);
+      output = await executeRecordedCall(row);
       await db
         .update(approvals)
         .set({ executedAt: new Date(), output })
@@ -235,7 +227,7 @@ export async function decideDurableApproval(opts: {
         ? `Declined ${row.toolName}${row.serverName ? ` via ${row.serverName}` : ""}`
         : `Approved ${row.toolName}${row.serverName ? ` via ${row.serverName}` : ""} — executed ${
             executionError ? "with an error" : "successfully"
-          }${opts.decision === "run-as-service" ? " as the org service account" : ""}`,
+          }`,
   });
 
   // 2. Transcript chip: pending → outcome. First wait out the turn that
@@ -272,9 +264,7 @@ export async function decideDurableApproval(opts: {
       ? `Approval update: ${deciderName ?? "the user"} DECLINED ${label}. Do not retry it; adjust or explain what you couldn't do.`
       : executionError
         ? `Approval update: ${deciderName ?? "the user"} approved ${label}, but executing it failed: ${executionError}`
-        : `Approval update: ${deciderName ?? "the user"} approved ${label}${
-            opts.decision === "run-as-service" ? " (run as the org service account)" : ""
-          } and the platform executed it. Result:\n${(output ?? "").slice(0, 4000)}`;
+        : `Approval update: ${deciderName ?? "the user"} approved ${label} and the platform executed it. Result:\n${(output ?? "").slice(0, 4000)}`;
 
   try {
     const { resolveAgentModel } = await import("../models/resolve.js");

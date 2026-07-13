@@ -195,8 +195,9 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   table, the tool returns "pending" to the model, and the turn completes.
   Deciding (web card, Slack DM buttons — both call
   runtime/approvalDecide.ts) executes the RECORDED call verbatim (approve =
-  the user's credential, run-as-service = org credential, platform tools
-  via buildPlatformDefs), flips the persisted tool-call chip from pending
+  the user's credential; platform tools via buildPlatformDefs; decisions
+  are approve/deny only — service identity is the server's credential
+  mode, never a per-approval choice), flips the persisted tool-call chip from pending
   to the outcome (which is also what unlocks "once per session" posture),
   and notifies the agent with a follow-up turn — delivered back into the
   Slack thread for slack: sessions. Pending asks hydrate session GET from

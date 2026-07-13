@@ -246,9 +246,9 @@ export async function sessionRoutes(app: FastifyInstance) {
 
   // Decide a pending approval. Async contract (DECISIONS.md): the agent's
   // turn already moved on — deciding executes the recorded call verbatim
-  // (approve / run-as-service), flips the transcript chip, and notifies the
-  // agent in a follow-up turn before this responds, so the UI can simply
-  // refetch the session to show the outcome.
+  // on approval, flips the transcript chip, and notifies the agent in a
+  // follow-up turn before this responds, so the UI can simply refetch the
+  // session to show the outcome.
   app.post("/api/sessions/:id/approvals/:approvalId", async (req, reply) => {
     const { id, approvalId } = req.params as { id: string; approvalId: string };
     const body = approvalDecisionSchema.parse(req.body);
@@ -256,12 +256,7 @@ export async function sessionRoutes(app: FastifyInstance) {
       approvalId,
       sessionId: id,
       deciderId: req.user!.id,
-      decision:
-        body.decision === "approve"
-          ? "approve"
-          : body.decision === "deny"
-            ? "deny"
-            : "run-as-service",
+      decision: body.decision,
     });
     if (!result.ok) {
       return reply

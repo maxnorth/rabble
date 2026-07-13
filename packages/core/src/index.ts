@@ -235,6 +235,8 @@ export const approvalOutcomeSchema = z.object({
   status: z.enum([
     "approved",
     "denied",
+    // Legacy: old transcripts recorded per-approval service-account runs;
+    // service identity is now derived from the server's credential mode.
     "ran-as-service",
     "auto-approved",
     "timed-out",
@@ -1131,6 +1133,8 @@ export const agentDirectoryRowSchema = agentSchema.extend({
 export type AgentDirectoryRow = z.infer<typeof agentDirectoryRowSchema>;
 
 export const approvalDecisionSchema = z.object({
-  decision: z.enum(["approve", "deny", "run-as-service"]),
+  // Service-account identity is server-level configuration (credential
+  // mode), not a per-approval choice — deciding an ask is approve or deny.
+  decision: z.enum(["approve", "deny"]),
 });
 export type ApprovalDecisionRequest = z.infer<typeof approvalDecisionSchema>;

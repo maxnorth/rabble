@@ -45,7 +45,7 @@ Danger:       #E5484D (revoke/destructive)
 ## Interactions & behavior (what must actually work)
 
 - Navigation: icon rail → section; sidebar → sub-view; back buttons (‹) on detail views.
-- Sessions: composer target picker (Auto + agents); history opens sessions; inline tool calls and artifacts open the right drawer; the approval card offers "Approve as me / Deny / Run as service account".
+- Sessions: composer target picker (Auto + agents); history opens sessions; inline tool calls and artifacts open the right drawer; the approval card offers "Approve as me / Deny" (service-account identity comes from the server's credential mode, not the card).
 - Agents directory: click column headers to sort (second click flips direction, ↑/↓ indicator); text search; "+ Filter" popup (Domain ▸ submenu, Starred, You own, Eval ≥ 90%) producing removable filter chips; ★ star pins agents to the sidebar Favorites.
 - Agent config: tab navigation; MCP tab has working per-tool on/off toggles and per-tool service/user segmented control.
 - Teams: hierarchy navigation, tab switching.

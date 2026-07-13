@@ -54,7 +54,7 @@ The research docs are context, not specs: they explain *why* the design is shape
 ### Sessions (user mode)
 - Rail: + New session, recent session history with per-agent status dots.
 - Landing: centered greeting + one composer with an **agent target pill defaulting to "Auto"** (picker of Auto + agents). Deliberately minimal — no roster grid.
-- Active session: user messages right-aligned, agent messages left with **inline tool calls** (click → detail drawer), file artifacts, and the signature **inline approval card** ("acting as you… Approve as me / Deny / Run as service account").
+- Active session: user messages right-aligned, agent messages left with **inline tool calls** (click → detail drawer), file artifacts, and the signature **inline approval card** ("acting as you… Approve as me / Deny"). Service-account identity is the MCP server's credential mode (shared servers run as the org service account inline, no approval) — never a per-approval choice.
 - Session **eval results** are visible on sessions (pass/fail per criterion) — sessions are where quality becomes tangible.
 - Right detail drawer: tool detail (input/output, auth chip), file artifact, agent profile (with "Configure →" as the seam into management).
 

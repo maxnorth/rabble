@@ -1745,34 +1745,24 @@ select:focus-visible {
 }
 
 @media (max-width: 820px) {
-  /* The shell reflows: nav becomes a bottom bar, the per-section sidebar
-     becomes an overlay drawer, and the main pane takes the full width. */
-  .app-shell {
-    flex-direction: column;
-  }
-
+  /* The shell reflows: the whole nav lives in the hamburger drawer — the
+     icon rail slides in as its left edge, the per-section sidebar beside
+     it — and the main pane takes the full screen. */
   .icon-rail {
     position: fixed;
+    top: 0;
     left: 0;
-    right: 0;
     bottom: 0;
-    top: auto;
-    z-index: 40;
-    width: 100%;
-    height: 58px;
-    flex-direction: row;
-    justify-content: space-around;
-    align-items: center;
-    padding: 0 4px;
-    gap: 0;
-    border-right: none;
-    border-top: 1px solid var(--border-rail);
+    z-index: 45;
+    transform: translateX(-105%);
+    transition: transform 0.18s ease;
   }
 
-  /* The bottom bar is the five sections, nothing else: profile, theme,
-     and sign-out live at the bottom of the drawer. */
-  .icon-rail .rail-logo,
-  .icon-rail .spacer,
+  :root[data-drawer="open"] .icon-rail {
+    transform: none;
+  }
+
+  /* Profile, theme, and sign-out live in the drawer's utility footer. */
   .icon-rail .rail-theme,
   .icon-rail .rail-signout,
   .icon-rail .rail-profile {
@@ -1780,27 +1770,19 @@ select:focus-visible {
   }
 
   .rail-btn {
-    width: auto;
-    min-width: 44px;
     min-height: 44px;
-    padding: 4px 6px;
   }
 
-  .main-pane {
-    order: -1;
-    height: calc(100% - 58px);
-    padding-bottom: 0;
-  }
-
-  /* Per-section sidebar: hidden until the hamburger opens it as a drawer. */
+  /* Per-section sidebar: hidden until the hamburger opens it as a drawer,
+     sitting flush against the rail. */
   .sidebar {
     position: fixed;
     top: 0;
-    left: 0;
+    left: 54px;
     bottom: 0;
     z-index: 45;
-    width: min(300px, 84vw);
-    transform: translateX(-105%);
+    width: min(272px, calc(92vw - 54px));
+    transform: translateX(calc(-105% - 54px));
     transition: transform 0.18s ease;
     box-shadow: var(--shadow-pop);
   }
@@ -1811,17 +1793,18 @@ select:focus-visible {
     padding-bottom: 66px;
   }
 
-  /* Profile · theme · sign-out, pinned inside the open drawer's bottom.
-     Fixed to the drawer's own geometry, so no section needs wiring. */
+  /* Profile · theme · sign-out, pinned inside the open drawer's bottom,
+     beside the rail. Fixed to the drawer's own geometry, so no section
+     needs wiring. */
   :root[data-drawer="open"] .drawer-utils {
     display: flex;
     align-items: center;
     gap: 4px;
     position: fixed;
-    left: 0;
+    left: 54px;
     bottom: 0;
     z-index: 46;
-    width: min(300px, 84vw);
+    width: min(272px, calc(92vw - 54px));
     /* reach the true bottom, clearing an iOS home indicator when present */
     padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
     background: var(--bg-panel);
@@ -1959,7 +1942,7 @@ select:focus-visible {
     position: fixed;
     top: 0;
     right: 0;
-    bottom: 58px;
+    bottom: 0;
     z-index: 46;
     width: min(420px, 92vw);
     box-shadow: var(--shadow-pop);

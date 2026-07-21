@@ -5,7 +5,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { mcpServers, userMcpCredentials } from "../db/schema.js";
+import { connections, mcpServers, userMcpCredentials } from "../db/schema.js";
 import { decryptSecret, encryptSecret } from "../crypto.js";
 import {
   refreshTokens,
@@ -100,6 +100,28 @@ export async function storeOrgTokens(
  * token in place. Returns null when the server has no org credential at all.
  * A pasted org token (no oauth config) is used as-is.
  */
+/**
+ * The service credential for a server, whatever its shape: connection mode
+ * borrows the linked Connection's token (e.g. the Slack workspace bot);
+ * everything else is the org credential (pasted token or donated OAuth
+ * grant). Null when nothing usable is configured.
+ */
+export async function usableServiceCredential(
+  server: ServerRow,
+  now: number,
+): Promise<string | null> {
+  if (server.credentialMode === "connection") {
+    if (!server.connectionId) return null;
+    const [conn] = await db
+      .select()
+      .from(connections)
+      .where(eq(connections.id, server.connectionId))
+      .limit(1);
+    return conn?.encryptedToken ? decryptSecret(conn.encryptedToken) : null;
+  }
+  return usableOrgAccessToken(server, now);
+}
+
 export async function usableOrgAccessToken(
   server: ServerRow,
   now: number,

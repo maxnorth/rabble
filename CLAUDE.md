@@ -63,6 +63,11 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   audited (`*.update`).
 - Secrets (API keys, tokens) are AES-GCM encrypted via `crypto.ts`; never
   store or log plaintext, never return them from the API.
+- MCP credential modes: `shared` (org token or donated OAuth grant),
+  `personal` (each caller's own, approval-gated), `connection` (borrows an
+  existing Connection's token — e.g. the Slack workspace bot; service auth,
+  resolved by `usableServiceCredential`). Emulator seeds MCP hosts
+  `github`, `datadog`, `slack`.
 - Session SSE contract in core (`streamEventSchema`): user-message, delta,
   tool-start/tool-end, approval-request, done, error.
 - The deepagents SDK is a replaceable layer — keep its types out of core,

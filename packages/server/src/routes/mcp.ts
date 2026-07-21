@@ -10,6 +10,7 @@ import { db } from "../db/client.js";
 import {
   agentMcpServers,
   agentToolConfigs,
+  connections,
   grants,
   mcpServers,
 } from "../db/schema.js";
@@ -33,6 +34,7 @@ function serializeServer(
   usedByCount: number,
   donatedByName: string | null = null,
   access: { canUse: boolean; grantCount: number } = { canUse: true, grantCount: 0 },
+  connectionName: string | null = null,
 ) {
   return {
     id: row.id,
@@ -47,6 +49,9 @@ function serializeServer(
     // For a shared OAuth server: whether an org grant has been donated, and by
     // whom (transparency — the org's access is really this person's account).
     donatedByName,
+    // Connection mode: whose credential calls ride.
+    connectionId: row.connectionId,
+    connectionName,
     tools: (row.tools ?? []) as McpToolInfo[],
     disabledTools: (row.disabledTools ?? []) as string[],
     libraryKey: row.libraryKey,
@@ -117,15 +122,30 @@ async function usableServerIds(user: {
 }
 
 
-/** The credential to verify a server's URL with: the org token for shared
- * servers; for personal servers, the calling admin's own connected
- * credential when they have one (personal servers hold no org token). */
+/** The name of the Connection a server borrows its credential from. */
+async function connectionNameFor(
+  row: typeof mcpServers.$inferSelect,
+): Promise<string | null> {
+  if (!row.connectionId) return null;
+  const [conn] = await db
+    .select({ name: connections.name })
+    .from(connections)
+    .where(eq(connections.id, row.connectionId))
+    .limit(1);
+  return conn?.name ?? null;
+}
+
+/** The credential to verify a server's URL with: the service credential
+ * (org token, or the linked Connection's) for non-personal servers; for
+ * personal servers, the calling admin's own connected credential when
+ * they have one (personal servers hold no org token). */
 async function verificationToken(
   server: typeof mcpServers.$inferSelect,
   userId: string,
 ): Promise<string | null> {
   if (server.credentialMode !== "personal") {
-    return server.encryptedToken ? decryptSecret(server.encryptedToken) : null;
+    const { usableServiceCredential } = await import("../mcp/oauthFlow.js");
+    return usableServiceCredential(server, Date.now());
   }
   const { userMcpCredentials } = await import("../db/schema.js");
   const [cred] = await db
@@ -176,6 +196,9 @@ export async function mcpRoutes(app: FastifyInstance) {
         donatedByName: sql<string | null>`(
           SELECT u.name FROM users u WHERE u.id = mcp_servers.donated_by_user_id
         )`,
+        connectionName: sql<string | null>`(
+          SELECT c.name FROM connections c WHERE c.id = mcp_servers.connection_id
+        )`,
       })
       .from(mcpServers)
       .where(eq(mcpServers.orgId, req.user!.orgId))
@@ -184,10 +207,16 @@ export async function mcpRoutes(app: FastifyInstance) {
       servers: rows.map((r) => {
         const grantCount = grantCounts.get(r.server.id) ?? 0;
         return {
-          ...serializeServer(r.server, r.usedByCount, r.donatedByName, {
-            canUse: isAdmin || grantCount === 0 || reachable.has(r.server.id),
-            grantCount,
-          }),
+          ...serializeServer(
+            r.server,
+            r.usedByCount,
+            r.donatedByName,
+            {
+              canUse: isAdmin || grantCount === 0 || reachable.has(r.server.id),
+              grantCount,
+            },
+            r.connectionName,
+          ),
           usedBy: r.usedBy,
         };
       }),
@@ -197,6 +226,39 @@ export async function mcpRoutes(app: FastifyInstance) {
   // Register an MCP server: connects, discovers tools, stores the catalog.
   app.post("/api/mcp-servers", async (req, reply) => {
     const body = createMcpServerSchema.parse(req.body);
+
+    // Connection mode: the credential is borrowed from an existing
+    // Connection (e.g. the Slack workspace bot) — resolve it up front and
+    // use it for tool discovery.
+    let connection: typeof connections.$inferSelect | null = null;
+    if (body.credentialMode === "connection") {
+      if (!body.connectionId) {
+        return reply
+          .code(400)
+          .send({ error: "Pick a connection to lend its credential" });
+      }
+      const [row] = await db
+        .select()
+        .from(connections)
+        .where(
+          and(
+            eq(connections.id, body.connectionId),
+            eq(connections.orgId, req.user!.orgId),
+          ),
+        )
+        .limit(1);
+      if (!row) return reply.code(404).send({ error: "Connection not found" });
+      if (!row.encryptedToken) {
+        return reply.code(422).send({
+          error: `The connection "${row.name}" holds no usable credential yet — finish connecting it first`,
+        });
+      }
+      connection = row;
+    }
+    const discoveryToken = connection
+      ? decryptSecret(connection.encryptedToken!)
+      : body.token;
+
     let tools: McpToolInfo[] = [];
     // OAuth servers (personal mode) can't list tools until a user authorizes,
     // so a 401 here isn't a failure: discover the auth server, register a
@@ -205,11 +267,18 @@ export async function mcpRoutes(app: FastifyInstance) {
       | { endpoints: OAuthEndpoints; clientId: string; clientSecret?: string }
       | null = null;
     try {
-      tools = await mcpListTools(body.url, body.token);
+      tools = await mcpListTools(body.url, discoveryToken);
     } catch (err) {
       // OAuth applies to both modes: personal servers have each user connect,
       // shared servers have one admin donate their grant as the org credential.
       if (err instanceof McpOAuthRequiredError) {
+        // A connection-backed server already has its credential; a 401 means
+        // the server rejected it, not that an OAuth flow should start.
+        if (connection) {
+          return reply.code(422).send({
+            error: `The MCP server rejected the credential from "${connection.name}"`,
+          });
+        }
         if (!err.resourceMetadataUrl) {
           return reply.code(422).send({
             error: "The server requires OAuth but advertised no metadata URL",
@@ -252,12 +321,14 @@ export async function mcpRoutes(app: FastifyInstance) {
         url: body.url,
         category: body.category,
         credentialMode: body.credentialMode,
-        // Personal-mode servers hold no org credential; each user connects
-        // their own under Profile.
+        // Only shared servers hold an org credential of their own; personal
+        // servers use each caller's, connection servers borrow the linked
+        // Connection's.
         encryptedToken:
           body.credentialMode === "shared" && body.token
             ? encryptSecret(body.token)
             : null,
+        connectionId: connection?.id ?? null,
         oauthConfig: oauth
           ? { ...oauth.endpoints, clientId: oauth.clientId }
           : null,
@@ -273,9 +344,15 @@ export async function mcpRoutes(app: FastifyInstance) {
       action: "mcp.register",
       targetType: "mcp-server",
       targetId: row!.id,
-      summary: `Registered MCP server "${body.name}" (${body.credentialMode} credentials, ${tools.length} tools)`,
+      summary: `Registered MCP server "${body.name}" (${
+        connection
+          ? `credential from connection "${connection.name}"`
+          : `${body.credentialMode} credentials`
+      }, ${tools.length} tools)`,
     });
-    return { server: serializeServer(row!, 0) };
+    return {
+      server: serializeServer(row!, 0, null, undefined, connection?.name ?? null),
+    };
   });
 
   // Shared OAuth donation: an admin completes the authorize flow and the
@@ -369,6 +446,12 @@ export async function mcpRoutes(app: FastifyInstance) {
             "This server uses personal credentials. Connect your own under Profile, Connected accounts.",
         });
       }
+      if (server.credentialMode === "connection") {
+        return reply.code(400).send({
+          error:
+            "This server borrows its credential from a connection — manage it under Admin, Connections.",
+        });
+      }
       updates.encryptedToken = body.token === null ? null : encryptSecret(body.token);
     }
 
@@ -417,7 +500,15 @@ export async function mcpRoutes(app: FastifyInstance) {
       .select({ n: sql<number>`count(*)::int` })
       .from(agentMcpServers)
       .where(eq(agentMcpServers.serverId, id));
-    return { server: serializeServer(row!, usedBy?.n ?? 0) };
+    return {
+      server: serializeServer(
+        row!,
+        usedBy?.n ?? 0,
+        null,
+        undefined,
+        await connectionNameFor(row!),
+      ),
+    };
   });
 
   // Re-discover the tool list
@@ -439,7 +530,9 @@ export async function mcpRoutes(app: FastifyInstance) {
         .set({ tools, status: "connected" })
         .where(eq(mcpServers.id, id))
         .returning();
-      return { server: serializeServer(row!, 0) };
+      return {
+        server: serializeServer(row!, 0, null, undefined, await connectionNameFor(row!)),
+      };
     } catch {
       await db.update(mcpServers).set({ status: "error" }).where(eq(mcpServers.id, id));
       return reply.code(422).send({ error: "Couldn't reach the MCP server" });
@@ -468,6 +561,8 @@ export async function mcpRoutes(app: FastifyInstance) {
         url: source.url,
         category: source.category,
         credentialMode: source.credentialMode,
+        // A connection reference is config (a pointer), not a copied secret.
+        connectionId: source.connectionId,
         oauthConfig: source.oauthConfig,
         encryptedOauthClientSecret: source.encryptedOauthClientSecret,
         tools: source.tools,
@@ -484,7 +579,9 @@ export async function mcpRoutes(app: FastifyInstance) {
       targetId: row!.id,
       summary: `Duplicated MCP server "${source.name}" as "${name}"`,
     });
-    return { server: serializeServer(row!, 0) };
+    return {
+      server: serializeServer(row!, 0, null, undefined, await connectionNameFor(row!)),
+    };
   });
 
   app.delete("/api/mcp-servers/:id", async (req, reply) => {

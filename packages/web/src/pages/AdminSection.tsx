@@ -1123,7 +1123,9 @@ function McpServersPage() {
               {selected.category} ·{" "}
               {selected.credentialMode === "personal"
                 ? "personal credentials"
-                : "org credential"}{" "}
+                : selected.credentialMode === "connection"
+                  ? `credential from ${selected.connectionName ?? "a deleted connection"}`
+                  : "org credential"}{" "}
               · {count(selected.tools.length, "tool")}
             </span>
             <span style={{ fontSize: 12, color: "var(--text-dim)", alignSelf: "center" }}>
@@ -1297,7 +1299,9 @@ function McpServersPage() {
                       s.category,
                       s.credentialMode === "personal"
                         ? "personal credentials"
-                        : "org credential",
+                        : s.credentialMode === "connection"
+                          ? `via ${s.connectionName ?? "deleted connection"}`
+                          : "org credential",
                       `${count(s.tools.length - s.disabledTools.length, "tool")}${
                         s.disabledTools.length > 0
                           ? ` (${s.disabledTools.length} off)`
@@ -1367,14 +1371,24 @@ function McpServerAccess({ serverId }: { serverId: string }) {
 function AddMcpServerModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const library = useQuery({ queryKey: ["mcp-library"], queryFn: api.mcpLibrary });
+  // Connections that can lend their credential (e.g. a Slack workspace bot).
+  const connections = useQuery({
+    queryKey: ["connections"],
+    queryFn: api.listConnections,
+  });
+  const lendable = (connections.data?.connections ?? []).filter((c) => c.hasToken);
   // Step 1: pick a platform from the curated library (or Custom). Step 2:
   // the register form, prefilled by the pick — everything stays editable,
   // and the same entry can be added again as another copy.
   const [picked, setPicked] = useState<null | "custom" | McpLibraryEntry>(null);
   const [form, setForm] = useState<{
     name: string; url: string; category: string;
-    credentialMode: "shared" | "personal"; token: string;
-  }>({ name: "", url: "", category: "Tools", credentialMode: "shared", token: "" });
+    credentialMode: "shared" | "personal" | "connection";
+    token: string; connectionId: string;
+  }>({
+    name: "", url: "", category: "Tools", credentialMode: "shared",
+    token: "", connectionId: "",
+  });
   const create = useMutation({
     mutationFn: () =>
       api.createMcpServer({
@@ -1383,6 +1397,8 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
         category: form.category,
         credentialMode: form.credentialMode,
         token: form.token || undefined,
+        connectionId:
+          form.credentialMode === "connection" ? form.connectionId : undefined,
         libraryKey: picked && picked !== "custom" ? picked.key : undefined,
       }),
     onSuccess: async () => {
@@ -1415,6 +1431,7 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
                     category: entry.category,
                     credentialMode: entry.credentialMode,
                     token: "",
+                    connectionId: "",
                   });
                 }}
               >
@@ -1496,16 +1513,31 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
             <select
               value={form.credentialMode}
               onChange={(e) =>
-                setForm({ ...form, credentialMode: e.target.value as "shared" | "personal" })
+                setForm({
+                  ...form,
+                  credentialMode: e.target.value as "shared" | "personal" | "connection",
+                  connectionId:
+                    e.target.value === "connection"
+                      ? form.connectionId || (lendable[0]?.id ?? "")
+                      : form.connectionId,
+                })
               }
             >
               <option value="shared">Shared</option>
               <option value="personal">Personal</option>
+              <option value="connection" disabled={lendable.length === 0}>
+                From a connection
+              </option>
             </select>
             <span className="hint">
               {form.credentialMode === "shared"
                 ? "Every agent call carries this one credential. Calls run as the org service account. If the server uses OAuth, leave the token blank and authorize an org account after."
-                : "No org credential. Each person connects their own account under Profile; calls act as them, with an in-thread approval."}
+                : form.credentialMode === "connection"
+                  ? "Calls ride the selected connection's credential (e.g. your Slack workspace bot) and run as the org service account."
+                  : "No org credential. Each person connects their own account under Profile; calls act as them, with an in-thread approval."}
+              {lendable.length === 0 &&
+                form.credentialMode !== "connection" &&
+                " Connections you create under Admin, Connections can also lend their credential here."}
             </span>
           </div>
           {form.credentialMode === "shared" && (
@@ -1516,6 +1548,22 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
                 value={form.token}
                 onChange={(e) => setForm({ ...form, token: e.target.value })}
               />
+            </div>
+          )}
+          {form.credentialMode === "connection" && (
+            <div className="field">
+              <label>Connection</label>
+              <select
+                required
+                value={form.connectionId}
+                onChange={(e) => setForm({ ...form, connectionId: e.target.value })}
+              >
+                {lendable.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.vendor})
+                  </option>
+                ))}
+              </select>
             </div>
           )}
           {create.isError && <p className="error-text">{(create.error as Error).message}</p>}

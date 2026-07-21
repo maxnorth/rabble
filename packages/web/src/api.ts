@@ -6,6 +6,7 @@ import type {
   AgentToolConfig,
   ApiKey,
   ApprovalDecisionRequest,
+  CreateMcpServerRequest,
   AccessRequest,
   AuditEvent,
   Automation,
@@ -306,7 +307,7 @@ export const api = {
     get<{ servers: Array<McpServer & { usedBy: Array<{ id: string; name: string }> }> }>(
       "/api/mcp-servers",
     ),
-  createMcpServer: (body: { name: string; url: string; category: string; credentialMode: "shared" | "personal"; token?: string; libraryKey?: string }) =>
+  createMcpServer: (body: CreateMcpServerRequest) =>
     post<{ server: McpServer }>("/api/mcp-servers", body),
   refreshMcpServer: (id: string) =>
     post<{ server: McpServer }>(`/api/mcp-servers/${id}/refresh`),

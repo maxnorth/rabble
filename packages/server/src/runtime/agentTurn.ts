@@ -276,12 +276,13 @@ async function buildGovernedTools(
             emit({ type: "tool-start", toolCall: call });
 
             let approval: ApprovalOutcome | null = null;
-            // Service (shared) tools ride the org credential, refreshing an
-            // OAuth-donated org token in place. Pasted org tokens pass through.
+            // Service tools ride the server's service credential: the org
+            // token (refreshing a donated OAuth grant in place) or, for
+            // connection-backed servers, the linked Connection's token.
             let credential: string | null = null;
             if (authType === "service") {
-              const { usableOrgAccessToken } = await import("../mcp/oauthFlow.js");
-              credential = await usableOrgAccessToken(server, Date.now());
+              const { usableServiceCredential } = await import("../mcp/oauthFlow.js");
+              credential = await usableServiceCredential(server, Date.now());
             }
             if (authType === "user") {
               // Personal mode: the caller's own credential, connected via

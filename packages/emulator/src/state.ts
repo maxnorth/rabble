@@ -124,6 +124,31 @@ export function seedDefaults(): void {
       result: JSON.stringify({ series: [1, 2, 3] }),
     },
   ]);
+  // A Slack MCP server, for connection-backed registration: the platform
+  // borrows a Slack Connection's bot token as this server's credential.
+  state.mcpServers.set("slack", [
+    {
+      name: "post_message",
+      description: "Post a message to a channel",
+      inputSchema: {
+        type: "object",
+        properties: { channel: { type: "string" }, text: { type: "string" } },
+        required: ["channel", "text"],
+      },
+      result: JSON.stringify({ ok: true, ts: "1700000000.000100" }),
+    },
+    {
+      name: "list_channels",
+      description: "List channels in the workspace",
+      inputSchema: { type: "object", properties: {} },
+      result: JSON.stringify({
+        channels: [
+          { id: "C-GEN", name: "general" },
+          { id: "C-ENG", name: "eng" },
+        ],
+      }),
+    },
+  ]);
 }
 
 export function logRequest(host: string, method: string, path: string, body: unknown): void {

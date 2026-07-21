@@ -490,10 +490,13 @@ export const mcpServerSchema = z.object({
   name: z.string(),
   url: z.string(),
   category: z.string(),
-  credentialMode: z.enum(["shared", "personal"]),
+  credentialMode: z.enum(["shared", "personal", "connection"]),
   requiresOAuth: z.boolean(),
   hasToken: z.boolean(),
   donatedByName: z.string().nullable(),
+  /** Connection mode: the Connection whose credential calls ride. */
+  connectionId: z.string().uuid().nullable().default(null),
+  connectionName: z.string().nullable().default(null),
   tools: z.array(mcpToolInfoSchema),
   /** Tool names switched off at the definition level (org admin). */
   disabledTools: z.array(z.string()).default([]),
@@ -526,9 +529,11 @@ export const createMcpServerSchema = z.object({
   name: z.string().min(1).max(120),
   url: z.string().url(),
   category: z.string().min(1).max(40).default("Tools"),
-  credentialMode: z.enum(["shared", "personal"]).default("shared"),
+  credentialMode: z.enum(["shared", "personal", "connection"]).default("shared"),
   libraryKey: z.string().max(60).optional(),
   token: z.string().max(500).optional(),
+  /** Required when credentialMode = "connection": whose credential to ride. */
+  connectionId: z.string().uuid().optional(),
 });
 export type CreateMcpServerRequest = z.infer<typeof createMcpServerSchema>;
 

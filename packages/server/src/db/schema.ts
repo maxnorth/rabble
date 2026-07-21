@@ -392,11 +392,18 @@ export const mcpServers = pgTable(
     name: text("name").notNull(),
     url: text("url").notNull(),
     category: text("category").notNull().default("Tools"),
-    // Whose credential calls ride: one org credential, or each caller's own.
-    credentialMode: text("credential_mode", { enum: ["shared", "personal"] })
+    // Whose credential calls ride: one org credential, each caller's own,
+    // or an existing Connection's (e.g. the Slack workspace bot).
+    credentialMode: text("credential_mode", {
+      enum: ["shared", "personal", "connection"],
+    })
       .notNull()
       .default("shared"),
     encryptedToken: text("encrypted_token"),
+    // Connection mode: which Connection lends its credential.
+    connectionId: uuid("connection_id").references(() => connections.id, {
+      onDelete: "set null",
+    }),
     // OAuth (MCP auth spec): discovered AS endpoints + registered client.
     oauthConfig: jsonb("oauth_config"),
     encryptedOauthClientSecret: text("encrypted_oauth_client_secret"),

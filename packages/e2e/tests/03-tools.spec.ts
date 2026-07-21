@@ -9,7 +9,9 @@
  * shared/service call runs inline, the personal/user call pauses on the
  * approval card (approve / deny / timeout / once-per-session),
  * and a personal server with no connected credential prompts an in-thread
- * "Connect your account" card. Asserts UI, the database transcript, and the
+ * "Connect your account" card. A third mode, 'connection', borrows an
+ * existing Connection's credential (the Slack workspace bot) as the
+ * server's service credential. Asserts UI, the database transcript, and the
  * emulator request log — including which bearer token rode the wire.
  */
 import { expect, test, type Page } from "@playwright/test";
@@ -1213,4 +1215,102 @@ test("access scopes: a granted server is attachable only by its grantees", async
   // routing and counts stay untouched.
   await noraPage.request.delete(`/api/agents/${created.agent.id}`);
   await noraPage.close();
+});
+
+test("a connection lends its credential to a Slack MCP server", async () => {
+  // A Slack connection with a bot token, pointed at the emulator.
+  const created = (await (
+    await page.request.post("/api/connections", {
+      data: {
+        vendor: "slack",
+        name: "Acme Slack (MCP)",
+        roles: ["Interface"],
+        baseUrl: `${EMULATOR}/mock/slack.com`,
+        token: "xoxb-mcp-conn-token",
+      },
+    })
+  ).json()) as { connection: { id: string } };
+
+  // Register a Slack MCP server whose credential IS that connection.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByRole("button", { name: "Custom server" }).click();
+  await page.getByPlaceholder("GitHub").fill("Slack Workspace");
+  await page
+    .getByPlaceholder("https://mcp.example.com/mcp")
+    .fill(`${EMULATOR}/mock/mcp/slack`);
+  await page.locator(".modal .field", { hasText: "Category" }).locator("select").selectOption("Comms");
+  await page
+    .locator(".modal .field", { hasText: "Credential" })
+    .locator("select")
+    .first()
+    .selectOption("connection");
+  // The connection picker appears, defaulting to the one lendable connection.
+  const connField = page.locator(".modal .field", {
+    has: page.locator("label", { hasText: /^Connection$/ }),
+  });
+  await expect(connField.locator("select")).toHaveValue(created.connection.id);
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  const row = page.locator(".row", { hasText: "Slack Workspace" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("via Acme Slack (MCP)");
+  await expect(row).toContainText("2 tools");
+
+  const [server] = await dbQuery<{
+    id: string;
+    credential_mode: string;
+    connection_id: string;
+    encrypted_token: string | null;
+  }>(
+    `SELECT id, credential_mode, connection_id::text, encrypted_token
+     FROM mcp_servers WHERE name = 'Slack Workspace'`,
+  );
+  expect(server!.credential_mode).toBe("connection");
+  expect(server!.connection_id).toBe(created.connection.id);
+  expect(server!.encrypted_token).toBeNull();
+
+  // Attach to Eng On-Call and drive a scripted call: it runs inline as
+  // service auth — no approval card — carrying the CONNECTION's bot token.
+  const [eng] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Eng On-Call'",
+  );
+  await page.request.put(`/api/agents/${eng!.id}/mcp-servers/${server!.id}`);
+  await enqueueToolCall("post_message", { channel: "C-ENG", text: "deploy is green" });
+
+  await page.locator("nav a[title='Sessions']").click();
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("Tell eng the deploy is green");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  const chip = page.locator(".tool-call", { hasText: "post_message" }).first();
+  await expect(chip).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".approval-card")).toHaveCount(0);
+
+  expect(await pollFirstToolCall("%Tell eng the deploy is green%")).toMatchObject({
+    name: "post_message",
+    authType: "service",
+  });
+
+  const log = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=mcp/slack`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { name?: string; auth?: string | null } }>;
+  };
+  const call = log.requests.find(
+    (r) => r.path === "tools/call" && r.body?.name === "post_message",
+  );
+  expect(call).toBeDefined();
+  expect(call!.body.auth).toBe("xoxb-mcp-conn-token");
+
+  // Tidy: detach and remove the server and the connection — the Slack
+  // journey (05) asserts the connections table from a clean slate.
+  await page.request.delete(`/api/agents/${eng!.id}/mcp-servers/${server!.id}`);
+  await page.request.delete(`/api/mcp-servers/${server!.id}`);
+  await page.request.delete(`/api/connections/${created.connection.id}`);
 });

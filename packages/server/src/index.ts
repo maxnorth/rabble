@@ -83,9 +83,6 @@ export async function buildServer() {
   await app.register(domainRoutes);
   await app.register(grantRoutes);
   await app.register(mcpRoutes);
-  // The Rabble-hosted Slack MCP bridge (bearer-authenticated, no cookie).
-  const { slackBridgeRoutes } = await import("./mcp/slackBridge.js");
-  await app.register(slackBridgeRoutes);
   await app.register(evalRoutes);
   await app.register(adminRoutes);
   await app.register(profileRoutes);

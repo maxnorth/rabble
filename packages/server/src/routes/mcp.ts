@@ -26,6 +26,11 @@ import {
 import { publicBaseUrl } from "../publicUrl.js";
 import { hasRight, rightsForAllAgents, grantSubjectsFor, canUseMcpServer } from "../rights.js";
 import { MCP_LIBRARY } from "../mcp/library.js";
+import {
+  SLACK_TOOLS,
+  isBuiltinSlack,
+  verifyBuiltinSlack,
+} from "../mcp/slackTools.js";
 
 export const MCP_OAUTH_CALLBACK_PATH = "/api/mcp/oauth/callback";
 
@@ -259,6 +264,15 @@ export async function mcpRoutes(app: FastifyInstance) {
       ? decryptSecret(connection.encryptedToken!)
       : body.token;
 
+    // The built-in Slack workspace toolset: no endpoint to discover — the
+    // catalog ships with the platform and calls run in-process against the
+    // Slack Web API as the connection's bot.
+    if (isBuiltinSlack(body.url) && !connection) {
+      return reply.code(400).send({
+        error: "The built-in Slack toolset needs a Slack connection to act through",
+      });
+    }
+
     let tools: McpToolInfo[] = [];
     // OAuth servers (personal mode) can't list tools until a user authorizes,
     // so a 401 here isn't a failure: discover the auth server, register a
@@ -267,7 +281,9 @@ export async function mcpRoutes(app: FastifyInstance) {
       | { endpoints: OAuthEndpoints; clientId: string; clientSecret?: string }
       | null = null;
     try {
-      tools = await mcpListTools(body.url, discoveryToken);
+      tools = isBuiltinSlack(body.url)
+        ? SLACK_TOOLS
+        : await mcpListTools(body.url, discoveryToken);
     } catch (err) {
       // OAuth applies to both modes: personal servers have each user connect,
       // shared servers have one admin donate their grant as the org credential.
@@ -279,7 +295,7 @@ export async function mcpRoutes(app: FastifyInstance) {
             error:
               `The MCP server rejected the credential from "${connection.name}" — it requires its own sign-in.` +
               (connection.vendor === "slack"
-                ? ' For Slack, pick "Slack (your workspace)" from the library instead: Rabble hosts that endpoint and it accepts your connection.'
+                ? ' For Slack, pick "Slack (your workspace)" from the library instead — its tools are built in and act through your connection.'
                 : ""),
           });
         }
@@ -459,12 +475,19 @@ export async function mcpRoutes(app: FastifyInstance) {
       updates.encryptedToken = body.token === null ? null : encryptSecret(body.token);
     }
 
+    // The built-in Slack toolset has no endpoint: its URL is a marker and
+    // its catalog ships with the platform — nothing to re-discover.
+    if (isBuiltinSlack(server.url) && body.url !== undefined && body.url !== server.url) {
+      return reply.code(400).send({
+        error: "The built-in Slack toolset has no endpoint URL to change",
+      });
+    }
     const url = body.url !== undefined ? body.url : server.url;
     const tokenForCheck =
       body.token !== undefined
         ? body.token
         : await verificationToken(server, req.user!.id);
-    if (body.url !== undefined || body.token !== undefined) {
+    if (!isBuiltinSlack(server.url) && (body.url !== undefined || body.token !== undefined)) {
       try {
         updates.tools = await mcpListTools(url, tokenForCheck);
         updates.url = url;
@@ -525,10 +548,14 @@ export async function mcpRoutes(app: FastifyInstance) {
       .limit(1);
     if (!server) return reply.code(404).send({ error: "Server not found" });
     try {
-      const tools = await mcpListTools(
-        server.url,
-        await verificationToken(server, req.user!.id),
-      );
+      // Built-in Slack: "test connection" means auth.test as the linked
+      // connection's bot; the catalog is the platform's own.
+      const tools = isBuiltinSlack(server.url)
+        ? (await verifyBuiltinSlack(server), SLACK_TOOLS)
+        : await mcpListTools(
+            server.url,
+            await verificationToken(server, req.user!.id),
+          );
       const [row] = await db
         .update(mcpServers)
         .set({ tools, status: "connected" })

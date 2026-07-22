@@ -1315,9 +1315,9 @@ test("a connection lends its credential to a Slack MCP server", async () => {
   await page.request.delete(`/api/connections/${created.connection.id}`);
 });
 
-test("the Rabble-hosted Slack bridge serves MCP tools for a connection", async () => {
-  // Slack's hosted MCP only accepts its own OAuth, so the platform hosts a
-  // bridge endpoint per connection. Create the connection to back it.
+test("built-in Slack tools act through a connection — no endpoint at all", async () => {
+  // Slack's hosted MCP only accepts its own OAuth, so the platform ships
+  // the Slack toolset built in, acting as a connection's workspace bot.
   const created = (await (
     await page.request.post("/api/connections", {
       data: {
@@ -1330,34 +1330,33 @@ test("the Rabble-hosted Slack bridge serves MCP tools for a connection", async (
     })
   ).json()) as { connection: { id: string } };
 
-  // The library tile preselects the connection and points the URL at THIS
-  // deployment's own /mcp/slack endpoint.
+  // The library tile preselects the connection; there is no URL to fill —
+  // built-in toolsets have no endpoint.
   await page.locator("nav a[title='Admin']").click();
   await page.getByRole("link", { name: "MCP servers" }).click();
   await page.getByRole("button", { name: "+ Add server" }).click();
   await page.getByRole("button", { name: "Slack (your workspace)" }).click();
-  await expect(page.getByPlaceholder("https://mcp.example.com/mcp")).toHaveValue(
-    new RegExp(`/mcp/slack/${created.connection.id}$`),
-  );
+  await expect(page.getByPlaceholder("https://mcp.example.com/mcp")).toHaveCount(0);
   const connField = page.locator(".modal .field", {
     has: page.locator("label", { hasText: /^Connection$/ }),
   });
   await expect(connField.locator("select")).toHaveValue(created.connection.id);
   await page.getByRole("button", { name: "+ Add", exact: true }).click();
 
-  // Registration discovered the bridge's tools by calling ourselves.
+  // The catalog ships with the platform — the full toolset, no discovery.
   const row = page.locator(".row", { hasText: "Slack (your workspace)" });
   await expect(row).toBeVisible();
   await expect(row).toContainText("via Grath Slack");
-  await expect(row).toContainText("2 tools");
+  await expect(row).toContainText("10 tools");
 
-  const [server] = await dbQuery<{ id: string; credential_mode: string }>(
-    `SELECT id, credential_mode FROM mcp_servers WHERE name = 'Slack (your workspace)'`,
+  const [server] = await dbQuery<{ id: string; credential_mode: string; url: string }>(
+    `SELECT id, credential_mode, url FROM mcp_servers WHERE name = 'Slack (your workspace)'`,
   );
   expect(server!.credential_mode).toBe("connection");
+  expect(server!.url).toBe("builtin:slack");
 
-  // A governed call flows agent -> bridge -> Slack Web API, carrying the
-  // connection's bot token end to end. Service auth: no approval card.
+  // A governed call dispatches in-process straight to the Slack Web API,
+  // carrying the connection's bot token. Service auth: no approval card.
   const [eng] = await dbQuery<{ id: string }>(
     "SELECT id FROM agents WHERE name = 'Eng On-Call'",
   );

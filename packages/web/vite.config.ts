@@ -10,11 +10,6 @@ export default defineConfig({
         target: "http://localhost:3080",
         changeOrigin: true,
       },
-      // The Rabble-hosted Slack MCP bridge lives on the API server too.
-      "/mcp": {
-        target: "http://localhost:3080",
-        changeOrigin: true,
-      },
     },
   },
 });

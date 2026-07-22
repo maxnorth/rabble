@@ -327,12 +327,14 @@ async function buildGovernedTools(
             }
 
             try {
-              const output = await mcpCallTool(
-                server.url,
-                toolInfo.name,
-                args,
-                credential,
+              // Built-in Slack tools run in-process against the Slack Web
+              // API as the linked connection's bot — no endpoint involved.
+              const { isBuiltinSlack, runSlackWorkspaceTool } = await import(
+                "../mcp/slackTools.js"
               );
+              const output = isBuiltinSlack(server.url)
+                ? await runSlackWorkspaceTool(server, toolInfo.name, args)
+                : await mcpCallTool(server.url, toolInfo.name, args, credential);
               const finished: ToolCall = {
                 ...call,
                 output,

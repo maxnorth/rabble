@@ -143,6 +143,55 @@ export function mountSlack(app: FastifyInstance): void {
     };
   });
 
+  app.post("/mock/slack.com/api/conversations.history", async (req) => {
+    logRequest("slack.com", "POST", "/api/conversations.history", req.body ?? null);
+    return {
+      ok: true,
+      messages: [
+        { ts: "1700000002.000200", user: "U0EMU", text: "Deploy finished" },
+        { ts: "1700000001.000100", user: "U0EMU", text: "Starting the deploy" },
+      ],
+    };
+  });
+
+  app.post("/mock/slack.com/api/conversations.replies", async (req) => {
+    logRequest("slack.com", "POST", "/api/conversations.replies", req.body ?? null);
+    const { ts } = (req.body ?? {}) as { ts?: string };
+    return {
+      ok: true,
+      messages: [
+        { ts: ts ?? "1700000001.000100", user: "U0EMU", text: "Thread root" },
+        { ts: "1700000003.000300", user: "U0EMU", text: "A reply" },
+      ],
+    };
+  });
+
+  app.post("/mock/slack.com/api/users.list", async (req) => {
+    logRequest("slack.com", "POST", "/api/users.list", req.body ?? null);
+    const members = [...state.slackUsers.entries()].map(([id, email]) => ({
+      id,
+      name: email.split("@")[0],
+      profile: { email, real_name: email.split("@")[0] },
+    }));
+    return {
+      ok: true,
+      members: members.length
+        ? members
+        : [{ id: "U0EMU", name: "emu", profile: { email: "emu@acme.com", real_name: "Emu" } }],
+    };
+  });
+
+  app.post("/mock/slack.com/api/reactions.add", async (req) => {
+    logRequest("slack.com", "POST", "/api/reactions.add", req.body ?? null);
+    return { ok: true };
+  });
+
+  app.post("/mock/slack.com/api/conversations.join", async (req) => {
+    logRequest("slack.com", "POST", "/api/conversations.join", req.body ?? null);
+    const { channel } = (req.body ?? {}) as { channel?: string };
+    return { ok: true, channel: { id: channel ?? "C0GENERAL" } };
+  });
+
   app.post("/mock/slack.com/api/users.info", async (req) => {
     logRequest("slack.com", "POST", "/api/users.info", req.body ?? null);
     const { user } = (req.body ?? {}) as { user?: string };

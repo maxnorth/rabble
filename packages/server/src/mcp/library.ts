@@ -54,13 +54,14 @@ export const MCP_LIBRARY: McpLibraryEntry[] = [
     brandColor: "#4A154B",
   },
   {
-    // Rabble-hosted bridge: Slack's hosted MCP only takes its own OAuth,
-    // so this serves the MCP endpoint in-platform, backed by a Slack
-    // Connection's bot token. The form fills the org's own /mcp/slack URL.
+    // Built-in toolset: Slack's hosted MCP only takes its own OAuth, so
+    // these tools are implemented in-platform against the Slack Web API,
+    // acting as a Slack Connection's workspace bot. No endpoint involved —
+    // the URL is the `builtin:slack` marker (mcp/slackTools.ts).
     key: "slack-workspace",
     name: "Slack (your workspace)",
     description: "Act as the workspace bot, via a connection you created",
-    url: "/mcp/slack",
+    url: "builtin:slack",
     category: "Comms",
     credentialMode: "connection",
     glyph: "#",

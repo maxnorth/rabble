@@ -68,7 +68,8 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   `personal` (each caller's own, approval-gated), `connection` (borrows an
   existing Connection's token — e.g. the Slack workspace bot; service auth,
   resolved by `usableServiceCredential`). Emulator seeds MCP hosts
-  `github`, `datadog`, `slack`.
+  `github`, `datadog`, `slack`, plus Slack Web API mocks for the built-in
+  Slack toolset (see the credential-mode bullet below).
 - Session SSE contract in core (`streamEventSchema`): user-message, delta,
   tool-start/tool-end, approval-request, done, error.
 - The deepagents SDK is a replaceable layer — keep its types out of core,
@@ -103,10 +104,12 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   credential; each user connects their own under Profile ›
   `user_mcp_credentials`, calls run as that user with the approval gate, amber
   chips), or `connection` (borrows a Connection's token via
-  `mcp_servers.connection_id`; service auth). The Rabble-hosted Slack bridge
-  (`mcp/slackBridge.ts`, POST `/mcp/slack/:connectionId`, bearer = that
-  connection's bot token) exists because Slack's hosted MCP rejects bot
-  tokens; the "Slack (your workspace)" library tile points at it. The
+  `mcp_servers.connection_id`; service auth). "Slack (your workspace)" is a
+  BUILT-IN toolset, not an endpoint: Slack's hosted MCP rejects bot tokens,
+  so the server row's URL is the `builtin:slack` marker and the runtime,
+  register, and test-connection paths dispatch in-process to
+  `mcp/slackTools.ts` (Slack Web API as the connection's bot — never add a
+  public endpoint for this). The
   runtime derives a tool's authType from the server's mode
   (`agentTurn.buildGovernedTools`); there is no `agent_tool_configs.auth_type`.
   A personal-mode call with no connected credential PAUSES on a `connect-request`

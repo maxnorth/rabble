@@ -60,6 +60,17 @@ async function executeRecordedCall(
     .limit(1);
   if (!server) throw new Error("MCP server no longer exists");
 
+  // Built-in Slack tools dispatch in-process (they're service-auth so an
+  // approval here would be unusual, but the recorded call still runs).
+  const { isBuiltinSlack, runSlackWorkspaceTool } = await import("../mcp/slackTools.js");
+  if (isBuiltinSlack(server.url)) {
+    return runSlackWorkspaceTool(
+      server,
+      row.toolName,
+      (row.input ?? {}) as Record<string, unknown>,
+    );
+  }
+
   const { usableAccessToken } = await import("../mcp/oauthFlow.js");
   const credential = await usableAccessToken(server, row.userId, Date.now());
   if (!credential) {

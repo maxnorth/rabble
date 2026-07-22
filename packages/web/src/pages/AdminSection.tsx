@@ -1377,11 +1377,6 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
     queryFn: api.listConnections,
   });
   const lendable = (connections.data?.connections ?? []).filter((c) => c.hasToken);
-  // The Rabble-hosted Slack bridge: its URL is this deployment's own MCP
-  // endpoint for the chosen connection, so it tracks the picker.
-  const bridgeUrl = (connectionId: string) =>
-    `${window.location.origin}/mcp/slack/${connectionId}`;
-  const isBridgeUrl = (url: string) => url.includes("/mcp/slack");
   // Step 1: pick a platform from the curated library (or Custom). Step 2:
   // the register form, prefilled by the pick — everything stays editable,
   // and the same entry can be added again as another copy.
@@ -1430,9 +1425,8 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
                 className="mcp-library-tile"
                 onClick={() => {
                   setPicked(entry);
-                  // Connection-mode tiles (the Slack bridge) preselect a
-                  // matching connection and point the URL at this
-                  // deployment's own bridge endpoint.
+                  // Connection-mode tiles (built-in Slack tools) preselect
+                  // a matching connection.
                   const defaultConn =
                     entry.credentialMode === "connection"
                       ? (lendable.find((c) => c.vendor === "slack") ?? lendable[0])
@@ -1440,10 +1434,7 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
                       : "";
                   setForm({
                     name: entry.name,
-                    url:
-                      entry.credentialMode === "connection"
-                        ? bridgeUrl(defaultConn)
-                        : entry.url,
+                    url: entry.url,
                     category: entry.category,
                     credentialMode: entry.credentialMode,
                     token: "",
@@ -1503,16 +1494,19 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
               placeholder="GitHub"
             />
           </div>
-          <div className="field">
-            <label>URL</label>
-            <input
-              required
-              className="mono"
-              value={form.url}
-              onChange={(e) => setForm({ ...form, url: e.target.value })}
-              placeholder="https://mcp.example.com/mcp"
-            />
-          </div>
+          {/* Built-in toolsets (builtin:…) have no endpoint to point at. */}
+          {!form.url.startsWith("builtin:") && (
+            <div className="field">
+              <label>URL</label>
+              <input
+                required
+                className="mono"
+                value={form.url}
+                onChange={(e) => setForm({ ...form, url: e.target.value })}
+                placeholder="https://mcp.example.com/mcp"
+              />
+            </div>
+          )}
           <div className="field">
             <label>Category</label>
             <select
@@ -1572,14 +1566,7 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
               <select
                 required
                 value={form.connectionId}
-                onChange={(e) =>
-                  setForm({
-                    ...form,
-                    connectionId: e.target.value,
-                    // Keep a bridge URL pointing at the chosen connection.
-                    url: isBridgeUrl(form.url) ? bridgeUrl(e.target.value) : form.url,
-                  })
-                }
+                onChange={(e) => setForm({ ...form, connectionId: e.target.value })}
               >
                 {lendable.map((c) => (
                   <option key={c.id} value={c.id}>
@@ -1649,15 +1636,18 @@ function EditMcpServerModal({
             save.mutate();
           }}
         >
-          <div className="field">
-            <label>URL</label>
-            <input
-              required
-              className="mono"
-              value={form.url}
-              onChange={(e) => setForm({ ...form, url: e.target.value })}
-            />
-          </div>
+          {/* Built-in toolsets have no endpoint or token of their own. */}
+          {!server.url.startsWith("builtin:") && (
+            <div className="field">
+              <label>URL</label>
+              <input
+                required
+                className="mono"
+                value={form.url}
+                onChange={(e) => setForm({ ...form, url: e.target.value })}
+              />
+            </div>
+          )}
           <div className="field">
             <label>Category</label>
             <select
@@ -1669,6 +1659,7 @@ function EditMcpServerModal({
               ))}
             </select>
           </div>
+          {!server.url.startsWith("builtin:") && (
           <div className="field">
             <label>
               Bearer token{" "}
@@ -1693,6 +1684,7 @@ function EditMcpServerModal({
               </label>
             )}
           </div>
+          )}
           {save.isError && <p className="error-text">{(save.error as Error).message}</p>}
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
             <button type="button" className="btn" onClick={onClose}>

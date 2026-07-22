@@ -181,6 +181,30 @@ export function mountSlack(app: FastifyInstance): void {
     };
   });
 
+  app.post("/mock/slack.com/api/search.messages", async (req) => {
+    logRequest("slack.com", "POST", "/api/search.messages", {
+      ...((req.body ?? {}) as Record<string, unknown>),
+      auth: String(req.headers.authorization ?? "").replace(/^Bearer /, "") || null,
+    });
+    const { query } = (req.body ?? {}) as { query?: string };
+    return {
+      ok: true,
+      messages: {
+        total: 1,
+        matches: [
+          {
+            channel: { id: "C0GENERAL", name: "general" },
+            ts: "1700000002.000200",
+            user: "U0EMU",
+            username: "emu",
+            text: `A message matching "${query ?? ""}"`,
+            permalink: "https://acme.slack.com/archives/C0GENERAL/p1700000002000200",
+          },
+        ],
+      },
+    };
+  });
+
   app.post("/mock/slack.com/api/reactions.add", async (req) => {
     logRequest("slack.com", "POST", "/api/reactions.add", req.body ?? null);
     return { ok: true };

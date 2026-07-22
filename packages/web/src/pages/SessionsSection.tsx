@@ -1069,6 +1069,12 @@ function SessionThread({ sessionId }: { sessionId: string }) {
               (a) => a.builtin === "builder" && a.myRight,
             );
             if (!builder || agentRow?.builtin) return null;
+            // Until the transcript has loaded there is nothing to hand the
+            // Builder — offering the affordance early would seed it with an
+            // empty excerpt.
+            if (!session.data || !messages.some((m) => m.role === "user")) {
+              return null;
+            }
             return (
               <button
                 title="Start a Builder session that drafts an agent for this kind of work"

@@ -114,6 +114,20 @@ export const SLACK_TOOLS: McpToolInfo[] = [
     },
   },
   {
+    name: "search_messages",
+    description:
+      "Search messages the bot can see (public channels). Requires the " +
+      "Slack app to have the search:read.public bot scope.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search query (Slack search syntax)" },
+        limit: { type: "number", description: "Max matches (default 20)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "add_reaction",
     description: "Add an emoji reaction to a message",
     inputSchema: {
@@ -271,6 +285,25 @@ export async function runSlackWorkspaceTool(
       return JSON.stringify({
         id: res.user?.id,
         name: res.user?.profile?.real_name ?? res.user?.name,
+      });
+    }
+    case "search_messages": {
+      // Bot tokens can search via Slack's granular search scopes
+      // (search:read.public); without the scope, Slack's error passes
+      // through to the model verbatim.
+      const res = await slack.search.messages({
+        query: str("query"),
+        count: num("limit", 20),
+      });
+      return JSON.stringify({
+        total: res.messages?.total ?? 0,
+        matches: (res.messages?.matches ?? []).map((m) => ({
+          channel: { id: m.channel?.id, name: m.channel?.name },
+          ts: m.ts,
+          user: m.user ?? m.username,
+          text: m.text,
+          permalink: m.permalink,
+        })),
       });
     }
     case "add_reaction": {

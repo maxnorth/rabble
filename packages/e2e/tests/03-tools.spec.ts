@@ -1347,7 +1347,7 @@ test("built-in Slack tools act through a connection — no endpoint at all", asy
   const row = page.locator(".row", { hasText: "Slack (your workspace)" });
   await expect(row).toBeVisible();
   await expect(row).toContainText("via Grath Slack");
-  await expect(row).toContainText("10 tools");
+  await expect(row).toContainText("11 tools");
 
   const [server] = await dbQuery<{ id: string; credential_mode: string; url: string }>(
     `SELECT id, credential_mode, url FROM mcp_servers WHERE name = 'Slack (your workspace)'`,
@@ -1392,6 +1392,25 @@ test("built-in Slack tools act through a connection — no endpoint at all", asy
   );
   expect(posted).toBeDefined();
   expect(posted!.body.auth).toBe("xoxb-bridge-token");
+
+  // Search works as the bot too (granular search:read.public scope): the
+  // next turn drives search_messages and the match text reaches the chip.
+  await enqueueToolCall("search_messages", { query: "deploy status" });
+  await page.locator(".thread-composer textarea").fill("Find the deploy chatter");
+  await page.locator(".thread-composer button", { hasText: "Send" }).click();
+  await expect(
+    page.locator(".tool-call", { hasText: "search_messages" }).first(),
+  ).toBeVisible({ timeout: 15_000 });
+  const searchLog = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { query?: string; auth?: string | null } }>;
+  };
+  const searched = searchLog.requests.find(
+    (r) => r.path === "/api/search.messages" && r.body?.query === "deploy status",
+  );
+  expect(searched).toBeDefined();
+  expect(searched!.body.auth).toBe("xoxb-bridge-token");
 
   // Tidy: later suites assert connections from a clean slate.
   await page.request.delete(`/api/agents/${eng!.id}/mcp-servers/${server!.id}`);

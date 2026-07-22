@@ -276,7 +276,11 @@ export async function mcpRoutes(app: FastifyInstance) {
         // the server rejected it, not that an OAuth flow should start.
         if (connection) {
           return reply.code(422).send({
-            error: `The MCP server rejected the credential from "${connection.name}"`,
+            error:
+              `The MCP server rejected the credential from "${connection.name}" — it requires its own sign-in.` +
+              (connection.vendor === "slack"
+                ? ' For Slack, pick "Slack (your workspace)" from the library instead: Rabble hosts that endpoint and it accepts your connection.'
+                : ""),
           });
         }
         if (!err.resourceMetadataUrl) {

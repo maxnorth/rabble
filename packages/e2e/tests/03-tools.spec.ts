@@ -1314,3 +1314,88 @@ test("a connection lends its credential to a Slack MCP server", async () => {
   await page.request.delete(`/api/mcp-servers/${server!.id}`);
   await page.request.delete(`/api/connections/${created.connection.id}`);
 });
+
+test("the Rabble-hosted Slack bridge serves MCP tools for a connection", async () => {
+  // Slack's hosted MCP only accepts its own OAuth, so the platform hosts a
+  // bridge endpoint per connection. Create the connection to back it.
+  const created = (await (
+    await page.request.post("/api/connections", {
+      data: {
+        vendor: "slack",
+        name: "Grath Slack",
+        roles: ["Interface"],
+        baseUrl: `${EMULATOR}/mock/slack.com`,
+        token: "xoxb-bridge-token",
+      },
+    })
+  ).json()) as { connection: { id: string } };
+
+  // The library tile preselects the connection and points the URL at THIS
+  // deployment's own /mcp/slack endpoint.
+  await page.locator("nav a[title='Admin']").click();
+  await page.getByRole("link", { name: "MCP servers" }).click();
+  await page.getByRole("button", { name: "+ Add server" }).click();
+  await page.getByRole("button", { name: "Slack (your workspace)" }).click();
+  await expect(page.getByPlaceholder("https://mcp.example.com/mcp")).toHaveValue(
+    new RegExp(`/mcp/slack/${created.connection.id}$`),
+  );
+  const connField = page.locator(".modal .field", {
+    has: page.locator("label", { hasText: /^Connection$/ }),
+  });
+  await expect(connField.locator("select")).toHaveValue(created.connection.id);
+  await page.getByRole("button", { name: "+ Add", exact: true }).click();
+
+  // Registration discovered the bridge's tools by calling ourselves.
+  const row = page.locator(".row", { hasText: "Slack (your workspace)" });
+  await expect(row).toBeVisible();
+  await expect(row).toContainText("via Grath Slack");
+  await expect(row).toContainText("2 tools");
+
+  const [server] = await dbQuery<{ id: string; credential_mode: string }>(
+    `SELECT id, credential_mode FROM mcp_servers WHERE name = 'Slack (your workspace)'`,
+  );
+  expect(server!.credential_mode).toBe("connection");
+
+  // A governed call flows agent -> bridge -> Slack Web API, carrying the
+  // connection's bot token end to end. Service auth: no approval card.
+  const [eng] = await dbQuery<{ id: string }>(
+    "SELECT id FROM agents WHERE name = 'Eng On-Call'",
+  );
+  await page.request.put(`/api/agents/${eng!.id}/mcp-servers/${server!.id}`);
+  await enqueueToolCall("post_message", { channel: "C0GENERAL", text: "bridge post" });
+
+  await page.locator("nav a[title='Sessions']").click();
+  await page.getByRole("link", { name: "+ New session" }).click();
+  await page.locator(".target-pill").click();
+  await page.locator(".target-menu button", { hasText: "Eng On-Call" }).click();
+  await page
+    .getByPlaceholder("Describe what you need help with…")
+    .fill("Post to general via the bridge");
+  await page.getByRole("button", { name: "Send" }).click();
+
+  await expect(
+    page.locator(".tool-call", { hasText: "post_message" }).first(),
+  ).toBeVisible({ timeout: 15_000 });
+  await expect(page.locator(".approval-card")).toHaveCount(0);
+  expect(await pollFirstToolCall("%Post to general via the bridge%")).toMatchObject({
+    name: "post_message",
+    authType: "service",
+  });
+
+  // The Slack Web API (emulated) saw chat.postMessage with the bot token.
+  const slackLog = (await (
+    await fetch(`${EMULATOR}/admin/requests?host=slack.com`)
+  ).json()) as {
+    requests: Array<{ path: string; body: { text?: string; auth?: string | null } }>;
+  };
+  const posted = slackLog.requests.find(
+    (r) => r.path === "/api/chat.postMessage" && r.body?.text === "bridge post",
+  );
+  expect(posted).toBeDefined();
+  expect(posted!.body.auth).toBe("xoxb-bridge-token");
+
+  // Tidy: later suites assert connections from a clean slate.
+  await page.request.delete(`/api/agents/${eng!.id}/mcp-servers/${server!.id}`);
+  await page.request.delete(`/api/mcp-servers/${server!.id}`);
+  await page.request.delete(`/api/connections/${created.connection.id}`);
+});

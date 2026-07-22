@@ -519,7 +519,7 @@ export const mcpLibraryEntrySchema = z.object({
   description: z.string(),
   url: z.string(),
   category: z.string(),
-  credentialMode: z.enum(["shared", "personal"]),
+  credentialMode: z.enum(["shared", "personal", "connection"]),
   glyph: z.string(),
   brandColor: z.string(),
 });

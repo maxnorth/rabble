@@ -54,6 +54,19 @@ export const MCP_LIBRARY: McpLibraryEntry[] = [
     brandColor: "#4A154B",
   },
   {
+    // Rabble-hosted bridge: Slack's hosted MCP only takes its own OAuth,
+    // so this serves the MCP endpoint in-platform, backed by a Slack
+    // Connection's bot token. The form fills the org's own /mcp/slack URL.
+    key: "slack-workspace",
+    name: "Slack (your workspace)",
+    description: "Act as the workspace bot, via a connection you created",
+    url: "/mcp/slack",
+    category: "Comms",
+    credentialMode: "connection",
+    glyph: "#",
+    brandColor: "#4A154B",
+  },
+  {
     key: "sentry",
     name: "Sentry",
     description: "Issues, stack traces, and release health",

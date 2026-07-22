@@ -118,8 +118,29 @@ export function mountSlack(app: FastifyInstance): void {
         }
       }
     }
+    // The bearer that rode the wire, so tests can pin which identity posted.
+    body.auth =
+      String(req.headers.authorization ?? "").replace(/^Bearer /, "") || null;
     logRequest("slack.com", "POST", "/api/chat.postMessage", body);
     return { ok: true, channel: "C0EMU", ts: `${Math.floor(Date.now() / 1000)}.000100` };
+  });
+
+  app.post("/mock/slack.com/api/conversations.list", async (req) => {
+    logRequest("slack.com", "POST", "/api/conversations.list", {
+      ...((req.body ?? {}) as Record<string, unknown>),
+      auth: String(req.headers.authorization ?? "").replace(/^Bearer /, "") || null,
+    });
+    const channels = [...state.slackChannels.entries()].map(([id, name]) => ({
+      id,
+      name,
+      is_channel: true,
+    }));
+    return {
+      ok: true,
+      channels: channels.length
+        ? channels
+        : [{ id: "C0GENERAL", name: "general", is_channel: true }],
+    };
   });
 
   app.post("/mock/slack.com/api/users.info", async (req) => {

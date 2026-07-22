@@ -1377,6 +1377,11 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
     queryFn: api.listConnections,
   });
   const lendable = (connections.data?.connections ?? []).filter((c) => c.hasToken);
+  // The Rabble-hosted Slack bridge: its URL is this deployment's own MCP
+  // endpoint for the chosen connection, so it tracks the picker.
+  const bridgeUrl = (connectionId: string) =>
+    `${window.location.origin}/mcp/slack/${connectionId}`;
+  const isBridgeUrl = (url: string) => url.includes("/mcp/slack");
   // Step 1: pick a platform from the curated library (or Custom). Step 2:
   // the register form, prefilled by the pick — everything stays editable,
   // and the same entry can be added again as another copy.
@@ -1425,13 +1430,24 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
                 className="mcp-library-tile"
                 onClick={() => {
                   setPicked(entry);
+                  // Connection-mode tiles (the Slack bridge) preselect a
+                  // matching connection and point the URL at this
+                  // deployment's own bridge endpoint.
+                  const defaultConn =
+                    entry.credentialMode === "connection"
+                      ? (lendable.find((c) => c.vendor === "slack") ?? lendable[0])
+                          ?.id ?? ""
+                      : "";
                   setForm({
                     name: entry.name,
-                    url: entry.url,
+                    url:
+                      entry.credentialMode === "connection"
+                        ? bridgeUrl(defaultConn)
+                        : entry.url,
                     category: entry.category,
                     credentialMode: entry.credentialMode,
                     token: "",
-                    connectionId: "",
+                    connectionId: defaultConn,
                   });
                 }}
               >
@@ -1556,7 +1572,14 @@ function AddMcpServerModal({ onClose }: { onClose: () => void }) {
               <select
                 required
                 value={form.connectionId}
-                onChange={(e) => setForm({ ...form, connectionId: e.target.value })}
+                onChange={(e) =>
+                  setForm({
+                    ...form,
+                    connectionId: e.target.value,
+                    // Keep a bridge URL pointing at the chosen connection.
+                    url: isBridgeUrl(form.url) ? bridgeUrl(e.target.value) : form.url,
+                  })
+                }
               >
                 {lendable.map((c) => (
                   <option key={c.id} value={c.id}>

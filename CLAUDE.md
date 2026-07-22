@@ -22,10 +22,11 @@ full auditability. Product spine and locked naming decisions:
   never raw hex/rgba, or they'll break in one theme. Theme applied
   pre-paint by an inline script in index.html; switched via `lib/theme.ts`
   (System/Light/Dark on Profile, sun/moon on the rail). Responsive: ≤820px
-  the icon rail becomes a bottom bar, each section's `.sidebar` becomes an
-  overlay drawer (hamburger sets `<html data-drawer>`; Shell closes it on
-  navigation), rows/headers wrap, and the directory drops to star ·
-  agent · eval score. All in one media block at the end of styles.css.
+  the whole nav lives in the hamburger drawer — the icon rail slides in as
+  its left edge with each section's `.sidebar` beside it (hamburger sets
+  `<html data-drawer>`; Shell closes it on navigation), rows/headers wrap,
+  and the directory drops to star · agent · eval score. All in one media
+  block at the end of styles.css.
 - `packages/emulator` — scriptable fakes of external services (Anthropic,
   OpenAI, MCP, Slack) mounted under `/mock/<host>/...` with `/admin/*`
   endpoints. The app never knows it's fake; only base URLs differ. No
@@ -98,10 +99,15 @@ E2E must run from `packages/e2e` (not `tests/`). The suite drops/recreates
   mappings.
 - MCP credential mode is a server-registration attribute, not a per-tool
   choice: `mcp_servers.credential_mode` is `shared` (one org credential, calls
-  run as the org service account, green chips) or `personal` (no org
+  run as the org service account, green chips), `personal` (no org
   credential; each user connects their own under Profile ›
   `user_mcp_credentials`, calls run as that user with the approval gate, amber
-  chips). The runtime derives a tool's authType from the server's mode
+  chips), or `connection` (borrows a Connection's token via
+  `mcp_servers.connection_id`; service auth). The Rabble-hosted Slack bridge
+  (`mcp/slackBridge.ts`, POST `/mcp/slack/:connectionId`, bearer = that
+  connection's bot token) exists because Slack's hosted MCP rejects bot
+  tokens; the "Slack (your workspace)" library tile points at it. The
+  runtime derives a tool's authType from the server's mode
   (`agentTurn.buildGovernedTools`); there is no `agent_tool_configs.auth_type`.
   A personal-mode call with no connected credential PAUSES on a `connect-request`
   stream event (in-session connect card) on an interactive surface, and fails
